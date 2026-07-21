@@ -325,6 +325,7 @@ private:
         __ubuf__ float *rowKPtr = reinterpret_cast<__ubuf__ float *>(dARowKBuf_.Get<float>().GetPhyAddr());
         __ubuf__ float *colQPtr = reinterpret_cast<__ubuf__ float *>(dAColQBuf_.Get<float>().GetPhyAddr());
         __ubuf__ float *colKPtr = reinterpret_cast<__ubuf__ float *>(dAColKBuf_.Get<float>().GetPhyAddr());
+        const float betaValue = betaPtr[localRow];
         float dbSum = 0.0f;
 
         for (uint64_t d = 0; d < kDim_; d += BK) {
@@ -499,7 +500,7 @@ private:
             }
 
             dbSum += ReduceDb(dkLeft, kSelf, curK);
-            Muls(dkLeft, dkLeft, betaPtr[localRow], curK);
+            Muls(dkLeft, dkLeft, betaValue, curK);
             PipeBarrier<PIPE_V>();
 
             LocalTensor<float> outQ = out0Buf_.Get<float>();
