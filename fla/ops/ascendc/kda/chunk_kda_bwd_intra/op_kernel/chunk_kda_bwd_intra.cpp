@@ -98,6 +98,10 @@ public:
         for (uint64_t task = static_cast<uint64_t>(GetBlockIdx()); task < taskCount; task += usedCoreNum_) {
             ProcessTask(task, nc);
         }
+        // Drain every pipeline before returning the event IDs.  Individual
+        // producer/consumer waits protect UB reuse inside a task, while this
+        // final fence prevents pending state from leaking across launches.
+        SyncAll();
         ReleaseEvents();
     }
 
