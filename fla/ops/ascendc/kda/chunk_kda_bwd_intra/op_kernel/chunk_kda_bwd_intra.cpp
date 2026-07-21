@@ -579,6 +579,10 @@ private:
             SyncMte2ToV();
             Add(outQ, outQ, dqAcc, curK);
             Add(outK, outK, dkLeft, curK);
+            // The following Add reads the value written by the previous Add.
+            // Auto-sync is disabled, so make the in-place RAW dependency
+            // explicit; otherwise the dkLeft contribution can be lost.
+            PipeBarrier<PIPE_V>();
             Add(outK, outK, dkRight, curK);
             LocalTensor<float> tmp0 = tmp0Buf_.Get<float>();
             LocalTensor<float> tmp1 = tmp1Buf_.Get<float>();
@@ -588,6 +592,8 @@ private:
             Mul(tmp1, tmp1, kSelf, curK);
             PipeBarrier<PIPE_V>();
             Add(outG, outG, tmp0, curK);
+            // Preserve qSelf * dqAcc before accumulating the second dg term.
+            PipeBarrier<PIPE_V>();
             Add(outG, outG, tmp1, curK);
             PipeBarrier<PIPE_V>();
             SyncVToMte3();
