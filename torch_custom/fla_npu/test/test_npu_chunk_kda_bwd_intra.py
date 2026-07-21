@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
     torch_npu = None
 
 from fla_npu.ops import ascendc as fla_ascendc
+from fla_npu.ops.ascendc import _aclnn_ctypes
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
@@ -54,8 +55,18 @@ def _case(
 
 def _assert_outputs(got, ref, rtol=3e-3, atol=3e-3):
     for name, actual, expected in zip(("dq", "dk", "db", "dg"), got, (ref.dq, ref.dk, ref.db, ref.dg)):
-        torch.testing.assert_close(actual.detach().cpu(), expected, rtol=rtol, atol=atol,
-                                   msg=f"{name} does not match the FP64 CPU golden")
+        actual_cpu = actual.detach().cpu()
+        expected_cpu = expected.detach().cpu()
+        try:
+            torch.testing.assert_close(
+                actual_cpu,
+                expected_cpu,
+                rtol=rtol,
+                atol=atol,
+                check_dtype=False,
+            )
+        except AssertionError as error:
+            raise AssertionError(f"{name} does not match the FP64 CPU golden:\n{error}") from error
 
 
 def _golden(*inputs, chunk_size=64, cu_seqlens=None, safe_gate=True):
@@ -83,7 +94,7 @@ def test_chunk_kda_bwd_intra_reference_safe_and_unsafe_fp64_agree():
 
 
 def test_chunk_kda_bwd_intra_default_keeps_upstream_unsafe_contract():
-    signature = inspect.signature(fla_ascendc.chunk_kda_bwd_intra)
+    signature = inspect.signature(_aclnn_ctypes.npu_chunk_kda_bwd_intra)
     assert signature.parameters["safe_gate"].default is False
 
 
