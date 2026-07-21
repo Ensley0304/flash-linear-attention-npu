@@ -85,6 +85,7 @@ public:
         pipe_->InitBuffer(out2Buf_, BK * sizeof(float));
         pipe_->InitBuffer(reduceBuf_, 256 * sizeof(float));
         pipe_->InitBuffer(scalarBuf_, 32);
+        pipe_->InitBuffer(dbAccBuf_, 32);
         pipe_->InitBuffer(chunkMetaBuf_, 32);
         AllocEvents();
     }
@@ -204,12 +205,6 @@ private:
         WaitFlag<HardEvent::MTE2_V>(eventMte2ToV_);
     }
 
-    __aicore__ inline void SyncVToS()
-    {
-        SetFlag<HardEvent::V_S>(eventVToS_);
-        WaitFlag<HardEvent::V_S>(eventVToS_);
-    }
-
     __aicore__ inline void SyncVToMte3()
     {
         SetFlag<HardEvent::V_MTE3>(eventVToMte3_);
@@ -229,7 +224,6 @@ private:
         eventSToV_ = GetTPipePtr()->AllocEventID<HardEvent::S_V>();
         eventMte2ToS_ = GetTPipePtr()->AllocEventID<HardEvent::MTE2_S>();
         eventMte2ToV_ = GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>();
-        eventVToS_ = GetTPipePtr()->AllocEventID<HardEvent::V_S>();
         eventVToMte3_ = GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>();
         eventMte3ToV_ = GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>();
     }
@@ -241,7 +235,6 @@ private:
         GetTPipePtr()->ReleaseEventID<HardEvent::S_V>(eventSToV_);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_S>(eventMte2ToS_);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventMte2ToV_);
-        GetTPipePtr()->ReleaseEventID<HardEvent::V_S>(eventVToS_);
         GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(eventVToMte3_);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(eventMte3ToV_);
     }
@@ -348,7 +341,8 @@ private:
         SyncMte2ToS();
     }
 
-    __aicore__ inline float ReduceDb(LocalTensor<float> dkLeft, LocalTensor<float> kSelf, uint32_t count)
+    __aicore__ inline void AccumulateDb(LocalTensor<float> dbAcc, LocalTensor<float> dkLeft,
+                                        LocalTensor<float> kSelf, uint32_t count)
     {
         LocalTensor<float> product = tmp0Buf_.Get<float>();
         LocalTensor<float> scalar = scalarBuf_.Get<float>();
@@ -357,8 +351,8 @@ private:
         PipeBarrier<PIPE_V>();
         ReduceSum<float, true>(scalar, product, reduceTmp, static_cast<int32_t>(count));
         PipeBarrier<PIPE_V>();
-        SyncVToS();
-        return reinterpret_cast<__ubuf__ float *>(scalar.GetPhyAddr())[0];
+        Add(dbAcc, dbAcc, scalar, 1);
+        PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void ProcessRow(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkStart,
@@ -375,7 +369,9 @@ private:
         __ubuf__ float *colKPtr = reinterpret_cast<__ubuf__ float *>(dAColKBuf_.Get<float>().GetPhyAddr()) +
                                  rowInBlock;
         const float betaValue = betaPtr[localRow];
-        float dbSum = 0.0f;
+        LocalTensor<float> dbAcc = dbAccBuf_.Get<float>();
+        Duplicate(dbAcc, 0.0f, 1);
+        PipeBarrier<PIPE_V>();
 
         for (uint64_t d = 0; d < kDim_; d += BK) {
             const uint32_t curK = static_cast<uint32_t>((kDim_ - d < BK) ? kDim_ - d : BK);
@@ -579,11 +575,7 @@ private:
                 }
             }
 
-            dbSum += ReduceDb(dkLeft, kSelf, curK);
-            // ReduceDb returns a PIPE_S read from scalarBuf_.  Synchronize it
-            // before the next vector operation (and before scalarBuf_ can be
-            // reused by a later feature tile).
-            SyncSToV();
+            AccumulateDb(dbAcc, dkLeft, kSelf, curK);
             Muls(dkLeft, dkLeft, betaValue, curK);
             PipeBarrier<PIPE_V>();
 
@@ -626,7 +618,7 @@ private:
         SyncVToMte2();
         CopyFp32In(scalar, db_, BetaOffset(b, hv, globalRow), 1);
         SyncMte2ToV();
-        Adds(scalar, scalar, dbSum, 1);
+        Add(scalar, scalar, dbAcc, 1);
         PipeBarrier<PIPE_V>();
         SyncVToMte3();
         CopyFp32Out(dbOut_, BetaOffset(b, hv, globalRow), scalar, 1);
@@ -689,9 +681,9 @@ private:
     TBuf<TPosition::VECCALC> qSelfBuf_, kSelfBuf_, gSelfBuf_, gLeftRefBuf_, gDiagRefBuf_, gRightRefBuf_;
     TBuf<TPosition::VECCALC> gateBuf_, tmp0Buf_, tmp1Buf_;
     TBuf<TPosition::VECCALC> dqAccBuf_, dkLeftBuf_, dkRightBuf_, out0Buf_, out1Buf_, out2Buf_;
-    TBuf<TPosition::VECCALC> reduceBuf_, scalarBuf_, chunkMetaBuf_;
+    TBuf<TPosition::VECCALC> reduceBuf_, scalarBuf_, dbAccBuf_, chunkMetaBuf_;
     TEventID eventVToMte2_, eventMte3ToMte2_, eventSToV_, eventMte2ToS_;
-    TEventID eventMte2ToV_, eventVToS_, eventVToMte3_, eventMte3ToV_;
+    TEventID eventMte2ToV_, eventVToMte3_, eventMte3ToV_;
     uint64_t b_ = 0, h_ = 0, hv_ = 0, t_ = 0, kDim_ = 0, bt_ = 0, nt_ = 0;
     uint64_t usedCoreNum_ = 1;
     bool isVarLen_ = false;
