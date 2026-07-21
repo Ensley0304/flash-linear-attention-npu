@@ -233,6 +233,23 @@ def test_chunk_kda_bwd_intra_safe_gate_k_boundaries(kdim):
     _assert_outputs(got, ref, rtol=5e-3, atol=5e-3)
 
 
+def test_chunk_kda_bwd_intra_safe_gate_repeated_launch():
+    """A second launch must not reuse transient pipeline event state."""
+    device = _device()
+    inputs = _case(t=19, h=1, hv=2, kdim=256, gate_scale=0.2)
+    ref = _golden(*inputs, chunk_size=64, safe_gate=True)
+
+    def run_once():
+        return fla_ascendc.chunk_kda_bwd_intra(
+            *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=True
+        )
+
+    first = run_once()
+    _assert_outputs(first, ref, rtol=5e-3, atol=5e-3)
+    second = run_once()
+    _assert_outputs(second, ref, rtol=5e-3, atol=5e-3)
+
+
 def test_chunk_kda_bwd_intra_safe_gate_dense_multibatch_multichunk_gva():
     device = _device()
     inputs = _case(b=2, t=70, h=2, hv=4, kdim=96, gate_scale=0.1)

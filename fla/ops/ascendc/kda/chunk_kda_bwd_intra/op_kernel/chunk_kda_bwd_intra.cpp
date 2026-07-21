@@ -86,6 +86,7 @@ public:
         pipe_->InitBuffer(reduceBuf_, 256 * sizeof(float));
         pipe_->InitBuffer(scalarBuf_, 32);
         pipe_->InitBuffer(chunkMetaBuf_, 32);
+        AllocEvents();
     }
 
     __aicore__ inline void Process()
@@ -96,6 +97,7 @@ public:
         for (uint64_t task = static_cast<uint64_t>(GetBlockIdx()); task < taskCount; task += usedCoreNum_) {
             ProcessTask(task, nc);
         }
+        ReleaseEvents();
     }
 
 private:
@@ -174,58 +176,74 @@ private:
 
     __aicore__ inline void SyncVToMte2()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
-        SetFlag<HardEvent::V_MTE2>(eventId);
-        WaitFlag<HardEvent::V_MTE2>(eventId);
+        SetFlag<HardEvent::V_MTE2>(eventVToMte2_);
+        WaitFlag<HardEvent::V_MTE2>(eventVToMte2_);
     }
 
     __aicore__ inline void SyncMte3ToMte2()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_MTE2));
-        SetFlag<HardEvent::MTE3_MTE2>(eventId);
-        WaitFlag<HardEvent::MTE3_MTE2>(eventId);
+        SetFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+        WaitFlag<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
     }
 
     __aicore__ inline void SyncSToV()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
-        SetFlag<HardEvent::S_V>(eventId);
-        WaitFlag<HardEvent::S_V>(eventId);
+        SetFlag<HardEvent::S_V>(eventSToV_);
+        WaitFlag<HardEvent::S_V>(eventSToV_);
     }
 
     __aicore__ inline void SyncMte2ToS()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_S));
-        SetFlag<HardEvent::MTE2_S>(eventId);
-        WaitFlag<HardEvent::MTE2_S>(eventId);
+        SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+        WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
     }
 
     __aicore__ inline void SyncMte2ToV()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-        SetFlag<HardEvent::MTE2_V>(eventId);
-        WaitFlag<HardEvent::MTE2_V>(eventId);
+        SetFlag<HardEvent::MTE2_V>(eventMte2ToV_);
+        WaitFlag<HardEvent::MTE2_V>(eventMte2ToV_);
     }
 
     __aicore__ inline void SyncVToS()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
-        SetFlag<HardEvent::V_S>(eventId);
-        WaitFlag<HardEvent::V_S>(eventId);
+        SetFlag<HardEvent::V_S>(eventVToS_);
+        WaitFlag<HardEvent::V_S>(eventVToS_);
     }
 
     __aicore__ inline void SyncVToMte3()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-        SetFlag<HardEvent::V_MTE3>(eventId);
-        WaitFlag<HardEvent::V_MTE3>(eventId);
+        SetFlag<HardEvent::V_MTE3>(eventVToMte3_);
+        WaitFlag<HardEvent::V_MTE3>(eventVToMte3_);
     }
 
     __aicore__ inline void SyncMte3ToV()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-        SetFlag<HardEvent::MTE3_V>(eventId);
-        WaitFlag<HardEvent::MTE3_V>(eventId);
+        SetFlag<HardEvent::MTE3_V>(eventMte3ToV_);
+        WaitFlag<HardEvent::MTE3_V>(eventMte3ToV_);
+    }
+
+    __aicore__ inline void AllocEvents()
+    {
+        eventVToMte2_ = GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>();
+        eventMte3ToMte2_ = GetTPipePtr()->AllocEventID<HardEvent::MTE3_MTE2>();
+        eventSToV_ = GetTPipePtr()->AllocEventID<HardEvent::S_V>();
+        eventMte2ToS_ = GetTPipePtr()->AllocEventID<HardEvent::MTE2_S>();
+        eventMte2ToV_ = GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>();
+        eventVToS_ = GetTPipePtr()->AllocEventID<HardEvent::V_S>();
+        eventVToMte3_ = GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>();
+        eventMte3ToV_ = GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>();
+    }
+
+    __aicore__ inline void ReleaseEvents()
+    {
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventVToMte2_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_MTE2>(eventMte3ToMte2_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::S_V>(eventSToV_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_S>(eventMte2ToS_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventMte2ToV_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_S>(eventVToS_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(eventVToMte3_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(eventMte3ToV_);
     }
 
     __aicore__ inline void LoadQkg(uint64_t qOffset, uint64_t vOffset, LocalTensor<float> qDst,
@@ -672,6 +690,8 @@ private:
     TBuf<TPosition::VECCALC> gateBuf_, tmp0Buf_, tmp1Buf_;
     TBuf<TPosition::VECCALC> dqAccBuf_, dkLeftBuf_, dkRightBuf_, out0Buf_, out1Buf_, out2Buf_;
     TBuf<TPosition::VECCALC> reduceBuf_, scalarBuf_, chunkMetaBuf_;
+    TEventID eventVToMte2_, eventMte3ToMte2_, eventSToV_, eventMte2ToS_;
+    TEventID eventMte2ToV_, eventVToS_, eventVToMte3_, eventMte3ToV_;
     uint64_t b_ = 0, h_ = 0, hv_ = 0, t_ = 0, kDim_ = 0, bt_ = 0, nt_ = 0;
     uint64_t usedCoreNum_ = 1;
     bool isVarLen_ = false;
