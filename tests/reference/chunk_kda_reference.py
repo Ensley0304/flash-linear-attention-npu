@@ -25,6 +25,14 @@ class ChunkKdaForwardResult:
     h: torch.Tensor
 
 
+@dataclass
+class ChunkKdaBackwardIntraResult:
+    dq: torch.Tensor
+    dk: torch.Tensor
+    db: torch.Tensor
+    dg: torch.Tensor
+
+
 def _chunk_spans(
     batch: int,
     total_t: int,
@@ -203,6 +211,163 @@ def chunk_kda_forward_reference(
         v_new=v_new,
         h=h_out,
     )
+
+
+def chunk_kda_backward_intra_reference(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    dAqk: torch.Tensor,
+    dAkk: torch.Tensor,
+    dq: torch.Tensor,
+    dk: torch.Tensor,
+    db: torch.Tensor,
+    dg: torch.Tensor,
+    chunk_size: int = 64,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    safe_gate: bool = False,
+    acc_dtype: torch.dtype = torch.float32,
+) -> ChunkKdaBackwardIntraResult:
+    """Token-first reference for ``chunk_kda_bwd_kernel_intra``.
+
+    ``acc_dtype=torch.float32`` mirrors the kernel calculation order, while
+    ``torch.float64`` provides the CPU golden used by precision validation.
+    """
+    if acc_dtype not in (torch.float32, torch.float64):
+        raise ValueError("acc_dtype must be torch.float32 or torch.float64.")
+    if q.shape != k.shape or q.dim() != 4:
+        raise ValueError("q/k must be matching [B,T,H,K] tensors.")
+    bsz, total_t, hq, kdim = q.shape
+    if g.dim() != 4:
+        raise ValueError("g must be [B,T,HV,K].")
+    hv = g.shape[2]
+    if g.shape != (bsz, total_t, hv, kdim) or hv % hq != 0:
+        raise ValueError("g shape or grouped-value-head mapping is invalid.")
+    if beta.shape != (bsz, total_t, hv):
+        raise ValueError("beta must be [B,T,HV].")
+    if dAqk.shape != (bsz, total_t, hv, chunk_size) or dAkk.shape != dAqk.shape:
+        raise ValueError("dA tensors must be [B,T,HV,chunk_size].")
+
+    dq_out = dq.to(acc_dtype).clone()
+    dk_out = dk.to(acc_dtype).clone()
+    db_out = db.to(acc_dtype).clone()
+    dg_out = dg.to(acc_dtype).clone()
+    group = hv // hq
+    for b, start, end in _chunk_spans(bsz, total_t, chunk_size, cu_seqlens):
+        cur_t = end - start
+        for ihv in range(hv):
+            ih = ihv // group
+            q_blk = q[b, start:end, ih].to(acc_dtype)
+            k_blk = k[b, start:end, ih].to(acc_dtype)
+            g_blk = g[b, start:end, ihv].to(acc_dtype)
+            beta_blk = beta[b, start:end, ihv].to(acc_dtype)
+            aq = dAqk[b, start:end, ihv, :cur_t].to(acc_dtype)
+            ak = dAkk[b, start:end, ihv, :cur_t].to(acc_dtype)
+            if safe_gate:
+                # Follow the Triton SAFE_GATE calculation order. Each 16-token
+                # block factors long-range exponents around its first/middle/last
+                # gate instead of clipping the exponent difference.
+                dq_local = torch.zeros_like(g_blk)
+                dk_left_pre = torch.zeros_like(g_blk)
+                dk_right = torch.zeros_like(g_blk)
+                for block_begin in range(0, cur_t, 16):
+                    block_end = min(block_begin + 16, cur_t)
+                    block_mid = block_begin + min(8, block_end - block_begin - 1)
+                    target = slice(block_begin, block_end)
+                    g_target = g_blk[target]
+                    g_left_ref = g_blk[block_begin:block_begin + 1]
+                    g_diag_ref = g_blk[block_mid:block_mid + 1]
+                    g_right_ref = g_blk[block_end - 1:block_end]
+
+                    if block_begin > 0:
+                        left_k = k_blk[:block_begin] * torch.exp2(g_left_ref - g_blk[:block_begin])
+                        dq_local[target] += (aq[target, :block_begin] @ left_k) * torch.exp2(
+                            g_target - g_left_ref
+                        )
+                        dk_left_pre[target] += (ak[target, :block_begin] @ left_k) * torch.exp2(
+                            g_target - g_left_ref
+                        )
+
+                    block_len = block_end - block_begin
+                    lower = torch.ones((block_len, block_len), device=q.device, dtype=torch.bool).tril()
+                    aq_diag = torch.where(lower, aq[target, block_begin:block_end], 0.0)
+                    ak_diag = torch.where(lower, ak[target, block_begin:block_end], 0.0)
+                    diag_k = k_blk[target] * torch.exp2(g_diag_ref - g_blk[target])
+                    diag_outer_left = torch.exp2(g_target - g_diag_ref)
+                    dq_local[target] += (aq_diag @ diag_k) * diag_outer_left
+                    dk_left_pre[target] += (ak_diag @ diag_k) * diag_outer_left
+
+                    diag_q = q_blk[target] * torch.exp2(g_blk[target] - g_diag_ref)
+                    diag_k_beta = beta_blk[target, None] * k_blk[target] * torch.exp2(
+                        g_blk[target] - g_diag_ref
+                    )
+                    diag_outer_right = torch.exp2(g_diag_ref - g_target)
+                    dk_right[target] += (aq_diag.transpose(0, 1) @ diag_q) * diag_outer_right
+                    dk_right[target] += (ak_diag.transpose(0, 1) @ diag_k_beta) * diag_outer_right
+
+                    if block_end < cur_t:
+                        future = slice(block_end, cur_t)
+                        future_gate = torch.exp2(g_blk[future] - g_right_ref)
+                        future_q = q_blk[future] * future_gate
+                        future_k_beta = beta_blk[future, None] * k_blk[future] * future_gate
+                        right_outer = torch.exp2(g_right_ref - g_target)
+                        dk_right[target] += (aq[future, target].transpose(0, 1) @ future_q) * right_outer
+                        dk_right[target] += (ak[future, target].transpose(0, 1) @ future_k_beta) * right_outer
+            else:
+                # Upstream keeps first/last-reference factorization for
+                # inter-block terms even when SAFE_GATE is disabled. Only the
+                # current 16x16 diagonal block uses direct pairwise exp2.
+                dq_local = torch.zeros_like(g_blk)
+                dk_left_pre = torch.zeros_like(g_blk)
+                dk_right = torch.zeros_like(g_blk)
+                for block_begin in range(0, cur_t, 16):
+                    block_end = min(block_begin + 16, cur_t)
+                    target = slice(block_begin, block_end)
+                    g_target = g_blk[target]
+                    g_left_ref = g_blk[block_begin:block_begin + 1]
+                    g_right_ref = g_blk[block_end - 1:block_end]
+
+                    if block_begin > 0:
+                        left_k = k_blk[:block_begin] * torch.exp2(g_left_ref - g_blk[:block_begin])
+                        dq_local[target] += (aq[target, :block_begin] @ left_k) * torch.exp2(
+                            g_target - g_left_ref
+                        )
+                        dk_left_pre[target] += (ak[target, :block_begin] @ left_k) * torch.exp2(
+                            g_target - g_left_ref
+                        )
+
+                    block_len = block_end - block_begin
+                    lower = torch.ones((block_len, block_len), device=q.device, dtype=torch.bool).tril()
+                    aq_diag = torch.where(lower, aq[target, block_begin:block_end], 0.0)
+                    ak_diag = torch.where(lower, ak[target, block_begin:block_end], 0.0)
+                    diag_diff = g_target[:, None, :] - g_target[None, :, :]
+                    diag_gate = torch.where(lower[:, :, None], torch.exp2(diag_diff), 0.0)
+                    dq_local[target] += torch.einsum("ij,jd,ijd->id", aq_diag, k_blk[target], diag_gate)
+                    dk_left_pre[target] += torch.einsum(
+                        "ij,jd,ijd->id", ak_diag, k_blk[target], diag_gate
+                    )
+                    dk_right[target] += torch.einsum(
+                        "ji,jd,jid->id", aq_diag, q_blk[target], diag_gate
+                    )
+                    dk_right[target] += torch.einsum(
+                        "ji,jd,jid->id", ak_diag, beta_blk[target, None] * k_blk[target], diag_gate
+                    )
+
+                    if block_end < cur_t:
+                        future = slice(block_end, cur_t)
+                        future_gate = torch.exp2(g_blk[future] - g_right_ref)
+                        future_q = q_blk[future] * future_gate
+                        future_k_beta = beta_blk[future, None] * k_blk[future] * future_gate
+                        right_outer = torch.exp2(g_right_ref - g_target)
+                        dk_right[target] += (aq[future, target].transpose(0, 1) @ future_q) * right_outer
+                        dk_right[target] += (ak[future, target].transpose(0, 1) @ future_k_beta) * right_outer
+            dk_left = beta_blk[:, None] * dk_left_pre
+            dq_out[b, start:end, ihv] += dq_local
+            dk_out[b, start:end, ihv] += dk_left + dk_right
+            db_out[b, start:end, ihv] += (dk_left_pre * k_blk).sum(dim=-1)
+            dg_out[b, start:end, ihv] += q_blk * dq_local + (dk_left - dk_right) * k_blk
+    return ChunkKdaBackwardIntraResult(dq=dq_out, dk=dk_out, db=db_out, dg=dg_out)
 
 
 def run_smoke() -> None:

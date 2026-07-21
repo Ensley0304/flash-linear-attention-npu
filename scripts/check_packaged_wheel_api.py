@@ -22,6 +22,7 @@ ASCENDC_NAMES = (
     "causal_conv1d_bwd",
     "chunk_bwd_dqkwg",
     "chunk_bwd_dv_local",
+    "chunk_kda_bwd_intra",
     "chunk_fwd_o",
     "chunk_gated_delta_rule_bwd_dhu",
     "chunk_gated_delta_rule_fwd_h",
@@ -43,6 +44,7 @@ TRITON_NAMES = (
     "solve_tril",
 )
 REQUIRED_ASCENDC_CONFIGS = (
+    "chunk_kda_bwd_intra.json",
     "recompute_wu_fwd.json",
     "recompute_w_u_fwd.json",
 )

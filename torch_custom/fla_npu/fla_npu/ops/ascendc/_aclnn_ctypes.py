@@ -90,6 +90,29 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkKdaBwdIntra": [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnKdaGateCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -827,6 +850,205 @@ def npu_chunk_kda_fwd(
         kernel_outputs,
     )
     return user_outputs
+
+
+def npu_chunk_kda_bwd_intra(
+    q,
+    k,
+    g,
+    beta,
+    dAqk,
+    dAkk,
+    dq,
+    dk,
+    db,
+    dg,
+    chunk_size,
+    *,
+    layout="BSND",
+    cu_seqlens=None,
+    chunk_indices=None,
+    safe_gate=False,
+):
+    """KDA chunk-local backward using the AscendC BNSD kernel.
+
+    ``safe_gate=True`` is the primary numerical-stability path.  The default
+    remains false to preserve the upstream standalone helper contract.
+    """
+    import torch
+
+    layout = str(layout)
+    if layout not in {"BSND", "BNSD", "TND", "NTD"}:
+        raise RuntimeError(
+            "npu_chunk_kda_bwd_intra: layout must be one of BSND, BNSD, TND, NTD and uppercase."
+        )
+    chunk_size = int(chunk_size)
+    if chunk_size not in {64, 128}:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: chunk_size must be 64 or 128.")
+
+    q_shape, k_shape, g_shape = _shape(q), _shape(k), _shape(g)
+    beta_shape = _shape(beta)
+    rank3 = layout in {"TND", "NTD"}
+    expected_rank = 3 if rank3 else 4
+    if len(q_shape) != expected_rank or len(k_shape) != expected_rank or len(g_shape) != expected_rank:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: q/k/g rank does not match layout.")
+    if len(beta_shape) != expected_rank - 1:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: beta rank does not match layout.")
+    if q_shape != k_shape:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: q and k must have identical shape.")
+    if q.dtype not in {torch.float16, torch.bfloat16} or k.dtype != q.dtype:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: q/k must share float16 or bfloat16 dtype.")
+    if g.dtype not in {torch.float32, torch.bfloat16} or beta.dtype not in {torch.float32, torch.bfloat16}:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: g/beta must be float32 or bfloat16.")
+    fp32_inputs = (dAqk, dAkk, dq, dk, db, dg)
+    if any(tensor.dtype != torch.float32 for tensor in fp32_inputs):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd_intra: dA and accumulated gradients must all be float32."
+        )
+
+    if layout == "BSND":
+        batch, seqlen, h_num, k_dim = q_shape
+        hv_num = g_shape[2]
+    elif layout == "BNSD":
+        batch, h_num, seqlen, k_dim = q_shape
+        hv_num = g_shape[1]
+    elif layout == "TND":
+        seqlen, h_num, k_dim = q_shape
+        batch = 1
+        hv_num = g_shape[1]
+    else:
+        h_num, seqlen, k_dim = q_shape
+        batch = 1
+        hv_num = g_shape[0]
+    if k_dim < 16 or k_dim > 256 or k_dim % 16 != 0:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: K must be a multiple of 16 in [16, 256].")
+    if h_num <= 0 or hv_num < h_num or hv_num % h_num != 0:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: HV must be divisible by H.")
+    if h_num > 128 or hv_num > 128:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: H and HV must be <= 128.")
+
+    if layout == "BSND":
+        expected_g = (batch, seqlen, hv_num, k_dim)
+        expected_beta = (batch, seqlen, hv_num)
+        expected_da = (batch, seqlen, hv_num, chunk_size)
+    elif layout == "BNSD":
+        expected_g = (batch, hv_num, seqlen, k_dim)
+        expected_beta = (batch, hv_num, seqlen)
+        expected_da = (batch, hv_num, seqlen, chunk_size)
+    elif layout == "TND":
+        expected_g = (seqlen, hv_num, k_dim)
+        expected_beta = (seqlen, hv_num)
+        expected_da = (seqlen, hv_num, chunk_size)
+    else:
+        expected_g = (hv_num, seqlen, k_dim)
+        expected_beta = (hv_num, seqlen)
+        expected_da = (hv_num, seqlen, chunk_size)
+    if g_shape != expected_g or _shape(dq) != expected_g or _shape(dk) != expected_g or _shape(dg) != expected_g:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: g/dq/dk/dg shape mismatch.")
+    if beta_shape != expected_beta or _shape(db) != expected_beta:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: beta/db shape mismatch.")
+    if _shape(dAqk) != expected_da or _shape(dAkk) != expected_da:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: dAqk/dAkk must end in chunk_size.")
+
+    def int_array_values(values):
+        if values is None:
+            return None
+        if hasattr(values, "detach"):
+            values = values.detach().cpu().reshape(-1).tolist()
+        return tuple(int(value) for value in values)
+
+    cu = int_array_values(cu_seqlens)
+    if cu is not None and (len(cu) < 2 or cu[0] != 0 or cu[-1] != seqlen):
+        raise RuntimeError("npu_chunk_kda_bwd_intra: cu_seqlens must start at 0 and end at T.")
+    if cu is not None and (batch != 1 or any(cu[i + 1] < cu[i] for i in range(len(cu) - 1))):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd_intra: varlen mode requires flattened B=1 and nondecreasing cu_seqlens."
+        )
+    chunks = int_array_values(chunk_indices)
+    if chunks is not None and cu is None:
+        raise RuntimeError("npu_chunk_kda_bwd_intra: chunk_indices requires cu_seqlens.")
+    if chunks is None and cu is not None:
+        chunks = _kda_build_chunk_indices(cu, chunk_size)
+    canonical = _kda_build_chunk_indices(cu, chunk_size)
+    if chunks is not None and (len(chunks) % 2 != 0 or chunks != canonical):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd_intra: chunk_indices must use canonical sequence-major (seq, chunk) pairs."
+        )
+    total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, chunks)
+
+    def feature_to_bnsd(tensor):
+        if layout == "BSND":
+            return tensor.permute(0, 2, 1, 3).contiguous()
+        if layout == "BNSD":
+            return tensor.contiguous()
+        if layout == "TND":
+            return tensor.permute(1, 0, 2).unsqueeze(0).contiguous()
+        return tensor.unsqueeze(0).contiguous()
+
+    def scalar_to_bnsd(tensor):
+        if layout == "BSND":
+            return tensor.permute(0, 2, 1).contiguous()
+        if layout == "BNSD":
+            return tensor.contiguous()
+        if layout == "TND":
+            return tensor.transpose(0, 1).unsqueeze(0).contiguous()
+        return tensor.unsqueeze(0).contiguous()
+
+    g_fp32 = g if g.dtype == torch.float32 else g.to(torch.float32)
+    beta_fp32 = beta if beta.dtype == torch.float32 else beta.to(torch.float32)
+    q_i, k_i, g_i = feature_to_bnsd(q), feature_to_bnsd(k), feature_to_bnsd(g_fp32)
+    dAqk_i, dAkk_i = feature_to_bnsd(dAqk), feature_to_bnsd(dAkk)
+    dq_i, dk_i, dg_i = feature_to_bnsd(dq), feature_to_bnsd(dk), feature_to_bnsd(dg)
+    beta_i, db_i = scalar_to_bnsd(beta_fp32), scalar_to_bnsd(db)
+    dq_o = _empty_like(dq_i)
+    dk_o = _empty_like(dk_i)
+    db_o = _empty_like(db_i)
+    dg_o = _empty_like(dg_i)
+    _call_aclnn(
+        "aclnnChunkKdaBwdIntra",
+        lambda ctx: [
+            ctx.tensor(q_i, "q"),
+            ctx.tensor(k_i, "k"),
+            ctx.tensor(g_i, "g"),
+            ctx.tensor(beta_i, "beta"),
+            ctx.tensor(dAqk_i, "dAqk"),
+            ctx.tensor(dAkk_i, "dAkk"),
+            ctx.tensor(dq_i, "dq"),
+            ctx.tensor(dk_i, "dk"),
+            ctx.tensor(db_i, "db"),
+            ctx.tensor(dg_i, "dg"),
+            ctx.int_array(cu),
+            ctx.int_array(chunks),
+            ctypes.c_int64(chunk_size),
+            ctypes.c_bool(_optional_bool(safe_gate, False)),
+            ctypes.c_int64(total_chunks),
+            ctx.tensor(dq_o, "dq_out"),
+            ctx.tensor(dk_o, "dk_out"),
+            ctx.tensor(db_o, "db_out"),
+            ctx.tensor(dg_o, "dg_out"),
+        ],
+        (dq_o, dk_o, db_o, dg_o),
+    )
+
+    def feature_from_bnsd(tensor):
+        if layout == "BSND":
+            return tensor.permute(0, 2, 1, 3).contiguous()
+        if layout == "BNSD":
+            return tensor
+        if layout == "TND":
+            return tensor.squeeze(0).permute(1, 0, 2).contiguous()
+        return tensor.squeeze(0)
+
+    def scalar_from_bnsd(tensor):
+        if layout == "BSND":
+            return tensor.permute(0, 2, 1).contiguous()
+        if layout == "BNSD":
+            return tensor
+        if layout == "TND":
+            return tensor.squeeze(0).transpose(0, 1).contiguous()
+        return tensor.squeeze(0)
+
+    return feature_from_bnsd(dq_o), feature_from_bnsd(dk_o), scalar_from_bnsd(db_o), feature_from_bnsd(dg_o)
 
 
 def npu_kda_gate_cumsum(
