@@ -2,7 +2,7 @@
 
 AscendC implementation of the KDA chunk-local backward kernel. The operator consumes the gradients of the two intra-chunk matrices and updates `dq`, `dk`, `dbeta`, and per-feature `dg` in FP32.
 
-The primary delivery path is `safe_gate=true`; `safe_gate=false` remains a separate compiled branch for compatibility. The implementation uses one AIV launch, 16-token task blocks, 32-feature vector tiles, FP32 accumulation, dense/GVA/varlen support, and no sequence-sized workspace.
+The primary delivery path is `safe_gate=true`; `safe_gate=false` remains a separate compiled branch for compatibility. The safe path uses one AIV launch, 16-token block-wise accumulation, resident `[chunk, 32]` q/k/g feature tiles, FP32 accumulation, dense/GVA/varlen support, and no sequence-sized workspace. The proven row-wise safe implementation remains compiled under legacy tiling keys for rollback.
 
 Public Python API:
 

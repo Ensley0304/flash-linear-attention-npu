@@ -2,14 +2,17 @@
 
 ## 当前实现
 
-当前 kernel 是无 workspace 的单 launch AIV 路径。核间 task 为 `(chunk, HV, 16-token block)`，核内按 `BK=32` 遍历特征，再逐 source token 计算 FP32 gate 和三类梯度累加。
+当前 kernel 是无 workspace 的单 launch AIV 路径。核间 task 仍为 `(chunk, HV, 16-token block)`。
+`safe_gate=true` 默认进入 block-wise tiling key 5/7：核内按 `BK=32` 搬入整个 chunk 的
+q/k/g feature tile，并按 source token 同时更新 16 个目标行。`safe_gate=false` 继续使用
+已通过精度回归的逐行 tiling key 0/2；legacy safe key 1/3 保留为回退。
 
 已实施的静态优化：
 
-- 历史 token 只搬运 `k/g`，不搬未使用的 `q`；
+- q/k/g 每个 `(task, BK)` 仅二维搬入一次并驻留 UB，不再被 16 个输出行重复读取；
 - `dq_local` 与 `dk_left_pre` 复用一次 `k*gate`；
 - unsafe 分支仅在当前 16×16 对角块直接计算 gate，跨块仍按上游首/末参考点分解；safe 分支进一步对对角块使用中点参考 gate；
-- safe 分支的首/中/尾完整 K 参考向量在 task 开头各搬一次并驻留 UB，供同一 16-token block 的所有输出行复用；
+- safe 分支的首/中/尾参考向量直接引用 g feature cache；每个 source/reference gate 只计算一次；
 - future `dAkk*beta` 先做 FP32 标量合并；
 - `db` 在同一 task 内跨 K tile 归约，避免全局 partial tensor 和第二次 launch；
 - 每个 16-token task 只下发四次二维 `DataCopyPad`，一次性搬入 dAqk/dAkk 的
@@ -17,26 +20,37 @@
   不再为每个输出行重复提取 dA 行/列；
 - varlen 每个 task 只连续搬运一条 32B packed chunk metadata，不携带大 tiling 数组、不做 device 二分；
 - task 写区间互斥，无 atomic、跨核同步或随序列增长的 workspace。
-- dA/beta 标量在每个 source token 的 q/k/g 搬运下发后一次性物化，并合并为一个 `S_V`
-  事件后再进入依赖这些系数的向量计算，使 Scalar 访问可与 source MTE2/Cast 部分重叠；
-  GM→UB 后直接使用 `MTE2_S`，省去 Vector no-op 中转。这些事件是关闭
-  auto-sync 后的正确性依赖，ID 由 `FetchEventID` 动态取得；其 stall 成本需要单独
-  profiling，不能为了缩短时延删除。
+- dA 行 slab 在 task 开头一次整理成 `[source,16]`，列 slab 同步完成 causal 清零和
+  `dAkk*beta`；单个 `S_V` 后，source 热循环通过 `Brcb + stride Mul/Add` 消费连续系数，
+  不再逐 row 读取标量或触发 `S_V`。
+- 输出累积按 `[rowCount,32]` 二维批量搬入/写回，`db` 仍按 row 独立 FP32 ReduceSum。
+
+## 已知 profiling 基线
+
+目标 shape 为 `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`：
+
+| 实现 | kernel duration | AIV time | 关键指标 |
+|---|---:|---:|---|
+| Triton 兄弟仓 | 19.272 ms | 19.272 ms | 28 block，AIV scalar 59.7%，MTE2 49.7% |
+| legacy AscendC | 477.937 ms | 455.734 ms | 40 block，AIV scalar 44.9%，MTE2 42.7% |
+
+外围 layout/cast 总计约 2.46 ms，不是主要差距。block-wise 改造尚需重新上板采集，文档不把
+静态估算写成实测收益。
 
 ## 理论模型
 
 设有效 chunk 长度为 `L`，单 task 行数为 `R<=16`，则主要工作量近似为：
 
 ```text
-source vector loads: O(R * L * K / BK)
-Exp vectors:         O(R * (L - 1) * K / BK)
+source vector loads: O(L * K / BK)
+Exp vectors:         O((L + R) * K / BK)
 FP32 vector FLOPs:   O(R * L * K)
 dA GM elements:      2 * (R * BT + L * 16)
 ```
 
-满 16 行 task 下，相比原逐输出行搬运方案，dA MTE2 调用由约 `4R` 次降为 4 次；
-当 `L=BT` 时，dA 有效搬运量由每个矩阵约 `R*(BT+8*BT)` 个元素降为
-`R*BT+16*BT`，即约减少 4.5 倍。这里是按访问量计算的静态估算，不替代上板 profiling。
+满 16 行 task 下，相比 legacy，q/k/g source feature 搬运和公共 gate Exp 理论上最多减少
+约 16 倍；FP32 乘加总元素量不变，但从大量 16/32 元素短调用改为 `[16,32]` repeat。
+这里是静态调用/访问量估算，不替代上板 profiling。
 
 核间并行 task 数为 `chunks * HV * ceil(BT/16)`。长序列和常见多头形状可以覆盖全部 AIV；极小单 chunk/单头 case 会受可并行 task 数限制。
 
@@ -44,19 +58,18 @@ dA GM elements:      2 * (R * BT + L * 16)
 
 当前机器没有 CANN/NPU，以下均是需要 profiling 验证的假设，不是实测结论：
 
-1. `BK=32` 下短 Vector 指令和同步事件是否成为主要开销；
-2. MTE2 是否因每个输出行重复读取 source token 而成为主瓶颈；
+1. block-wise 后 Scalar 绝对耗时是否下降至少 80%；
+2. source cache 后 MTE2 绝对耗时是否下降至少 70%；
 3. `BT=128` 下单 task 变长是否造成核间尾部不均衡；
 4. FP32 Exp 吞吐是否高于 source 搬运压力；
 5. BSND/TND Python layout materialization在端到端时间中的占比。
-6. 每 source token 一次 `S_V` 的 Scalar/Vector stall 占比，以及后续改为纯 Vector 广播或
-   Cube block 计算的收益。
+6. dA 一次性 Scalar 重排的成本，以及是否值得再替换为专用 transpose/Gather。
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 
 ## 下一阶段候选
 
-若 profiling 确认当前路径受重复 source 读取或短向量指令限制，优先实现 16-token 子块的 AIC/AIV 融合路径。对每个目标子块选择 gate reference 后，可将计算重写为四个 FP32 Cube GEMM：
+若 block-wise profiling 仍明显落后且 Vector/Exp 成为主导，再实现 16-token 子块的 AIC/AIV 融合路径。对每个目标子块选择 gate reference 后，可将计算重写为四个 FP32 Cube GEMM：
 
 ```text
 dAqk_left  @ (K * exp2(g_ref_left - g))

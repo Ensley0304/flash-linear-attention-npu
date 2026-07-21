@@ -24,6 +24,7 @@ constexpr size_t ATTR_CHUNK_SIZE = 0;
 constexpr size_t ATTR_SAFE_GATE = 1;
 constexpr size_t ATTR_TOTAL_CHUNKS = 2;
 constexpr int64_t BC = 16;
+constexpr bool ENABLE_BLOCKWISE_SAFE = true;
 } // namespace
 
 ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
@@ -102,7 +103,11 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     tiling.set_isVarLen(isVarLen ? 1 : 0);
     tiling.set_dataType(qDesc->GetDataType() == ge::DT_BF16 ? 1 : 0);
     tiling.set_safeGate(safeGate ? 1 : 0);
-    context->SetTilingKey((qDesc->GetDataType() == ge::DT_BF16 ? 2 : 0) + (safeGate ? 1 : 0));
+    const uint64_t baseTilingKey = (qDesc->GetDataType() == ge::DT_BF16 ? 2 : 0) + (safeGate ? 1 : 0);
+    // Keys 0..3 retain the proven row-wise implementation.  The optimized
+    // safe-gate implementation uses keys 5/7 so the legacy instances remain
+    // available as an immediate compile-time rollback while profiling.
+    context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;

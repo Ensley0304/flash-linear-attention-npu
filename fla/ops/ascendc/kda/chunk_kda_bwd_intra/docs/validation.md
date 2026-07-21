@@ -9,26 +9,21 @@
 | Python 语法 | 已通过 | wrapper、导出、CPU reference、NPU pytest 均通过 `py_compile` |
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
-| C++ 结构 smoke | 已通过 | 花括号、11 个 tiling 字段、4 个 tiling key、packed metadata 路径一致 |
+| C++ 结构 smoke | 已通过 | 6 个已编译 key 分支；8 处 Alloc/Release 成对；无 SyncAll；packed metadata 路径不变 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | 部分通过 | A2/CANN 9.1 上旧逐行 dA 读取版本已编译；当前批量 dA slab 与 Scalar→Vector 同步修正待重编 |
-| AscendC NPU 精度 | 定位中 | A2 已成功 launch；旧版本 5 个接口/异常用例通过，11 个数值用例均先在 `dk` 失败，当前搬运/同步修正待回归 |
-| Profiling/性能优化 | 待 NPU 环境 | 当前仅完成静态流水与搬运优化 |
+| CANN host/kernel 编译 | 待重跑 | EVENT4 legacy 版本已在 A2/CANN 9.1 编译；block-wise key 5/7 待重编 |
+| AscendC NPU 精度 | legacy 已通过 | EVENT4 legacy 完整 22 项在物理 2 卡通过；block-wise safe 待回归 |
+| Profiling/性能优化 | legacy 已采集 | 目标 shape legacy 约 477.94 ms；block-wise 待采集 |
 
-## A2 定位基线（2026-07-21）
+## A2 精度与性能基线（2026-07-21）
 
-旧逐输出行 dA 搬运版本在 A2/CANN 9.1 上完成构建、wheel 安装和真实 kernel launch。
-完整 pytest 为 `5 passed, 11 failed`：所有 11 个数值用例的 `dq` 已通过 CPU FP64
-golden，断言随后在 `dk` 失败；失败覆盖 safe/unsafe、FP16/BF16、dense/varlen、GVA、
-四种 layout、BT=64/128 和 K=16/48/96/256，因此不能归因于单一公开 layout 或 K tail。
+EVENT4 legacy 版本已完成构建、wheel 安装和真实 kernel launch，完整 pytest 为
+`22 passed in 30.53s`。覆盖 safe/unsafe、FP16/BF16、dense/varlen、GVA、四种 layout、
+BT=64/128、K=16/48/96/256、重复 launch、零 dA 和 one-hot dA 路径。
 
-当前修正把每个 16-token task 的 dA 行/列改为一次批量 slab 搬入，并为关闭 auto-sync 的
-UB 标量读取补齐显式 `S_V` 依赖；此前仅有 Vector→Scalar 的 `V_S`，不能保证后续 Muls/Vector
-指令已经看到 Scalar 流水物化的 dA/beta 系数。测试同时增加一个零 dA
-累积量恒等用例及四个单点路径用例：`dAqk/dAkk * safe/unsafe`。它们用于区分基础输入输出、
-dA 行向 left 和列向 right 贡献；完整断言也改为
-一次报告 `dq/dk/db/dg`，避免在 `dk` 后丢失 `db/dg` 证据。该修正尚未获得板端通过结果，
-不得将静态检查视为精度通过。
+目标性能 shape 的 legacy AscendC kernel duration 为 477.937 ms，AIV time 为 455.734 ms；
+同 shape Triton kernel 为 19.272 ms。当前 block-wise 修改使用新 tiling key，必须重新完成
+编译、22 项精度与 repeated launch 后才能评价性能；legacy 的通过结论不能自动外推到新路径。
 
 ## 构建与安装
 
@@ -56,7 +51,7 @@ python -m pip install --force-reinstall --no-deps \
 ## 精度回归
 
 ```bash
-# 版本门禁：当前测试文件应收集 21 条；若仍是 16 条，说明服务器未拉到本修正。
+# 版本门禁：当前测试文件应收集 22 条。
 python -m pytest --collect-only -q \
   torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py
 
