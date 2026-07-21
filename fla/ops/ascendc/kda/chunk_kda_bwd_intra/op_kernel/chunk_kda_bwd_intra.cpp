@@ -725,15 +725,24 @@ private:
         LocalTensor<float> qCache = qSrcBuf_.Get<float>();
         LocalTensor<float> kCache = kSrcBuf_.Get<float>();
         LocalTensor<float> gCache = gSrcBuf_.Get<float>();
-        const uint8_t rightPadding = static_cast<uint8_t>(BK - curK);
+        // DataCopyPad padding can only complete the current 32-byte data
+        // block.  It must not be used to create the fixed BK row pitch (for
+        // example, K=16 would request 16 FP32 padding elements).  Keep the
+        // source rows compact and express the UB gap with dstStride instead.
+        const uint32_t qkDstStride =
+            static_cast<uint32_t>((BK - curK) * sizeof(T) / 32);
+        const uint32_t gDstStride =
+            static_cast<uint32_t>((BK - curK) * sizeof(float) / 32);
         DataCopyExtParams qkParams{static_cast<uint16_t>(curT),
                                    static_cast<uint32_t>(curK * sizeof(T)),
-                                   static_cast<uint32_t>((kDim_ - curK) * sizeof(T)), 0, 0};
+                                   static_cast<uint32_t>((kDim_ - curK) * sizeof(T)),
+                                   qkDstStride, 0};
         DataCopyExtParams gParams{static_cast<uint16_t>(curT),
                                   static_cast<uint32_t>(curK * sizeof(float)),
-                                  static_cast<uint32_t>((kDim_ - curK) * sizeof(float)), 0, 0};
-        DataCopyPadExtParams<T> typedPad{rightPadding != 0, 0, rightPadding, 0};
-        DataCopyPadExtParams<float> floatPad{rightPadding != 0, 0, rightPadding, 0.0f};
+                                  static_cast<uint32_t>((kDim_ - curK) * sizeof(float)),
+                                  gDstStride, 0};
+        DataCopyPadExtParams<T> typedPad{false, 0, 0, 0};
+        DataCopyPadExtParams<float> floatPad{false, 0, 0, 0.0f};
         SyncVToMte2();
         DataCopyPad(qTyped, q_[QOffset(b, h, chunkStart, d)], qkParams, typedPad);
         DataCopyPad(kTyped, k_[QOffset(b, h, chunkStart, d)], qkParams, typedPad);
@@ -796,11 +805,13 @@ private:
         LocalTensor<float> outQ = out0Buf_.Get<float>();
         LocalTensor<float> outK = out1Buf_.Get<float>();
         LocalTensor<float> outG = out2Buf_.Get<float>();
-        const uint8_t rightPadding = static_cast<uint8_t>(BK - curK);
+        const uint32_t dstStride =
+            static_cast<uint32_t>((BK - curK) * sizeof(float) / 32);
         DataCopyExtParams params{static_cast<uint16_t>(rowCount),
                                  static_cast<uint32_t>(curK * sizeof(float)),
-                                 static_cast<uint32_t>((kDim_ - curK) * sizeof(float)), 0, 0};
-        DataCopyPadExtParams<float> pad{rightPadding != 0, 0, rightPadding, 0.0f};
+                                 static_cast<uint32_t>((kDim_ - curK) * sizeof(float)),
+                                 dstStride, 0};
+        DataCopyPadExtParams<float> pad{false, 0, 0, 0.0f};
         SyncVToMte2();
         DataCopyPad(outQ, dq_[VOffset(b, hv, chunkStart + rowBegin, d)], params, pad);
         DataCopyPad(outK, dk_[VOffset(b, hv, chunkStart + rowBegin, d)], params, pad);
