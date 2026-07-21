@@ -758,17 +758,15 @@ private:
                                             LocalTensor<float> coefficients, uint32_t curK)
     {
         LocalTensor<float> coefficientBrcb = tmp1Buf_.Get<float>();
-        LocalTensor<float> product = blockTmpBuf_.Get<float>();
         Brcb(coefficientBrcb, coefficients, static_cast<uint8_t>(BC / 8), {1, 8});
         PipeBarrier<PIPE_V>();
-        BinaryRepeatParams mulParams{1, 1, 0, static_cast<uint8_t>(BK * sizeof(float) / 32), 0, 1};
-        Mul(product, common, coefficientBrcb, curK, static_cast<uint8_t>(BC), mulParams);
-        PipeBarrier<PIPE_V>();
-        BinaryRepeatParams addParams{1, 1, 1,
-                                    static_cast<uint8_t>(BK * sizeof(float) / 32),
-                                    static_cast<uint8_t>(BK * sizeof(float) / 32),
-                                    static_cast<uint8_t>(BK * sizeof(float) / 32)};
-        Add(acc, acc, product, curK, static_cast<uint8_t>(BC), addParams);
+        // Each source contributes one rank-1 update to all BC output rows.
+        // Keep the broadcast coefficient layout, but fuse product formation
+        // and FP32 accumulation so the hot source loop issues one vector
+        // instruction instead of a Mul followed by an Add.
+        BinaryRepeatParams maddParams{1, 1, 0,
+                                     static_cast<uint8_t>(BK * sizeof(float) / 32), 0, 1};
+        MulAddDst(acc, common, coefficientBrcb, curK, static_cast<uint8_t>(BC), maddParams);
         PipeBarrier<PIPE_V>();
     }
 
@@ -959,14 +957,10 @@ private:
         Add(outK, outK, dkLeft, validBlockElements);
         PipeBarrier<PIPE_V>();
         Add(outK, outK, dkRight, validBlockElements);
-        Mul(blockTmp, qCache[rowBegin * BK], dqAcc, validBlockElements);
+        MulAddDst(outG, qCache[rowBegin * BK], dqAcc, validBlockElements);
         Sub(dkRight, dkLeft, dkRight, validBlockElements);
         PipeBarrier<PIPE_V>();
-        Mul(dkRight, dkRight, kCache[rowBegin * BK], validBlockElements);
-        PipeBarrier<PIPE_V>();
-        Add(outG, outG, blockTmp, validBlockElements);
-        PipeBarrier<PIPE_V>();
-        Add(outG, outG, dkRight, validBlockElements);
+        MulAddDst(outG, dkRight, kCache[rowBegin * BK], validBlockElements);
         PipeBarrier<PIPE_V>();
         StoreOutputFeatureBlock(b, hv, chunkStart, rowBegin, rowCount, d, curK);
     }
