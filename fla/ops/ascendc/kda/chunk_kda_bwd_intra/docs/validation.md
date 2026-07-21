@@ -11,9 +11,24 @@
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | C++ 结构 smoke | 已通过 | 花括号、11 个 tiling 字段、4 个 tiling key、packed metadata 路径一致 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | 待 NPU 环境 | 需要 CANN toolchain |
-| AscendC NPU 精度 | 待 NPU 环境 | 需要运行新增 pytest，主验 `safe_gate=true` |
+| CANN host/kernel 编译 | 部分通过 | A2/CANN 9.1 上旧逐行 dA 读取版本已编译；当前批量 dA slab 与 Scalar→Vector 同步修正待重编 |
+| AscendC NPU 精度 | 定位中 | A2 已成功 launch；旧版本 5 个接口/异常用例通过，11 个数值用例均先在 `dk` 失败，当前搬运/同步修正待回归 |
 | Profiling/性能优化 | 待 NPU 环境 | 当前仅完成静态流水与搬运优化 |
+
+## A2 定位基线（2026-07-21）
+
+旧逐输出行 dA 搬运版本在 A2/CANN 9.1 上完成构建、wheel 安装和真实 kernel launch。
+完整 pytest 为 `5 passed, 11 failed`：所有 11 个数值用例的 `dq` 已通过 CPU FP64
+golden，断言随后在 `dk` 失败；失败覆盖 safe/unsafe、FP16/BF16、dense/varlen、GVA、
+四种 layout、BT=64/128 和 K=16/48/96/256，因此不能归因于单一公开 layout 或 K tail。
+
+当前修正把每个 16-token task 的 dA 行/列改为一次批量 slab 搬入，并为关闭 auto-sync 的
+UB 标量读取补齐显式 `S_V` 依赖；此前仅有 Vector→Scalar 的 `V_S`，不能保证后续 Muls/Vector
+指令已经看到 Scalar 流水物化的 dA/beta 系数。测试同时增加一个零 dA
+累积量恒等用例及四个单点路径用例：`dAqk/dAkk * safe/unsafe`。它们用于区分基础输入输出、
+dA 行向 left 和列向 right 贡献；完整断言也改为
+一次报告 `dq/dk/db/dg`，避免在 `dk` 后丢失 `db/dg` 证据。该修正尚未获得板端通过结果，
+不得将静态检查视为精度通过。
 
 ## 构建与安装
 
@@ -41,6 +56,16 @@ python -m pip install --force-reinstall --no-deps \
 ## 精度回归
 
 ```bash
+# 版本门禁：当前测试文件应收集 21 条；若仍是 16 条，说明服务器未拉到本修正。
+python -m pytest --collect-only -q \
+  torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py
+
+# 先跑 5 条路径定位用例，分别隔离零 dA、dAqk/dAkk 和 safe/unsafe。
+python -m pytest -q -vv -p no:cacheprovider \
+  torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py \
+  -k "zero_da or one_hot_da_paths" -s
+
+# 定向用例通过后再跑完整单算子回归。
 bash torch_custom/fla_npu/test/test.sh --device 0 --op chunk_kda_bwd_intra
 # 或直接运行：
 python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
@@ -55,6 +80,8 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 - varlen：显式 canonical `chunk_indices`，并覆盖单序列跨多个 chunk；
 - `BSND`、`BNSD`、`TND`、`NTD` 和 `chunk_size=64/128`。
 - `K=16/48/96/256` 的下界、16-feature 尾块、非 2 次幂和上界。
+- 零 dA 时四个输入梯度累积量原样写回。
+- 单点 `dAqk[18,2]` 与 `dAkk[18,2]` 的跨 16-token block 行/列路径，分别覆盖 safe/unsafe。
 
 板端通过门槛：四个输出均 finite，且逐输出通过测试中的 CPU FP64 golden 容差。若 safe case 失败，应先分别对比 `dq_local`、`dk_left_pre`、`dk_right`，重点检查 16-token 首/中/尾参考点的内外指数方向。
 

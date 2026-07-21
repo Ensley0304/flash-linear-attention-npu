@@ -17,14 +17,7 @@ constexpr uint32_t BC = 16;
 constexpr uint32_t BK = 32;
 constexpr uint32_t MAX_BT = 128;
 constexpr uint32_t MAX_K = 256;
-constexpr uint32_t COL_PAD = 8;
 constexpr float LN2 = 0.69314718055994530942f;
-constexpr uint32_t EVENT_MTE2_V = 0;
-constexpr uint32_t EVENT_V_MTE3 = 1;
-constexpr uint32_t EVENT_MTE3_V = 2;
-constexpr uint32_t EVENT_V_S = 3;
-constexpr uint32_t EVENT_V_MTE2 = 4;
-constexpr uint32_t EVENT_MTE3_MTE2 = 5;
 
 template <typename T, bool SAFE_GATE>
 class ChunkKdaBwdIntraKernel {
@@ -63,10 +56,10 @@ public:
         }
         pipe_ = pipe;
 
-        pipe_->InitBuffer(dARowQBuf_, MAX_BT * sizeof(float));
-        pipe_->InitBuffer(dARowKBuf_, MAX_BT * sizeof(float));
-        pipe_->InitBuffer(dAColQBuf_, MAX_BT * COL_PAD * sizeof(float));
-        pipe_->InitBuffer(dAColKBuf_, MAX_BT * COL_PAD * sizeof(float));
+        pipe_->InitBuffer(dARowQBuf_, BC * MAX_BT * sizeof(float));
+        pipe_->InitBuffer(dARowKBuf_, BC * MAX_BT * sizeof(float));
+        pipe_->InitBuffer(dAColQBuf_, MAX_BT * BC * sizeof(float));
+        pipe_->InitBuffer(dAColKBuf_, MAX_BT * BC * sizeof(float));
         pipe_->InitBuffer(betaBuf_, MAX_BT * sizeof(float));
         pipe_->InitBuffer(qTypedBuf_, BK * sizeof(T));
         pipe_->InitBuffer(kTypedBuf_, BK * sizeof(T));
@@ -144,10 +137,7 @@ private:
         } else {
             LocalTensor<int64_t> metadata = chunkMetaBuf_.Get<int64_t>();
             DataCopy(metadata, chunkMeta_[flatChunk * 4], 4);
-            SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-            WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-            SetFlag<HardEvent::V_S>(EVENT_V_S);
-            WaitFlag<HardEvent::V_S>(EVENT_V_S);
+            SyncMte2ToS();
             __ubuf__ int64_t *metadataPtr = reinterpret_cast<__ubuf__ int64_t *>(metadata.GetPhyAddr());
             start = static_cast<uint64_t>(metadataPtr[1]);
             end = static_cast<uint64_t>(metadataPtr[2]);
@@ -184,14 +174,58 @@ private:
 
     __aicore__ inline void SyncVToMte2()
     {
-        SetFlag<HardEvent::V_MTE2>(EVENT_V_MTE2);
-        WaitFlag<HardEvent::V_MTE2>(EVENT_V_MTE2);
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+        SetFlag<HardEvent::V_MTE2>(eventId);
+        WaitFlag<HardEvent::V_MTE2>(eventId);
     }
 
     __aicore__ inline void SyncMte3ToMte2()
     {
-        SetFlag<HardEvent::MTE3_MTE2>(EVENT_MTE3_MTE2);
-        WaitFlag<HardEvent::MTE3_MTE2>(EVENT_MTE3_MTE2);
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_MTE2));
+        SetFlag<HardEvent::MTE3_MTE2>(eventId);
+        WaitFlag<HardEvent::MTE3_MTE2>(eventId);
+    }
+
+    __aicore__ inline void SyncSToV()
+    {
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
+        SetFlag<HardEvent::S_V>(eventId);
+        WaitFlag<HardEvent::S_V>(eventId);
+    }
+
+    __aicore__ inline void SyncMte2ToS()
+    {
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_S));
+        SetFlag<HardEvent::MTE2_S>(eventId);
+        WaitFlag<HardEvent::MTE2_S>(eventId);
+    }
+
+    __aicore__ inline void SyncMte2ToV()
+    {
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+        SetFlag<HardEvent::MTE2_V>(eventId);
+        WaitFlag<HardEvent::MTE2_V>(eventId);
+    }
+
+    __aicore__ inline void SyncVToS()
+    {
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
+        SetFlag<HardEvent::V_S>(eventId);
+        WaitFlag<HardEvent::V_S>(eventId);
+    }
+
+    __aicore__ inline void SyncVToMte3()
+    {
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+        SetFlag<HardEvent::V_MTE3>(eventId);
+        WaitFlag<HardEvent::V_MTE3>(eventId);
+    }
+
+    __aicore__ inline void SyncMte3ToV()
+    {
+        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+        SetFlag<HardEvent::MTE3_V>(eventId);
+        WaitFlag<HardEvent::MTE3_V>(eventId);
     }
 
     __aicore__ inline void LoadQkg(uint64_t qOffset, uint64_t vOffset, LocalTensor<float> qDst,
@@ -203,8 +237,7 @@ private:
         DataCopy(qTyped, q_[qOffset], count);
         DataCopy(kTyped, k_[qOffset], count);
         DataCopy(gDst, g_[vOffset], count);
-        SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+        SyncMte2ToV();
         Cast(qDst, qTyped, RoundMode::CAST_NONE, count);
         Cast(kDst, kTyped, RoundMode::CAST_NONE, count);
         PipeBarrier<PIPE_V>();
@@ -217,8 +250,7 @@ private:
         SyncVToMte2();
         DataCopy(kTyped, k_[qOffset], count);
         DataCopy(gDst, g_[vOffset], count);
-        SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+        SyncMte2ToV();
         Cast(kDst, kTyped, RoundMode::CAST_NONE, count);
         PipeBarrier<PIPE_V>();
     }
@@ -227,8 +259,7 @@ private:
     {
         SyncVToMte2();
         DataCopy(gDst, g_[vOffset], count);
-        SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+        SyncMte2ToV();
         Adds(gDst, gDst, 0.0f, count);
         PipeBarrier<PIPE_V>();
     }
@@ -274,32 +305,29 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
-    __aicore__ inline void LoadDA(uint64_t b, uint64_t hv, uint64_t globalRow, uint64_t localRow,
-                                  uint64_t chunkStart, uint64_t curT)
+    __aicore__ inline void LoadDABlock(uint64_t b, uint64_t hv, uint64_t chunkStart,
+                                       uint64_t curT, uint64_t rowBegin, uint64_t rowCount)
     {
         LocalTensor<float> rowQ = dARowQBuf_.Get<float>();
         LocalTensor<float> rowK = dARowKBuf_.Get<float>();
         LocalTensor<float> colQ = dAColQBuf_.Get<float>();
         LocalTensor<float> colK = dAColKBuf_.Get<float>();
-        DataCopy(rowQ, dAqk_[AOffset(b, hv, globalRow, 0)], static_cast<uint32_t>(bt_));
-        DataCopy(rowK, dAkk_[AOffset(b, hv, globalRow, 0)], static_cast<uint32_t>(bt_));
-        const uint32_t copiedColumnElements = localRow + COL_PAD <= bt_ ? COL_PAD : 1;
-        DataCopyExtParams colParams{static_cast<uint16_t>(curT),
-                                    copiedColumnElements * static_cast<uint32_t>(sizeof(float)),
-                                    static_cast<uint32_t>((bt_ - copiedColumnElements) * sizeof(float)), 0, 0};
-        DataCopyPadExtParams<float> colPad{copiedColumnElements == 1, 0,
-                                          static_cast<uint8_t>(COL_PAD - copiedColumnElements), 0.0f};
-        DataCopyPad(colQ, dAqk_[AOffset(b, hv, chunkStart, localRow)], colParams, colPad);
-        DataCopyPad(colK, dAkk_[AOffset(b, hv, chunkStart, localRow)], colParams, colPad);
-        SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        Adds(rowQ, rowQ, 0.0f, static_cast<uint32_t>(bt_));
-        Adds(rowK, rowK, 0.0f, static_cast<uint32_t>(bt_));
-        Adds(colQ, colQ, 0.0f, static_cast<uint32_t>(curT * COL_PAD));
-        Adds(colK, colK, 0.0f, static_cast<uint32_t>(curT * COL_PAD));
-        PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_S>(EVENT_V_S);
-        WaitFlag<HardEvent::V_S>(EVENT_V_S);
+        DataCopyExtParams rowParams{static_cast<uint16_t>(rowCount),
+                                    static_cast<uint32_t>(bt_ * sizeof(float)), 0, 0, 0};
+        DataCopyPadExtParams<float> noPad{false, 0, 0, 0.0f};
+        DataCopyPad(rowQ, dAqk_[AOffset(b, hv, chunkStart + rowBegin, 0)], rowParams, noPad);
+        DataCopyPad(rowK, dAkk_[AOffset(b, hv, chunkStart + rowBegin, 0)], rowParams, noPad);
+
+        // Load the 16 columns owned by this task as a packed [curT, BC]
+        // slab. BT and BC are both 32-byte aligned for FP32, so every block
+        // has an exact layout and ProcessRow can address one column with a
+        // fixed BC stride. The full BC columns are valid storage even for a
+        // short tail task; only rowCount columns are consumed.
+        DataCopyExtParams colParams{static_cast<uint16_t>(curT), BC * sizeof(float),
+                                    static_cast<uint32_t>((bt_ - BC) * sizeof(float)), 0, 0};
+        DataCopyPad(colQ, dAqk_[AOffset(b, hv, chunkStart, rowBegin)], colParams, noPad);
+        DataCopyPad(colK, dAkk_[AOffset(b, hv, chunkStart, rowBegin)], colParams, noPad);
+        SyncMte2ToS();
     }
 
     __aicore__ inline float ReduceDb(LocalTensor<float> dkLeft, LocalTensor<float> kSelf, uint32_t count)
@@ -311,8 +339,7 @@ private:
         PipeBarrier<PIPE_V>();
         ReduceSum<float, true>(scalar, product, reduceTmp, static_cast<int32_t>(count));
         PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_S>(EVENT_V_S);
-        WaitFlag<HardEvent::V_S>(EVENT_V_S);
+        SyncVToS();
         return reinterpret_cast<__ubuf__ float *>(scalar.GetPhyAddr())[0];
     }
 
@@ -320,11 +347,15 @@ private:
                                       uint64_t curT, uint64_t localRow, __ubuf__ float *betaPtr)
     {
         const uint64_t globalRow = chunkStart + localRow;
-        LoadDA(b, hv, globalRow, localRow, chunkStart, curT);
-        __ubuf__ float *rowQPtr = reinterpret_cast<__ubuf__ float *>(dARowQBuf_.Get<float>().GetPhyAddr());
-        __ubuf__ float *rowKPtr = reinterpret_cast<__ubuf__ float *>(dARowKBuf_.Get<float>().GetPhyAddr());
-        __ubuf__ float *colQPtr = reinterpret_cast<__ubuf__ float *>(dAColQBuf_.Get<float>().GetPhyAddr());
-        __ubuf__ float *colKPtr = reinterpret_cast<__ubuf__ float *>(dAColKBuf_.Get<float>().GetPhyAddr());
+        const uint64_t rowInBlock = localRow % BC;
+        __ubuf__ float *rowQPtr = reinterpret_cast<__ubuf__ float *>(dARowQBuf_.Get<float>().GetPhyAddr()) +
+                                 rowInBlock * bt_;
+        __ubuf__ float *rowKPtr = reinterpret_cast<__ubuf__ float *>(dARowKBuf_.Get<float>().GetPhyAddr()) +
+                                 rowInBlock * bt_;
+        __ubuf__ float *colQPtr = reinterpret_cast<__ubuf__ float *>(dAColQBuf_.Get<float>().GetPhyAddr()) +
+                                 rowInBlock;
+        __ubuf__ float *colKPtr = reinterpret_cast<__ubuf__ float *>(dAColKBuf_.Get<float>().GetPhyAddr()) +
+                                 rowInBlock;
         const float betaValue = betaPtr[localRow];
         float dbSum = 0.0f;
 
@@ -375,24 +406,42 @@ private:
                     } else {
                         LoadQkg(QOffset(b, h, globalJ, d), VOffset(b, hv, globalJ, d), qSrc, kSrc, gSrc, curK);
                     }
+                    float rowQScale = 0.0f;
+                    float rowKScale = 0.0f;
+                    float colQScale = 0.0f;
+                    float colKScale = 0.0f;
+                    if (j <= localRow) {
+                        rowQScale = rowQPtr[j];
+                        rowKScale = rowKPtr[j];
+                    }
+                    if (j >= localRow) {
+                        colQScale = colQPtr[j * BC];
+                        colKScale = colKPtr[j * BC] * betaPtr[j];
+                    }
+                    // dA and beta coefficients are read by PIPE_S from UB.
+                    // Auto-sync is disabled for this project, so PIPE_V must
+                    // explicitly wait before consuming those scalar values.
+                    // Reading after issuing LoadQkg lets PIPE_S overlap the
+                    // coefficient access with the source-token MTE2/Cast path.
+                    SyncSToV();
                     if (j <= localRow) {
                         if (j < blockBegin) {
                             BuildGate(gate, gLeftRef, gSrc, curK);
-                            AddScaledPair(dqAcc, rowQPtr[j], dkLeft, rowKPtr[j], kSrc, gate, curK);
+                            AddScaledPair(dqAcc, rowQScale, dkLeft, rowKScale, kSrc, gate, curK);
                         } else {
                             BuildGate(gate, gDiagRef, gSrc, curK);
-                            AddScaledPair(dqDiag, rowQPtr[j], dkLeftDiag, rowKPtr[j], kSrc, gate, curK);
+                            AddScaledPair(dqDiag, rowQScale, dkLeftDiag, rowKScale, kSrc, gate, curK);
                         }
                     }
                     if (j >= localRow) {
                         if (j < blockEnd) {
                             BuildGate(gate, gSrc, gDiagRef, curK);
-                            AddScaled(dkRight, qSrc, gate, colQPtr[j * COL_PAD], curK);
-                            AddScaled(dkRight, kSrc, gate, colKPtr[j * COL_PAD] * betaPtr[j], curK);
+                            AddScaled(dkRight, qSrc, gate, colQScale, curK);
+                            AddScaled(dkRight, kSrc, gate, colKScale, curK);
                         } else {
                             BuildGate(gate, gSrc, gRightRef, curK);
-                            AddScaled(dkRightFuture, qSrc, gate, colQPtr[j * COL_PAD], curK);
-                            AddScaled(dkRightFuture, kSrc, gate, colKPtr[j * COL_PAD] * betaPtr[j], curK);
+                            AddScaled(dkRightFuture, qSrc, gate, colQScale, curK);
+                            AddScaled(dkRightFuture, kSrc, gate, colKScale, curK);
                         }
                     }
                 }
@@ -452,17 +501,30 @@ private:
                     } else {
                         LoadQkg(QOffset(b, h, globalJ, d), VOffset(b, hv, globalJ, d), qSrc, kSrc, gSrc, curK);
                     }
+                    float rowQScale = 0.0f;
+                    float rowKScale = 0.0f;
+                    float colQScale = 0.0f;
+                    float colKScale = 0.0f;
+                    if (j <= localRow) {
+                        rowQScale = rowQPtr[j];
+                        rowKScale = rowKPtr[j];
+                    }
+                    if (j >= localRow) {
+                        colQScale = colQPtr[j * BC];
+                        colKScale = colKPtr[j * BC] * betaPtr[j];
+                    }
+                    SyncSToV();
                     if (j <= localRow) {
                         if (j < blockBegin) {
                             BuildGate(gate, gLeftRef, gSrc, curK);
-                            AddScaledPair(dqPrevious, rowQPtr[j], dkLeftPrevious, rowKPtr[j], kSrc, gate, curK);
+                            AddScaledPair(dqPrevious, rowQScale, dkLeftPrevious, rowKScale, kSrc, gate, curK);
                         } else if (j == localRow) {
                             Duplicate(gate, 1.0f, curK);
                             PipeBarrier<PIPE_V>();
-                            AddScaledPair(dqAcc, rowQPtr[j], dkLeft, rowKPtr[j], kSrc, gate, curK);
+                            AddScaledPair(dqAcc, rowQScale, dkLeft, rowKScale, kSrc, gate, curK);
                         } else {
                             BuildGate(gate, gSelf, gSrc, curK);
-                            AddScaledPair(dqAcc, rowQPtr[j], dkLeft, rowKPtr[j], kSrc, gate, curK);
+                            AddScaledPair(dqAcc, rowQScale, dkLeft, rowKScale, kSrc, gate, curK);
                         }
                     }
                     if (j >= localRow) {
@@ -470,12 +532,12 @@ private:
                             if (j != localRow) {
                                 BuildGate(gate, gSrc, gSelf, curK);
                             }
-                            AddScaled(dkRight, qSrc, gate, colQPtr[j * COL_PAD], curK);
-                            AddScaled(dkRight, kSrc, gate, colKPtr[j * COL_PAD] * betaPtr[j], curK);
+                            AddScaled(dkRight, qSrc, gate, colQScale, curK);
+                            AddScaled(dkRight, kSrc, gate, colKScale, curK);
                         } else {
                             BuildGate(gate, gSrc, gRightRef, curK);
-                            AddScaled(dkRightFuture, qSrc, gate, colQPtr[j * COL_PAD], curK);
-                            AddScaled(dkRightFuture, kSrc, gate, colKPtr[j * COL_PAD] * betaPtr[j], curK);
+                            AddScaled(dkRightFuture, qSrc, gate, colQScale, curK);
+                            AddScaled(dkRightFuture, kSrc, gate, colKScale, curK);
                         }
                     }
                 }
@@ -500,6 +562,10 @@ private:
             }
 
             dbSum += ReduceDb(dkLeft, kSelf, curK);
+            // ReduceDb returns a PIPE_S read from scalarBuf_.  Synchronize it
+            // before the next vector operation (and before scalarBuf_ can be
+            // reused by a later feature tile).
+            SyncSToV();
             Muls(dkLeft, dkLeft, betaValue, curK);
             PipeBarrier<PIPE_V>();
 
@@ -510,8 +576,7 @@ private:
             CopyFp32In(outQ, dq_, VOffset(b, hv, globalRow, d), curK);
             CopyFp32In(outK, dk_, VOffset(b, hv, globalRow, d), curK);
             CopyFp32In(outG, dg_, VOffset(b, hv, globalRow, d), curK);
-            SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-            WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+            SyncMte2ToV();
             Add(outQ, outQ, dqAcc, curK);
             Add(outK, outK, dkLeft, curK);
             Add(outK, outK, dkRight, curK);
@@ -525,29 +590,24 @@ private:
             Add(outG, outG, tmp0, curK);
             Add(outG, outG, tmp1, curK);
             PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_MTE3>(EVENT_V_MTE3);
-            WaitFlag<HardEvent::V_MTE3>(EVENT_V_MTE3);
+            SyncVToMte3();
             CopyFp32Out(dqOut_, VOffset(b, hv, globalRow, d), outQ, curK);
             CopyFp32Out(dkOut_, VOffset(b, hv, globalRow, d), outK, curK);
             CopyFp32Out(dgOut_, VOffset(b, hv, globalRow, d), outG, curK);
             SyncMte3ToMte2();
-            SetFlag<HardEvent::MTE3_V>(EVENT_MTE3_V);
-            WaitFlag<HardEvent::MTE3_V>(EVENT_MTE3_V);
+            SyncMte3ToV();
         }
 
         LocalTensor<float> scalar = scalarBuf_.Get<float>();
         SyncVToMte2();
         CopyFp32In(scalar, db_, BetaOffset(b, hv, globalRow), 1);
-        SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+        SyncMte2ToV();
         Adds(scalar, scalar, dbSum, 1);
         PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_MTE3>(EVENT_V_MTE3);
-        WaitFlag<HardEvent::V_MTE3>(EVENT_V_MTE3);
+        SyncVToMte3();
         CopyFp32Out(dbOut_, BetaOffset(b, hv, globalRow), scalar, 1);
         SyncMte3ToMte2();
-        SetFlag<HardEvent::MTE3_V>(EVENT_MTE3_V);
-        WaitFlag<HardEvent::MTE3_V>(EVENT_MTE3_V);
+        SyncMte3ToV();
     }
 
     __aicore__ inline void ProcessTask(uint64_t task, uint64_t nc)
@@ -560,12 +620,7 @@ private:
         LocalTensor<float> betaLocal = betaBuf_.Get<float>();
         SyncVToMte2();
         CopyFp32In(betaLocal, beta_, BetaOffset(b, hv, start), curT);
-        SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
-        Adds(betaLocal, betaLocal, 0.0f, static_cast<uint32_t>(curT));
-        PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_S>(EVENT_V_S);
-        WaitFlag<HardEvent::V_S>(EVENT_V_S);
+        SyncMte2ToS();
         __ubuf__ float *betaPtr = reinterpret_cast<__ubuf__ float *>(betaLocal.GetPhyAddr());
         uint64_t rowBegin = rowBlock * BC;
         uint64_t rowEnd = rowBegin + BC;
@@ -582,6 +637,7 @@ private:
             LoadG(VOffset(b, hv, start + rowMid, 0), gDiagRefBuf_.Get<float>(),
                   static_cast<uint32_t>(kDim_));
         }
+        LoadDABlock(b, hv, start, curT, rowBegin, rowEnd - rowBegin);
         for (uint64_t row = rowBegin; row < rowEnd; ++row) {
             ProcessRow(b, h, hv, start, curT, row, betaPtr);
         }

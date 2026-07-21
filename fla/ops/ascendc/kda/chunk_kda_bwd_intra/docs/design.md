@@ -58,11 +58,13 @@ q/k/g/beta,dAqk,dAkk,dq/dk/db/dg (GM)
 - `BC=16`：对应上游稳定 gate 子块，也是 dA 行/列驻留 UB 的粒度；
 - `BK=32`：q/k 半精度搬运 64B、gate/梯度 FP32 搬运 128B，均满足 32B 对齐；
 - 每次只保留一个输出 token 的 FP32 累加向量及三个跨/块内 partial，避免 `BT*BT*K` 中间量；
-- dA 的行使用连续 DataCopy，列使用二维 DataCopyPad 收集，禁止逐 GM 标量读。
+- 每个 task 一次搬入当前 16-token 块的 `[R,BT]` 行 slab，以及全部有效 source token
+  对应的 `[curT,16]` 列 slab；行/列块均使用二维 DataCopyPad，kernel 随后只在 UB 中索引，
+  禁止逐 GM 标量读，也不为同一 task 的 16 个输出行重复搬运 dA。
 
 ### 4.3 UB 预算
 
-固定 buffer 包括两条 dA 行、两条 dA 列、beta、q/k 半精度输入、q/k/g FP32 向量、梯度累加向量、临时向量和 reduce 临时区；safe 分支另有三个 `MAX_K=256` 的参考 gate 向量。按 `BT=128/BK=32` 估算小于 32 KiB，给编译器和 API 临时区保留充足余量。
+固定 buffer 包括两份 `16*MAX_BT` dA 行 slab、两份 `MAX_BT*16` dA 列 slab、beta、q/k 半精度输入、q/k/g FP32 向量、梯度累加向量、临时向量和 reduce 临时区；safe 分支另有三个 `MAX_K=256` 的参考 gate 向量。按 `BT=128/BK=32` 估算约 38.6 KiB，低于 40 KiB，给编译器和 API 临时区保留充足余量。
 
 ## 5. safe_gate 分支
 
@@ -75,6 +77,11 @@ q/k/g/beta,dAqk,dAkk,dq/dk/db/dg (GM)
 
 - q/k 在 UB 转 FP32；gate、dA 和输入累积梯度保持 FP32；
 - 所有乘加、指数、K 维 reduce 均为 FP32；
+- 工程关闭自动同步。dA/beta 由 Scalar 流水从 UB 物化后，每个 source token 在首条依赖这些
+  系数的 Vector 指令前显式执行一次 `S_V`；对应 GM→UB 搬运直接用 `MTE2_S` 交给 Scalar，
+  不借助无意义 Vector no-op 中转。K 维 ReduceSum 经 `V_S` 读回标量后，也在复用
+  vector/scalar buffer 前执行 `S_V`，避免把 UB 标量读取误当成同步内存访问；所有事件 ID
+  均通过 `GetTPipePtr()->FetchEventID` 获取，不依赖手写编号；
 - tail token 和 causal mask 通过循环边界实现，不读取 chunk/sequence 外数据；
 - 基准重点覆盖大负累积 gate、非整 chunk、GVA (`HV/H>1`)、dense/varlen、FP16/BF16，以及 safe/unsafe 两个分支。
 

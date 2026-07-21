@@ -12,9 +12,16 @@
 - safe 分支的首/中/尾完整 K 参考向量在 task 开头各搬一次并驻留 UB，供同一 16-token block 的所有输出行复用；
 - future `dAkk*beta` 先做 FP32 标量合并；
 - `db` 在同一 task 内跨 K tile 归约，避免全局 partial tensor 和第二次 launch；
-- dA 列提取除末 7 列外按每行 32B 搬运，末 7 列才回退到 4B `DataCopyPad`；
+- 每个 16-token task 只下发四次二维 `DataCopyPad`，一次性搬入 dAqk/dAkk 的
+  `[R,BT]` 行 slab 和 `[curT,16]` 列 slab；所有 blockLen 均为 32B 的整数倍，
+  不再为每个输出行重复提取 dA 行/列；
 - varlen 每个 task 只连续搬运一条 32B packed chunk metadata，不携带大 tiling 数组、不做 device 二分；
 - task 写区间互斥，无 atomic、跨核同步或随序列增长的 workspace。
+- dA/beta 标量在每个 source token 的 q/k/g 搬运下发后一次性物化，并合并为一个 `S_V`
+  事件后再进入依赖这些系数的向量计算，使 Scalar 访问可与 source MTE2/Cast 部分重叠；
+  GM→UB 后直接使用 `MTE2_S`，省去 Vector no-op 中转。这些事件是关闭
+  auto-sync 后的正确性依赖，ID 由 `FetchEventID` 动态取得；其 stall 成本需要单独
+  profiling，不能为了缩短时延删除。
 
 ## 理论模型
 
@@ -24,7 +31,12 @@
 source vector loads: O(R * L * K / BK)
 Exp vectors:         O(R * (L - 1) * K / BK)
 FP32 vector FLOPs:   O(R * L * K)
+dA GM elements:      2 * (R * BT + L * 16)
 ```
+
+满 16 行 task 下，相比原逐输出行搬运方案，dA MTE2 调用由约 `4R` 次降为 4 次；
+当 `L=BT` 时，dA 有效搬运量由每个矩阵约 `R*(BT+8*BT)` 个元素降为
+`R*BT+16*BT`，即约减少 4.5 倍。这里是按访问量计算的静态估算，不替代上板 profiling。
 
 核间并行 task 数为 `chunks * HV * ceil(BT/16)`。长序列和常见多头形状可以覆盖全部 AIV；极小单 chunk/单头 case 会受可并行 task 数限制。
 
@@ -37,6 +49,8 @@ FP32 vector FLOPs:   O(R * L * K)
 3. `BT=128` 下单 task 变长是否造成核间尾部不均衡；
 4. FP32 Exp 吞吐是否高于 source 搬运压力；
 5. BSND/TND Python layout materialization在端到端时间中的占比。
+6. 每 source token 一次 `S_V` 的 Scalar/Vector stall 占比，以及后续改为纯 Vector 广播或
+   Cube block 计算的收益。
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 

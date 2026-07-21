@@ -54,6 +54,7 @@ def _case(
 
 
 def _assert_outputs(got, ref, rtol=3e-3, atol=3e-3):
+    failures = []
     for name, actual, expected in zip(("dq", "dk", "db", "dg"), got, (ref.dq, ref.dk, ref.db, ref.dg)):
         actual_cpu = actual.detach().cpu()
         expected_cpu = expected.detach().cpu()
@@ -66,7 +67,9 @@ def _assert_outputs(got, ref, rtol=3e-3, atol=3e-3):
                 check_dtype=False,
             )
         except AssertionError as error:
-            raise AssertionError(f"{name} does not match the FP64 CPU golden:\n{error}") from error
+            failures.append(f"{name} does not match the FP64 CPU golden:\n{error}")
+    if failures:
+        raise AssertionError("\n\n".join(failures))
 
 
 def _golden(*inputs, chunk_size=64, cu_seqlens=None, safe_gate=True):
@@ -77,6 +80,29 @@ def _golden(*inputs, chunk_size=64, cu_seqlens=None, safe_gate=True):
         safe_gate=safe_gate,
         acc_dtype=torch.float64,
     )
+
+
+def _one_hot_da_case(source):
+    """Isolate row/column dA paths with a single non-zero matrix entry."""
+    t, kdim, chunk_size = 19, 16, 64
+    q = torch.zeros(1, t, 1, kdim, dtype=torch.float16)
+    k = torch.zeros_like(q)
+    q[0, 18, 0] = torch.arange(1, kdim + 1, dtype=torch.float16) / 32
+    k[0, 2, 0] = torch.arange(kdim, 0, -1, dtype=torch.float16) / 32
+    k[0, 18, 0] = torch.arange(1, kdim + 1, dtype=torch.float16) / 64
+    g = torch.zeros(1, t, 1, kdim, dtype=torch.float32)
+    beta = torch.linspace(0.25, 0.75, t, dtype=torch.float32).reshape(1, t, 1)
+    dAqk = torch.zeros(1, t, 1, chunk_size, dtype=torch.float32)
+    dAkk = torch.zeros_like(dAqk)
+    if source == "dAqk":
+        dAqk[0, 18, 0, 2] = 0.5
+    else:
+        dAkk[0, 18, 0, 2] = 0.5
+    dq = torch.zeros(1, t, 1, kdim, dtype=torch.float32)
+    dk = torch.zeros_like(dq)
+    db = torch.zeros(1, t, 1, dtype=torch.float32)
+    dg = torch.zeros_like(dq)
+    return q, k, g, beta, dAqk, dAkk, dq, dk, db, dg
 
 
 def test_chunk_kda_bwd_intra_reference_safe_and_unsafe_fp64_agree():
@@ -96,6 +122,30 @@ def test_chunk_kda_bwd_intra_reference_safe_and_unsafe_fp64_agree():
 def test_chunk_kda_bwd_intra_default_keeps_upstream_unsafe_contract():
     signature = inspect.signature(_aclnn_ctypes.npu_chunk_kda_bwd_intra)
     assert signature.parameters["safe_gate"].default is False
+
+
+def test_chunk_kda_bwd_intra_zero_da_preserves_accumulators():
+    device = _device()
+    inputs = list(_case(t=19, h=1, hv=1, kdim=16, gate_scale=0.2))
+    inputs[4].zero_()
+    inputs[5].zero_()
+    ref = _golden(*inputs, chunk_size=64, safe_gate=True)
+    got = fla_ascendc.chunk_kda_bwd_intra(
+        *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=True
+    )
+    _assert_outputs(got, ref, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("source", ["dAqk", "dAkk"])
+@pytest.mark.parametrize("safe_gate", [True, False])
+def test_chunk_kda_bwd_intra_one_hot_da_paths(source, safe_gate):
+    device = _device()
+    inputs = _one_hot_da_case(source)
+    ref = _golden(*inputs, chunk_size=64, safe_gate=safe_gate)
+    got = fla_ascendc.chunk_kda_bwd_intra(
+        *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=safe_gate
+    )
+    _assert_outputs(got, ref, rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.parametrize("kdim", [15, 17, 257])
