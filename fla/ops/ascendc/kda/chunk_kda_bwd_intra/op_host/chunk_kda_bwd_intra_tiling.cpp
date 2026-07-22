@@ -20,11 +20,32 @@ constexpr size_t INPUT_Q = 0;
 constexpr size_t INPUT_G = 2;
 constexpr size_t INPUT_CU = 10;
 constexpr size_t INPUT_CHUNK_INDICES = 11;
+constexpr size_t INPUT_STAGE_A = 12;
+constexpr size_t INPUT_STAGE_B = 13;
+constexpr size_t INPUT_STAGE_C = 14;
+constexpr size_t OUTPUT_0 = 0;
+constexpr size_t OUTPUT_1 = 1;
 constexpr size_t ATTR_CHUNK_SIZE = 0;
 constexpr size_t ATTR_SAFE_GATE = 1;
 constexpr size_t ATTR_TOTAL_CHUNKS = 2;
+constexpr size_t ATTR_STAGE = 3;
 constexpr int64_t BC = 16;
 constexpr bool ENABLE_BLOCKWISE_SAFE = true;
+constexpr uint64_t KDA_ROW3_PREP_TILING_KEY = 9;
+constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
+constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
+constexpr int64_t KDA_ROW3_BYTES_PER_SLOT = (32 * 48 + 48 * 128 + 32 * 128) * 4;
+constexpr int64_t KDA_ROW3_MAX_SLOTS = (256LL * 1024 * 1024) / KDA_ROW3_BYTES_PER_SLOT;
+
+bool MatchScratchShape(const gert::StorageShape *shape, int64_t dim0, int64_t dim1, int64_t dim2)
+{
+    if (shape == nullptr) {
+        return false;
+    }
+    const gert::Shape storage = shape->GetStorageShape();
+    return storage.GetDimNum() == 3 && storage.GetDim(0) == dim0 &&
+           storage.GetDim(1) == dim1 && storage.GetDim(2) == dim2;
+}
 } // namespace
 
 ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
@@ -50,8 +71,10 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t chunkSize = *attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
     const bool safeGate = *attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE);
     const int64_t totalChunks = *attrs->GetAttrPointer<int64_t>(ATTR_TOTAL_CHUNKS);
+    const int64_t stage = *attrs->GetAttrPointer<int64_t>(ATTR_STAGE);
     if ((chunkSize != 64 && chunkSize != 128) || k < 16 || k > 256 || (k % 16) != 0 ||
-        h <= 0 || hv < h || (hv % h) != 0 || h > 128 || hv > 128 || totalChunks <= 0) {
+        h <= 0 || hv < h || (hv % h) != 0 || h > 128 || hv > 128 || totalChunks <= 0 ||
+        stage < 0 || stage > 3) {
         return ge::GRAPH_FAILED;
     }
 
@@ -82,13 +105,66 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const int64_t blockCount = (chunkSize + BC - 1) / BC;
     const int64_t chunks = isVarLen ? totalChunks : batch * totalChunks;
-    const int64_t taskCount = chunks * hv * blockCount;
-    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const int64_t scratchSlots = chunks * hv;
+    if (stage != 0) {
+        const bool fastPathShape = safeGate && qDesc->GetDataType() == ge::DT_BF16 && !isVarLen &&
+                                   batch == 1 && h == hv && chunkSize == 64 && k == 128 &&
+                                   t > 0 && (t % chunkSize) == 0 && scratchSlots <= KDA_ROW3_MAX_SLOTS;
+        if (!fastPathShape) {
+            return ge::GRAPH_FAILED;
+        }
+        if (stage == 1) {
+            auto aOutputShape = context->GetOutputShape(OUTPUT_0);
+            auto bOutputShape = context->GetOutputShape(OUTPUT_1);
+            if (!MatchScratchShape(aOutputShape, scratchSlots, 32, 48) ||
+                !MatchScratchShape(bOutputShape, scratchSlots, 48, 128)) {
+                return ge::GRAPH_FAILED;
+            }
+        } else if (stage == 2) {
+            auto aShape = context->GetOptionalInputShape(INPUT_STAGE_A);
+            auto bShape = context->GetOptionalInputShape(INPUT_STAGE_B);
+            auto cOutputShape = context->GetOutputShape(OUTPUT_0);
+            if (aShape == nullptr || bShape == nullptr ||
+                !MatchScratchShape(aShape, scratchSlots, 32, 48) ||
+                !MatchScratchShape(bShape, scratchSlots, 48, 128) ||
+                !MatchScratchShape(cOutputShape, scratchSlots, 32, 128)) {
+                return ge::GRAPH_FAILED;
+            }
+        } else if (stage == 3) {
+            auto cShape = context->GetOptionalInputShape(INPUT_STAGE_C);
+            if (cShape == nullptr ||
+                !MatchScratchShape(cShape, scratchSlots, 32, 128)) {
+                return ge::GRAPH_FAILED;
+            }
+        }
+    }
+
+    const int64_t blockCount = (chunkSize + BC - 1) / BC;
+    int64_t taskCount = chunks * hv * blockCount;
+    if (stage == 1) {
+        taskCount = scratchSlots;
+    } else if (stage == 2) {
+        taskCount = scratchSlots * 2;
+    }
+    auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t aivNum = platform.GetCoreNumAiv();
-    const uint32_t blockDim = static_cast<uint32_t>(std::min<int64_t>(taskCount, aivNum));
-    context->SetBlockDim(blockDim == 0 ? 1 : blockDim);
+    const uint32_t aicNum = platform.GetCoreNumAic();
+    uint32_t usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aivNum));
+    uint32_t blockDim = usedCoreNum;
+    if (stage == 2) {
+        usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aicNum));
+        if (usedCoreNum == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const uint32_t pairedAivNum = std::min<uint32_t>(aivNum, usedCoreNum * 2);
+        blockDim = platform.CalcTschBlockDim(pairedAivNum, aicNum, aivNum);
+        blockDim = std::max(blockDim, usedCoreNum);
+    }
+    if (blockDim == 0 || usedCoreNum == 0) {
+        return ge::GRAPH_FAILED;
+    }
+    context->SetBlockDim(blockDim);
     context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize();
 
     ChunkKdaBwdIntraTilingData tiling;
@@ -99,15 +175,24 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     tiling.set_headDim(k);
     tiling.set_chunkSize(chunkSize);
     tiling.set_totalChunks(totalChunks);
-    tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
+    tiling.set_usedCoreNum(usedCoreNum);
     tiling.set_isVarLen(isVarLen ? 1 : 0);
     tiling.set_dataType(qDesc->GetDataType() == ge::DT_BF16 ? 1 : 0);
     tiling.set_safeGate(safeGate ? 1 : 0);
+    tiling.set_stage(stage);
     const uint64_t baseTilingKey = (qDesc->GetDataType() == ge::DT_BF16 ? 2 : 0) + (safeGate ? 1 : 0);
     // Keys 0..3 retain the proven row-wise implementation.  The optimized
     // safe-gate implementation uses keys 5/7 so the legacy instances remain
     // available as an immediate compile-time rollback while profiling.
-    context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
+    if (stage == 1) {
+        context->SetTilingKey(KDA_ROW3_PREP_TILING_KEY);
+    } else if (stage == 2) {
+        context->SetTilingKey(KDA_ROW3_CUBE_TILING_KEY);
+    } else if (stage == 3) {
+        context->SetTilingKey(KDA_ROW3_CONSUME_TILING_KEY);
+    } else {
+        context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
+    }
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;

@@ -10,6 +10,30 @@
 
 #include "kernel_operator.h"
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define CATLASS_ARCH 3510
+#include "catlass/arch/arch.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/gemm/block/block_mmad.hpp"
+#include "catlass/gemm/dispatch_policy.hpp"
+#include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm_coord.hpp"
+#include "catlass/layout/layout.hpp"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
+#else
+#define CATLASS_ARCH 2201
+#include "catlass/arch/arch.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/gemm/block/block_mmad.hpp"
+#include "catlass/gemm/dispatch_policy.hpp"
+#include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm_coord.hpp"
+#include "catlass/layout/layout.hpp"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
+#endif
+
 using namespace AscendC;
 
 namespace {
@@ -18,13 +42,263 @@ constexpr uint32_t BK = 32;
 constexpr uint32_t MAX_BT = 128;
 constexpr uint32_t MAX_K = 256;
 constexpr float LN2 = 0.69314718055994530942f;
+constexpr uint64_t KDA_ROW3_PREP_TILING_KEY = 9;
+constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
+constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
+static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
+              KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY,
+              "ChunkKdaBwdIntra row3 stages require distinct tiling keys");
+constexpr uint32_t KDA_ROW3_SOURCE_COUNT = 48;
+constexpr uint32_t KDA_ROW3_MATRIX_ROWS = 32;
+constexpr uint32_t KDA_ROW3_HEAD_DIM = 128;
+constexpr uint32_t KDA_ROW3_A_ELEMENTS = KDA_ROW3_MATRIX_ROWS * KDA_ROW3_SOURCE_COUNT;
+constexpr uint32_t KDA_ROW3_B_ELEMENTS = KDA_ROW3_SOURCE_COUNT * KDA_ROW3_HEAD_DIM;
+constexpr uint32_t KDA_ROW3_C_ELEMENTS = KDA_ROW3_MATRIX_ROWS * KDA_ROW3_HEAD_DIM;
 
-template <typename T, bool SAFE_GATE, bool BLOCKWISE = false>
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+using KdaRow3ArchTag = Catlass::Arch::Ascend950;
+#else
+using KdaRow3ArchTag = Catlass::Arch::AtlasA2;
+#endif
+using KdaRow3DispatchPolicy = Catlass::Gemm::MmadPingpong<KdaRow3ArchTag, false, false>;
+static_assert(!KdaRow3DispatchPolicy::USE_HF32_MODE,
+              "ChunkKdaBwdIntra row3 Cube must use IEEE FP32 mode");
+using KdaRow3L1TileShape = tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+using KdaRow3L0TileShape = KdaRow3L1TileShape;
+
+class KdaRow3PrepKernel {
+public:
+    __aicore__ inline void Init(GM_ADDR k, GM_ADDR g, GM_ADDR dAqk, GM_ADDR dAkk,
+                                GM_ADDR stageA, GM_ADDR stageB,
+                                const ChunkKdaBwdIntraTilingData &tiling, TPipe *pipe)
+    {
+        k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
+        g_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(g));
+        dAqk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk));
+        dAkk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk));
+        stageA_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageA));
+        stageB_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageB));
+        h_ = static_cast<uint64_t>(tiling.qHeadNum);
+        hv_ = static_cast<uint64_t>(tiling.vHeadNum);
+        t_ = static_cast<uint64_t>(tiling.seqlen);
+        nt_ = static_cast<uint64_t>(tiling.totalChunks);
+        usedCoreNum_ = static_cast<uint64_t>(tiling.usedCoreNum);
+        pipe_ = pipe;
+        pipe_->InitBuffer(aBuf_, KDA_ROW3_A_ELEMENTS * sizeof(float));
+        pipe_->InitBuffer(kTypedBuf_, KDA_ROW3_SOURCE_COUNT * BK * sizeof(bfloat16_t));
+        pipe_->InitBuffer(kBuf_, KDA_ROW3_SOURCE_COUNT * BK * sizeof(float));
+        pipe_->InitBuffer(gBuf_, KDA_ROW3_SOURCE_COUNT * BK * sizeof(float));
+        pipe_->InitBuffer(gRefBuf_, BK * sizeof(float));
+        pipe_->InitBuffer(gateBuf_, BK * sizeof(float));
+    }
+
+    __aicore__ inline void Process()
+    {
+        const uint64_t taskCount = nt_ * hv_;
+        for (uint64_t task = static_cast<uint64_t>(GetBlockIdx()); task < taskCount; task += usedCoreNum_) {
+            const uint64_t hv = task % hv_;
+            const uint64_t chunk = task / hv_;
+            const uint64_t chunkStart = chunk * 64;
+            PackA(task, hv, chunkStart);
+            PackB(task, hv, chunkStart);
+        }
+    }
+
+private:
+    __aicore__ inline uint64_t KOffset(uint64_t h, uint64_t token, uint64_t d) const
+    {
+        return (h * t_ + token) * KDA_ROW3_HEAD_DIM + d;
+    }
+
+    __aicore__ inline uint64_t GOffset(uint64_t hv, uint64_t token, uint64_t d) const
+    {
+        return (hv * t_ + token) * KDA_ROW3_HEAD_DIM + d;
+    }
+
+    __aicore__ inline uint64_t AOffset(uint64_t hv, uint64_t token, uint64_t col) const
+    {
+        return (hv * t_ + token) * 64 + col;
+    }
+
+    __aicore__ inline void SyncMte2ToMte3()
+    {
+        TEventID eventId = GetTPipePtr()->AllocEventID<HardEvent::MTE2_MTE3>();
+        SetFlag<HardEvent::MTE2_MTE3>(eventId);
+        WaitFlag<HardEvent::MTE2_MTE3>(eventId);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_MTE3>(eventId);
+    }
+
+    __aicore__ inline void SyncMte3ToMte2()
+    {
+        TEventID eventId = GetTPipePtr()->AllocEventID<HardEvent::MTE3_MTE2>();
+        SetFlag<HardEvent::MTE3_MTE2>(eventId);
+        WaitFlag<HardEvent::MTE3_MTE2>(eventId);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_MTE2>(eventId);
+    }
+
+    __aicore__ inline void SyncMte2ToV()
+    {
+        TEventID eventId = GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>();
+        SetFlag<HardEvent::MTE2_V>(eventId);
+        WaitFlag<HardEvent::MTE2_V>(eventId);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventId);
+    }
+
+    __aicore__ inline void SyncVToMte3()
+    {
+        TEventID eventId = GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>();
+        SetFlag<HardEvent::V_MTE3>(eventId);
+        WaitFlag<HardEvent::V_MTE3>(eventId);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(eventId);
+    }
+
+    __aicore__ inline void SyncMte3ToV()
+    {
+        TEventID eventId = GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>();
+        SetFlag<HardEvent::MTE3_V>(eventId);
+        WaitFlag<HardEvent::MTE3_V>(eventId);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(eventId);
+    }
+
+    __aicore__ inline void PackA(uint64_t task, uint64_t hv, uint64_t chunkStart)
+    {
+        LocalTensor<float> aLocal = aBuf_.Get<float>();
+        DataCopyExtParams params{static_cast<uint16_t>(BC),
+                                 static_cast<uint32_t>(KDA_ROW3_SOURCE_COUNT * sizeof(float)),
+                                 static_cast<uint32_t>((64 - KDA_ROW3_SOURCE_COUNT) * sizeof(float)), 0, 0};
+        DataCopyPadExtParams<float> noPad{false, 0, 0, 0.0f};
+        DataCopyPad(aLocal, dAqk_[AOffset(hv, chunkStart + KDA_ROW3_SOURCE_COUNT, 0)], params, noPad);
+        DataCopyPad(aLocal[BC * KDA_ROW3_SOURCE_COUNT],
+                    dAkk_[AOffset(hv, chunkStart + KDA_ROW3_SOURCE_COUNT, 0)], params, noPad);
+        SyncMte2ToMte3();
+        DataCopy(stageA_[task * KDA_ROW3_A_ELEMENTS], aLocal, KDA_ROW3_A_ELEMENTS);
+        SyncMte3ToMte2();
+    }
+
+    __aicore__ inline void PackB(uint64_t task, uint64_t hv, uint64_t chunkStart)
+    {
+        const uint64_t h = hv / (hv_ / h_);
+        LocalTensor<bfloat16_t> kTyped = kTypedBuf_.Get<bfloat16_t>();
+        LocalTensor<float> kLocal = kBuf_.Get<float>();
+        LocalTensor<float> gLocal = gBuf_.Get<float>();
+        LocalTensor<float> gRef = gRefBuf_.Get<float>();
+        LocalTensor<float> gate = gateBuf_.Get<float>();
+        DataCopyPadExtParams<bfloat16_t> typedPad{false, 0, 0, 0};
+        DataCopyPadExtParams<float> floatPad{false, 0, 0, 0.0f};
+        for (uint64_t d = 0; d < KDA_ROW3_HEAD_DIM; d += BK) {
+            DataCopyExtParams kParams{static_cast<uint16_t>(KDA_ROW3_SOURCE_COUNT),
+                                      static_cast<uint32_t>(BK * sizeof(bfloat16_t)),
+                                      static_cast<uint32_t>((KDA_ROW3_HEAD_DIM - BK) * sizeof(bfloat16_t)), 0, 0};
+            DataCopyExtParams gParams{static_cast<uint16_t>(KDA_ROW3_SOURCE_COUNT),
+                                      static_cast<uint32_t>(BK * sizeof(float)),
+                                      static_cast<uint32_t>((KDA_ROW3_HEAD_DIM - BK) * sizeof(float)), 0, 0};
+            DataCopyPad(kTyped, k_[KOffset(h, chunkStart, d)], kParams, typedPad);
+            DataCopyPad(gLocal, g_[GOffset(hv, chunkStart, d)], gParams, floatPad);
+            DataCopy(gRef, g_[GOffset(hv, chunkStart + KDA_ROW3_SOURCE_COUNT, d)], BK);
+            SyncMte2ToV();
+            Cast(kLocal, kTyped, RoundMode::CAST_NONE, KDA_ROW3_SOURCE_COUNT * BK);
+            PipeBarrier<PIPE_V>();
+            for (uint64_t source = 0; source < KDA_ROW3_SOURCE_COUNT; ++source) {
+                Sub(gate, gRef, gLocal[source * BK], BK);
+                PipeBarrier<PIPE_V>();
+                Muls(gate, gate, LN2, BK);
+                PipeBarrier<PIPE_V>();
+                Exp(gate, gate, BK);
+                PipeBarrier<PIPE_V>();
+                Mul(kLocal[source * BK], kLocal[source * BK], gate, BK);
+                PipeBarrier<PIPE_V>();
+            }
+            DataCopyExtParams outParams{static_cast<uint16_t>(KDA_ROW3_SOURCE_COUNT),
+                                        static_cast<uint32_t>(BK * sizeof(float)), 0,
+                                        static_cast<uint32_t>((KDA_ROW3_HEAD_DIM - BK) * sizeof(float)), 0};
+            SyncVToMte3();
+            DataCopyPad(stageB_[task * KDA_ROW3_B_ELEMENTS + d], kLocal, outParams);
+            SyncMte3ToMte2();
+            SyncMte3ToV();
+        }
+    }
+
+private:
+    GlobalTensor<bfloat16_t> k_;
+    GlobalTensor<float> g_, dAqk_, dAkk_, stageA_, stageB_;
+    TBuf<TPosition::VECCALC> aBuf_, kTypedBuf_, kBuf_, gBuf_, gRefBuf_, gateBuf_;
+    uint64_t h_ = 0, hv_ = 0, t_ = 0, nt_ = 0, usedCoreNum_ = 1;
+    TPipe *pipe_ = nullptr;
+};
+
+class KdaRow3CubeKernel {
+public:
+    __aicore__ inline void Init(GM_ADDR stageA, GM_ADDR stageB, GM_ADDR stageC,
+                                const ChunkKdaBwdIntraTilingData &tiling)
+    {
+        stageA_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageA));
+        stageB_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageB));
+        stageC_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageC));
+        taskCount_ = static_cast<uint64_t>(tiling.totalChunks) *
+                     static_cast<uint64_t>(tiling.vHeadNum) * 2;
+        usedCoreNum_ = static_cast<uint64_t>(tiling.usedCoreNum);
+    }
+
+    __aicore__ inline void Process()
+    {
+        for (uint64_t task = static_cast<uint64_t>(GetBlockIdx()); task < taskCount_; task += usedCoreNum_) {
+            const uint64_t slot = task / 2;
+            const uint64_t nOffset = (task % 2) * 64;
+            RunOne(slot, nOffset);
+        }
+    }
+
+private:
+    __aicore__ inline void RunOne(uint64_t slot, uint64_t nOffset)
+    {
+        using ElementA = float;
+        using ElementB = float;
+        using ElementC = float;
+        using LayoutTagA = Catlass::layout::RowMajor;
+        using LayoutTagB = Catlass::layout::RowMajor;
+        using LayoutTagC = Catlass::layout::RowMajor;
+        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+            KdaRow3ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB, ElementC, LayoutTagC>;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
+            KdaRow3DispatchPolicy, KdaRow3L1TileShape, KdaRow3L0TileShape,
+            ElementA, ElementB, ElementC, void, TileCopy>;
+
+        Catlass::Arch::Resource<KdaRow3ArchTag> resource;
+        auto layoutA = tla::MakeLayout<ElementA, LayoutTagA>(KDA_ROW3_MATRIX_ROWS, KDA_ROW3_SOURCE_COUNT);
+        auto layoutB = tla::MakeLayout<ElementB, LayoutTagB>(KDA_ROW3_SOURCE_COUNT, KDA_ROW3_HEAD_DIM);
+        auto layoutC = tla::MakeLayout<ElementC, LayoutTagC>(KDA_ROW3_MATRIX_ROWS, KDA_ROW3_HEAD_DIM);
+        auto tensorA = tla::MakeTensor(stageA_[slot * KDA_ROW3_A_ELEMENTS], layoutA,
+                                       Catlass::Arch::PositionGM{});
+        auto tensorB = tla::MakeTensor(stageB_[slot * KDA_ROW3_B_ELEMENTS], layoutB,
+                                       Catlass::Arch::PositionGM{});
+        auto tensorC = tla::MakeTensor(stageC_[slot * KDA_ROW3_C_ELEMENTS], layoutC,
+                                       Catlass::Arch::PositionGM{});
+        Catlass::GemmCoord shape{KDA_ROW3_MATRIX_ROWS, 64, KDA_ROW3_SOURCE_COUNT};
+        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+                              tla::MakeShape(shape.m(), shape.k()));
+        auto blockB = GetTile(tensorB, tla::MakeCoord(0, nOffset),
+                              tla::MakeShape(shape.k(), shape.n()));
+        auto blockC = GetTile(tensorC, tla::MakeCoord(0, nOffset),
+                              tla::MakeShape(shape.m(), shape.n()));
+        {
+            BlockMmad blockMmad(resource);
+            blockMmad(blockA, blockB, blockC, shape);
+        }
+        PipeBarrier<PIPE_ALL>();
+    }
+
+private:
+    GlobalTensor<float> stageA_, stageB_, stageC_;
+    uint64_t taskCount_ = 0, usedCoreNum_ = 1;
+};
+
+template <typename T, bool SAFE_GATE, bool BLOCKWISE = false, bool CUBE_ROW3 = false>
 class ChunkKdaBwdIntraKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
                                 GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg, GM_ADDR dqOut, GM_ADDR dkOut,
                                 GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR chunkIndices,
+                                GM_ADDR stageC,
                                 const ChunkKdaBwdIntraTilingData &tiling, TPipe *pipe)
     {
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(q));
@@ -41,6 +315,9 @@ public:
         dkOut_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dkOut));
         dbOut_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dbOut));
         dgOut_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dgOut));
+        if constexpr (CUBE_ROW3) {
+            stageC_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageC));
+        }
 
         b_ = static_cast<uint64_t>(tiling.batch);
         h_ = static_cast<uint64_t>(tiling.qHeadNum);
@@ -838,9 +1115,24 @@ private:
         SyncMte3ToV();
     }
 
+    __aicore__ inline void LoadCubeRow3Prefix(uint64_t cubeTask, uint64_t d, uint32_t curK,
+                                               LocalTensor<float> dqAcc, LocalTensor<float> dkLeft)
+    {
+        const uint32_t dstStride = static_cast<uint32_t>((BK - curK) * sizeof(float) / 32);
+        DataCopyExtParams params{static_cast<uint16_t>(BC), static_cast<uint32_t>(curK * sizeof(float)),
+                                 static_cast<uint32_t>((KDA_ROW3_HEAD_DIM - curK) * sizeof(float)),
+                                 dstStride, 0};
+        DataCopyPadExtParams<float> noPad{false, 0, 0, 0.0f};
+        const uint64_t base = cubeTask * KDA_ROW3_C_ELEMENTS + d;
+        SyncVToMte2();
+        DataCopyPad(dqAcc, stageC_[base], params, noPad);
+        DataCopyPad(dkLeft, stageC_[base + BC * KDA_ROW3_HEAD_DIM], params, noPad);
+        SyncMte2ToV();
+    }
+
     __aicore__ inline void ProcessSafeFeatureBlock(uint64_t b, uint64_t hv, uint64_t chunkStart,
                                                    uint64_t curT, uint64_t rowBegin, uint64_t rowCount,
-                                                   uint64_t d, uint32_t curK)
+                                                   uint64_t d, uint32_t curK, uint64_t cubeTask)
     {
         LocalTensor<float> qCache = qSrcBuf_.Get<float>();
         LocalTensor<float> kCache = kSrcBuf_.Get<float>();
@@ -857,23 +1149,48 @@ private:
         LocalTensor<float> dkRightFuture = out2Buf_.Get<float>();
         LocalTensor<float> gate = gateBuf_.Get<float>();
         const uint32_t blockElements = BC * BK;
-        Duplicate(dqAcc, 0.0f, blockElements);
-        Duplicate(dkLeft, 0.0f, blockElements);
+        bool useCubeRow3 = false;
+        if constexpr (CUBE_ROW3) {
+            useCubeRow3 = curT == 64 && rowBegin == KDA_ROW3_SOURCE_COUNT &&
+                          rowCount == BC && kDim_ == KDA_ROW3_HEAD_DIM;
+        }
         Duplicate(dkRight, 0.0f, blockElements);
         Duplicate(dqDiag, 0.0f, blockElements);
         Duplicate(dkLeftDiag, 0.0f, blockElements);
         Duplicate(dkRightFuture, 0.0f, blockElements);
+        if constexpr (CUBE_ROW3) {
+            if (useCubeRow3) {
+                LoadCubeRow3Prefix(cubeTask, d, curK, dqAcc, dkLeft);
+            } else {
+                Duplicate(dqAcc, 0.0f, blockElements);
+                Duplicate(dkLeft, 0.0f, blockElements);
+            }
+        } else {
+            Duplicate(dqAcc, 0.0f, blockElements);
+            Duplicate(dkLeft, 0.0f, blockElements);
+        }
         PipeBarrier<PIPE_V>();
 
         const uint64_t rowEnd = rowBegin + rowCount;
         LocalTensor<float> gLeftRef = gCache[rowBegin * BK];
         LocalTensor<float> gRightRef = gCache[(rowEnd - 1) * BK];
 
-        for (uint64_t source = 0; source < rowBegin; ++source) {
-            LocalTensor<float> kSource = kCache[source * BK];
-            BuildGate(gate, gLeftRef, gCache[source * BK], curK);
-            AccumulateLeftSource(dqAcc, dkLeft, kSource, gate,
-                                 rowQ[source * BC], rowK[source * BC], curK);
+        if constexpr (CUBE_ROW3) {
+            if (!useCubeRow3) {
+                for (uint64_t source = 0; source < rowBegin; ++source) {
+                    LocalTensor<float> kSource = kCache[source * BK];
+                    BuildGate(gate, gLeftRef, gCache[source * BK], curK);
+                    AccumulateLeftSource(dqAcc, dkLeft, kSource, gate,
+                                         rowQ[source * BC], rowK[source * BC], curK);
+                }
+            }
+        } else {
+            for (uint64_t source = 0; source < rowBegin; ++source) {
+                LocalTensor<float> kSource = kCache[source * BK];
+                BuildGate(gate, gLeftRef, gCache[source * BK], curK);
+                AccumulateLeftSource(dqAcc, dkLeft, kSource, gate,
+                                     rowQ[source * BC], rowK[source * BC], curK);
+            }
         }
         for (uint64_t source = rowBegin; source < rowEnd; ++source) {
             LocalTensor<float> qSource = qCache[source * BK];
@@ -1007,6 +1324,7 @@ private:
         const uint64_t rowBegin = rowBlock * BC;
         const uint64_t rowEnd = (rowBegin + BC < curT) ? rowBegin + BC : curT;
         const uint64_t rowCount = rowEnd - rowBegin;
+        const uint64_t cubeTask = task / nc;
         LocalTensor<float> betaLocal = betaBuf_.Get<float>();
         SyncVToMte2();
         CopyFp32In(betaLocal, beta_, BetaOffset(b, hv, start), curT);
@@ -1020,7 +1338,7 @@ private:
         for (uint64_t d = 0; d < kDim_; d += BK) {
             const uint32_t curK = static_cast<uint32_t>((kDim_ - d < BK) ? kDim_ - d : BK);
             LoadSourceFeatureTile(b, h, hv, start, curT, d, curK);
-            ProcessSafeFeatureBlock(b, hv, start, curT, rowBegin, rowCount, d, curK);
+            ProcessSafeFeatureBlock(b, hv, start, curT, rowBegin, rowCount, d, curK, cubeTask);
         }
         StoreDbBlock(b, hv, start, rowBegin, rowCount);
     }
@@ -1073,6 +1391,7 @@ private:
     GlobalTensor<float> dkOut_;
     GlobalTensor<float> dbOut_;
     GlobalTensor<float> dgOut_;
+    GlobalTensor<float> stageC_;
     GlobalTensor<int64_t> chunkMeta_;
     TPipe *pipe_ = nullptr;
     TBuf<TPosition::VECCALC> dARowQBuf_, dARowKBuf_, dAColQBuf_, dAColKBuf_, betaBuf_;
@@ -1090,43 +1409,67 @@ private:
 
 extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
     GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk, GM_ADDR dq, GM_ADDR dk,
-    GM_ADDR db, GM_ADDR dg, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dqOut, GM_ADDR dkOut,
-    GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR db, GM_ADDR dg, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR stageA, GM_ADDR stageB,
+    GM_ADDR stageC, GM_ADDR dqOut, GM_ADDR dkOut, GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR workspace,
+    GM_ADDR tiling)
 {
     (void)cuSeqlens;
     (void)workspace;
     GET_TILING_DATA(tilingData, tiling);
     TPipe pipe;
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     if (TILING_KEY_IS(0)) {
+        KERNEL_TASK_TYPE(0, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<half, false> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
-                tilingData, &pipe);
+                stageC, tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(1)) {
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<half, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
-                tilingData, &pipe);
+                stageC, tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(2)) {
+        KERNEL_TASK_TYPE(2, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, false> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
-                tilingData, &pipe);
+                stageC, tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(3)) {
+        KERNEL_TASK_TYPE(3, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
-                tilingData, &pipe);
+                stageC, tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(5)) {
+        KERNEL_TASK_TYPE(5, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<half, true, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
-                tilingData, &pipe);
+                stageC, tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(7)) {
+        KERNEL_TASK_TYPE(7, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, true, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
-                tilingData, &pipe);
+                stageC, tilingData, &pipe);
+        op.Process();
+    } else if (TILING_KEY_IS(9)) {
+        KERNEL_TASK_TYPE(9, KERNEL_TYPE_AIV_ONLY);
+        KdaRow3PrepKernel op;
+        op.Init(k, g, dAqk, dAkk, dqOut, dkOut, tilingData, &pipe);
+        op.Process();
+    } else if (TILING_KEY_IS(10)) {
+        KERNEL_TASK_TYPE(10, KERNEL_TYPE_MIX_AIC_1_2);
+        if ASCEND_IS_AIC {
+            KdaRow3CubeKernel op;
+            op.Init(stageA, stageB, dqOut, tilingData);
+            op.Process();
+        }
+    } else if (TILING_KEY_IS(11)) {
+        KERNEL_TASK_TYPE(11, KERNEL_TYPE_AIV_ONLY);
+        ChunkKdaBwdIntraKernel<bfloat16_t, true, true, true> op;
+        op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
+                stageC, tilingData, &pipe);
         op.Process();
     }
 }

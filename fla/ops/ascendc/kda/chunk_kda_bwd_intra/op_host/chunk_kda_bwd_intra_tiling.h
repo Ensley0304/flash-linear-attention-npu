@@ -27,6 +27,7 @@ TILING_DATA_FIELD_DEF(int64_t, usedCoreNum);
 TILING_DATA_FIELD_DEF(int64_t, isVarLen);
 TILING_DATA_FIELD_DEF(int64_t, dataType);
 TILING_DATA_FIELD_DEF(int64_t, safeGate);
+TILING_DATA_FIELD_DEF(int64_t, stage);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaBwdIntra, ChunkKdaBwdIntraTilingData)

@@ -3,6 +3,7 @@
 import inspect
 import os
 import pathlib
+import re
 import sys
 
 import pytest
@@ -128,6 +129,33 @@ def _one_hot_da_case(source):
     return q, k, g, beta, dAqk, dAkk, dq, dk, db, dg
 
 
+def _rowblock3_off_left_cube_canary_case(source):
+    """Isolate the BF16 safe rowBlock3 x source[0:48] contraction."""
+    b, t, h, kdim, chunk_size = 1, 64, 1, 128, 64
+    target, source_token = 55, 9
+    q = torch.zeros(b, t, h, kdim, dtype=torch.bfloat16)
+    k = torch.zeros_like(q)
+    k[0, source_token, 0] = (
+        torch.arange(1, kdim + 1, dtype=torch.float32) / 256
+    ).to(torch.bfloat16)
+
+    feature_slope = 0.002 + torch.arange(kdim, dtype=torch.float32) * 1.0e-5
+    g = -torch.arange(t, dtype=torch.float32).reshape(1, t, 1, 1) * feature_slope.reshape(1, 1, 1, kdim)
+    beta = torch.linspace(0.25, 0.75, t, dtype=torch.float32).reshape(1, t, 1)
+    dAqk = torch.zeros(b, t, h, chunk_size, dtype=torch.float32)
+    dAkk = torch.zeros_like(dAqk)
+    if source == "dAqk":
+        dAqk[0, target, 0, source_token] = 0.75
+    else:
+        dAkk[0, target, 0, source_token] = 0.75
+
+    dq = torch.zeros(b, t, h, kdim, dtype=torch.float32)
+    dk = torch.zeros_like(dq)
+    db = torch.zeros(b, t, h, dtype=torch.float32)
+    dg = torch.zeros_like(dq)
+    return (q, k, g, beta, dAqk, dAkk, dq, dk, db, dg), target
+
+
 def test_chunk_kda_bwd_intra_reference_safe_and_unsafe_fp64_agree():
     inputs = _case(t=23, h=2, hv=4, kdim=32, gate_scale=0.1)
     safe = _golden(*inputs, chunk_size=64, safe_gate=True)
@@ -190,6 +218,85 @@ def test_chunk_kda_bwd_intra_one_hot_da_paths(source, safe_gate):
         *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=safe_gate
     )
     _assert_outputs(got, ref, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("source", ["dAqk", "dAkk"])
+def test_chunk_kda_bwd_intra_safe_gate_rowblock3_off_left_cube_canary(source):
+    """Protect the first Cube slice without mixing diagonal or right terms."""
+    device = _device()
+    inputs, target = _rowblock3_off_left_cube_canary_case(source)
+    ref = _golden(*inputs, chunk_size=64, safe_gate=True)
+    got = fla_ascendc.chunk_kda_bwd_intra(
+        *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=True
+    )
+    _assert_outputs(got, ref)
+
+    output_index = 0 if source == "dAqk" else 1
+    signal = got[output_index].detach().cpu()[0, target, 0]
+    assert torch.isfinite(signal).all()
+    assert torch.count_nonzero(signal) == signal.numel(), (
+        f"rowBlock3 off-left {source} signal was not propagated across all K features"
+    )
+
+
+def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_dense_random():
+    """Exercise all outputs on the exact BF16/safe Cube eligibility."""
+    device = _device()
+    inputs = _case(t=64, h=2, hv=2, kdim=128, dtype=torch.bfloat16, gate_scale=0.2)
+    ref = _golden(*inputs, chunk_size=64, safe_gate=True)
+    got = fla_ascendc.chunk_kda_bwd_intra(
+        *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=True
+    )
+    _assert_outputs(got, ref, rtol=5e-3, atol=5e-3)
+
+
+def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
+    """The serial three-stage fastpath must not retain transient event state."""
+    device = _device()
+    inputs = _case(t=64, h=1, hv=1, kdim=128, dtype=torch.bfloat16, gate_scale=0.2)
+    ref = _golden(*inputs, chunk_size=64, safe_gate=True)
+    device_inputs = tuple(tensor.to(device) for tensor in inputs)
+    for _ in range(100):
+        got = fla_ascendc.chunk_kda_bwd_intra(
+            *device_inputs, chunk_size=64, safe_gate=True
+        )
+    _assert_outputs(got, ref, rtol=5e-3, atol=5e-3)
+
+
+def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
+    """Keep the experimental Cube stages isolated from cross-core handshakes."""
+    op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
+    source_files = sorted(
+        path for path in op_root.rglob("*") if path.suffix in {".cpp", ".h", ".hpp"}
+    )
+    source = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
+
+    key_names = (
+        "KDA_ROW3_PREP_TILING_KEY",
+        "KDA_ROW3_CUBE_TILING_KEY",
+        "KDA_ROW3_CONSUME_TILING_KEY",
+    )
+    key_values = []
+    for key_name in key_names:
+        match = re.search(rf"\b{key_name}\b\s*=\s*(\d+)", source)
+        assert match is not None, f"missing independent rowBlock3 stage key: {key_name}"
+        key_values.append(int(match.group(1)))
+    assert len(set(key_values)) == len(key_values), "rowBlock3 prep/Cube/consume keys must be distinct"
+
+    assert "KERNEL_TYPE_MIX_AIC_1_2" in source
+    assert "if ASCEND_IS_AIC" in source
+    assert "BlockMmadTla" in source
+    for element in ("ElementA", "ElementB", "ElementC"):
+        assert re.search(rf"\busing\s+{element}\s*=\s*float\s*;", source), (
+            f"rowBlock3 Cube {element} must remain FP32"
+        )
+    assert re.search(
+        r"(?:USE_HF32[A-Z0-9_]*\s*=\s*false|static_assert\s*\(\s*!\s*[^;\n]*USE_HF32_MODE)",
+        source,
+    ), "rowBlock3 Cube must explicitly disable HF32"
+
+    for forbidden in ("CrossCoreSetFlag", "CrossCoreWaitFlag", "CrossCoreFlagWithReverse"):
+        assert forbidden not in source, f"rowBlock3 serial stages must not use {forbidden}"
 
 
 @pytest.mark.parametrize("kdim", [15, 17, 257])

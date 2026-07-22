@@ -34,6 +34,12 @@ public:
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
+        // Internal executor-owned tensors used by the optional three-stage
+        // BF16/safe Cube fast path.  They are intentionally not exposed by
+        // the public aclnn/Python API.
+        this->Input("stage_a").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
+        this->Input("stage_b").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
+        this->Input("stage_c").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
 
         this->Output("dq_out").ParamType(REQUIRED).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
         this->Output("dk_out").ParamType(REQUIRED).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
@@ -43,6 +49,7 @@ public:
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("safe_gate").AttrType(REQUIRED).Bool(false);
         this->Attr("total_chunks").AttrType(REQUIRED).Int(1);
+        this->Attr("stage").AttrType(OPTIONAL).Int(0);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

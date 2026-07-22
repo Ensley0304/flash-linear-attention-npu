@@ -73,11 +73,14 @@ const std::array<const aclTensor *, 4> ChunkKdaBwdIntra(
     const aclTensor *dAqk, const aclTensor *dAkk, const aclTensor *dq, const aclTensor *dk,
     const aclTensor *db, const aclTensor *dg, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, int64_t chunkSize, bool safeGate, int64_t totalChunks,
+    const aclTensor *stageAOptional, const aclTensor *stageBOptional, const aclTensor *stageCOptional,
+    int64_t stage,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dbOut, const aclTensor *dgOut,
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkKdaBwdIntra, q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, cuSeqlensOptional,
-           chunkIndicesOptional, chunkSize, safeGate, totalChunks, dqOut, dkOut, dbOut, dgOut);
+           chunkIndicesOptional, chunkSize, safeGate, totalChunks, stageAOptional, stageBOptional,
+           stageCOptional, stage, dqOut, dkOut, dbOut, dgOut);
     const aclTensor *actualCu = nullptr;
     const aclTensor *actualChunks = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -102,8 +105,9 @@ const std::array<const aclTensor *, 4> ChunkKdaBwdIntra(
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaBwdIntra,
-        OP_INPUT(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, actualCu, actualChunks),
-        OP_OUTPUT(dqOut, dkOut, dbOut, dgOut), OP_ATTR(chunkSize, safeGate, totalChunks));
+        OP_INPUT(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, actualCu, actualChunks,
+                 stageAOptional, stageBOptional, stageCOptional),
+        OP_OUTPUT(dqOut, dkOut, dbOut, dgOut), OP_ATTR(chunkSize, safeGate, totalChunks, stage));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdIntra failed.");
         return {nullptr, nullptr, nullptr, nullptr};

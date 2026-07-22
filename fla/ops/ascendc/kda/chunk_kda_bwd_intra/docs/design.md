@@ -72,6 +72,42 @@ legacy 固定 buffer 约 38.6 KiB。block-wise safe 路径额外使用两份转�
 按 `BT=128/BK=32` 估算约 128.9 KiB，低于 A2/A3 的 192 KiB UB，并保留约 63 KiB 余量。
 第一阶段使用单 buffer，避免在未 profiling 前为 double buffer 再增加约 64 KiB。
 
+### 4.4 rowBlock3 off-left Cube 实验路径
+
+第一次引入 Cube 只替换 `BT=64` 中最后一个 16-token 块的跨块 left 累加，即
+`rowBlock3=[48,64)`、`source=[0,48)`。不改 16×16 diagonal、right 累加、`db/dg` 组合或其他
+rowBlock，避免同时引入 causal mask、转置 GEMM 和复杂的 AIC/AIV 生命周期。AIV prep 将两路 dA
+堆叠为 `A[32,48]`，并构造共同的 gated K `B[48,128]`；Cube 只执行一次：
+
+```text
+A = concat(dAqk[48:64,0:48], dAkk[48:64,0:48], axis=0)  # FP32 [32,48]
+B = k[0:48] * exp2(g[48] - g[0:48])                     # FP32 [48,128]
+C = A @ B                                                # FP32 [32,128]
+```
+
+`C[0:16]` 初始化 `dqAcc`，`C[16:32]` 初始化未乘 beta 的 `dkLeft`。consume AIV 随后复用原
+block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、`db`、beta、`dg` 和输出
+累加。这样不会重复计算 `source=[0,48)`，也不会改变 `dkLeftPre` 在 `db` 归约前的语义。
+
+实验 fastpath 只允许 `safe_gate=true`、BF16 q/k、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
+且三份 scratch 合计不超过 256 MiB
+且 chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe case 全部走稳定 key7/legacy
+回退。内部 stage 使用三个独立 tiling key：`KDA_ROW3_PREP_TILING_KEY`、
+`KDA_ROW3_CUBE_TILING_KEY` 和 `KDA_ROW3_CONSUME_TILING_KEY`。
+
+三个 stage 在同一 ACL stream 上严格串行：
+
+```text
+AIV prep -> MIX kernel 的 AIC-only Cube 分支（AIV no-op） -> AIV consume
+```
+
+stage 之间依赖 stream 顺序，不使用 `CrossCoreSetFlag`、`CrossCoreWaitFlag` 或
+`CrossCoreFlagWithReverse`。Cube 的 A/B/C 均保持 FP32，使用 IEEE FP32 模式并显式关闭 HF32；
+`KERNEL_TYPE_MIX_AIC_1_2` 仅用于当前构建系统承载 AIC 分支，不允许在该 stage 内增加 AIV
+等待。第一版每个 `(chunk,HV)` scratch slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部
+512B 对齐。目标 shape 的 4096 个 slot 共约 184 MiB。当前版本不做 scratch/UB 双 buffer，待
+正确性和 NPU profiling 通过后再评估复用与压缩。
+
 ## 5. safe_gate 分支
 
 - `safe_gate=true` 是主验证和主优化分支，并复现兄弟仓 Triton kernel 的 16-token 参考点分解。对当前子块之前的 left 项使用子块首 token 的 gate；子块内 left 项使用末 token、right 项使用首 token；后续 right 项使用子块末 token。内层累加完成后再乘参考点到目标 token 的外层因子。方向端点使 feature-side gate 在累计 gate 单调不增的输入约束下不大于 1，避免大 BF16 feature 在零 dA 乘法前先溢出为 Inf；内外因子乘积仍严格对应 `exp2(g_i-g_j)`。
@@ -102,6 +138,10 @@ legacy 固定 buffer 约 38.6 KiB。block-wise safe 路径额外使用两份转�
 2. 若 MTE2 仍高，再评估 source cache double buffer 或多个 rowBlock 合并；
 3. 若 Vector/Exp 仍主导，将跨 16-token 子块的 dA×gated-vector 搬到 Cube；
 4. 根据实际 `K/BT/HV` 决定 task 是否沿 K 二次切核。
+
+rowBlock3 off-left 是第 3 步的最小实验切片。稳定 key7 始终保留为非实验形状的默认路径和即时回退；在独立
+Cube canary、完整精度回归、重复 launch 与三 stage 总耗时均完成上板验证前，不把实验路径
+描述为已验证，也不扩大当前 eligibility。
 
 ## 8. 接口约束
 

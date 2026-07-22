@@ -20,6 +20,8 @@ const std::array<const aclTensor *, 4> ChunkKdaBwdIntra(
     const aclTensor *dAqk, const aclTensor *dAkk, const aclTensor *dq, const aclTensor *dk,
     const aclTensor *db, const aclTensor *dg, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, int64_t chunkSize, bool safeGate, int64_t totalChunks,
+    const aclTensor *stageAOptional, const aclTensor *stageBOptional, const aclTensor *stageCOptional,
+    int64_t stage,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dbOut, const aclTensor *dgOut,
     aclOpExecutor *executor);
 }

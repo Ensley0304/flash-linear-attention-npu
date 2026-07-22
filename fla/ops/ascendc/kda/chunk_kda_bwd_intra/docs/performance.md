@@ -2,8 +2,8 @@
 
 ## 当前实现
 
-当前 kernel 是无 workspace 的单 launch AIV 路径。核间 task 仍为 `(chunk, HV, 16-token block)`。
-`safe_gate=true` 默认进入 block-wise tiling key 5/7：核内按 `BK=32` 搬入整个 chunk 的
+当前稳定 fallback 是无 workspace 的单 launch AIV 路径。核间 task 仍为 `(chunk, HV, 16-token block)`。
+除下文严格限定的 rowBlock3 Cube 实验 eligibility 外，`safe_gate=true` 默认进入 block-wise tiling key 5/7：核内按 `BK=32` 搬入整个 chunk 的
 q/k/g feature tile，并按 source token 同时更新 16 个目标行。`safe_gate=false` 继续使用
 已通过精度回归的逐行 tiling key 0/2；legacy safe key 1/3 保留为回退。
 
@@ -70,7 +70,38 @@ dA GM elements:      2 * (R * BT + L * 16)
 
 ## 下一阶段候选
 
-若 block-wise profiling 仍明显落后且 Vector/Exp 成为主导，再实现 16-token 子块的 AIC/AIV 融合路径。对每个目标子块选择 gate reference 后，可将计算重写为四个 FP32 Cube GEMM：
+最新 profiling 仍显示目标 shape 的 Cube utilization 为 0，因此先用 rowBlock3 off-left 建立最小
+Cube 路径，不直接恢复曾发生设备超时的 stage 内 AIC/AIV 握手。该切片只替换
+`row=[48,64), source=[0,48)` 的两路 left contraction：
+
+```text
+concat(dAqk_row3_left, dAkk_row3_left) [32,48]
+    @ (K_left * exp2(g_48 - g_left))   [48,128]
+    -> (dq_row3_left, dk_row3_left)    [32,128]
+```
+
+它覆盖满 `BT=64` chunk 约 18.5% 的 outer-contraction 工作量，但仍保留 diagonal、right 和前三个
+rowBlock 的 AIV 计算，所以第一轮目标是证明 Cube 能稳定带来净收益，不预设一次降至 10 ms。
+
+实验 eligibility 固定为 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
+且三份 scratch 合计不超过 256 MiB
+和满 chunk；其他 case 继续使用 key7/legacy。执行由 aclnn executor 在同一 stream 串行排入：
+
+```text
+AIV prep -> Cube stage -> AIV consume
+```
+
+Cube stage 使用 `KERNEL_TYPE_MIX_AIC_1_2`，但只有 `ASCEND_IS_AIC` 分支执行 FP32 MMAD，AIV
+分支为空；HF32 关闭，stage 之间不使用任何 CrossCore flag。这样用额外 launch 和 GM scratch
+换取确定的生命周期，避免复杂 ready/done 事件再次造成死锁。稳定 key7 不删除，也不改变非实验
+shape 的调度。
+
+scratch 按 `(chunk,HV)` 分配 46 KiB（A 6 KiB、B 24 KiB、C 16 KiB），目标 shape
+`B=1,T=8192,H=HV=32` 共 4096 slot，约 184 MiB，另加平台 libapi workspace。第一版不启用
+双 buffer、persistent MMAD、slot overlap 或 workspace alias；这些只在 NPU 精度和 profiling
+门禁通过后逐项评估。
+
+完整方向仍可将其余 16-token 子块重写为 FP32 Cube GEMM：
 
 ```text
 dAqk_left  @ (K * exp2(g_ref_left - g))
@@ -79,4 +110,7 @@ dAqk_right^T @ (Q * exp2(g - g_ref_right))
 dAkk_right^T @ (beta*K * exp2(g - g_ref_right))
 ```
 
-AIV 负责 gate 预处理和行缩放，AIC 负责 GEMM，每 AIC 固定复用一份 scratch。该方案不产生序列级中间张量，但引入跨核同步和约数 MiB 的固定 workspace，必须在精度回归与 profiling 后决定是否替换当前稳定基线。
+AIV 负责 gate 预处理和行缩放，AIC 负责 GEMM。后续必须按一个 contraction 切片逐步扩展，不能
+在 rowBlock3 canary 之前引入 diagonal、right、double buffer 或同 launch 深融合。当前实验路径
+尚未完成 NPU 编译、精度或性能验证；性能结论必须按 prep、Cube、consume 三个 kernel duration
+之和统计，并与 48.660 ms 稳定基线比较。
