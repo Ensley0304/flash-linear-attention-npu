@@ -266,6 +266,9 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
 def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     """Keep the experimental Cube stages isolated from cross-core handshakes."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
+    kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
+        encoding="utf-8"
+    )
     source_files = sorted(
         path for path in op_root.rglob("*") if path.suffix in {".cpp", ".h", ".hpp"}
     )
@@ -284,7 +287,8 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert len(set(key_values)) == len(key_values), "rowBlock3 prep/Cube/consume keys must be distinct"
 
     assert "KERNEL_TYPE_MIX_AIC_1_2" in source
-    assert '#include "lib/matmul_intf.h"' in source
+    assert '#include "lib/matmul_intf.h"' in kernel_source
+    assert '#ifndef TORCH_MODE\n#include "lib/matmul_intf.h"' not in kernel_source
     assert "if ASCEND_IS_AIC" in source
     assert "BlockMmadTla" in source
     for element in ("ElementA", "ElementB", "ElementC"):
