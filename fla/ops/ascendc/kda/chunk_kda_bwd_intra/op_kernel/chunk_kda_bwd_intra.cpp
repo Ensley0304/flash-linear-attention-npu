@@ -885,9 +885,7 @@ private:
         PipeBarrier<PIPE_V>();
 
         const uint64_t rowEnd = rowBegin + rowCount;
-        const uint64_t rowMid = rowBegin + ((BC / 2 < rowCount - 1) ? BC / 2 : rowCount - 1);
         LocalTensor<float> gLeftRef = gCache[rowBegin * BK];
-        LocalTensor<float> gDiagRef = gCache[rowMid * BK];
         LocalTensor<float> gRightRef = gCache[(rowEnd - 1) * BK];
 
         for (uint64_t source = 0; source < rowBegin; ++source) {
@@ -900,10 +898,14 @@ private:
             LocalTensor<float> qSource = qCache[source * BK];
             LocalTensor<float> kSource = kCache[source * BK];
             LocalTensor<float> gSource = gCache[source * BK];
-            BuildGate(gate, gDiagRef, gSource, curK);
+            // Directional endpoint references keep the feature-side gate <= 1.
+            // A midpoint reference can first form Inf from a large, but legal,
+            // BF16 q/k value and then feed it to a zero dA coefficient, yielding
+            // 0 * Inf = NaN even though the final pairwise result is finite.
+            BuildGate(gate, gRightRef, gSource, curK);
             AccumulateLeftSource(dqDiag, dkLeftDiag, kSource, gate,
                                  rowQ[source * BC], rowK[source * BC], curK);
-            BuildGate(gate, gSource, gDiagRef, curK);
+            BuildGate(gate, gSource, gLeftRef, curK);
             AccumulateRightSource(dkRight, qSource, kSource, gate,
                                   colQ[source * BC], colK[source * BC], curK);
         }
@@ -925,14 +927,14 @@ private:
                 Mul(dkLeft[rowOffset], dkLeft[rowOffset], gate, curK);
                 PipeBarrier<PIPE_V>();
             }
-            BuildGate(gate, gSelf, gDiagRef, curK);
+            BuildGate(gate, gSelf, gRightRef, curK);
             Mul(dqDiag[rowOffset], dqDiag[rowOffset], gate, curK);
             Mul(dkLeftDiag[rowOffset], dkLeftDiag[rowOffset], gate, curK);
             PipeBarrier<PIPE_V>();
             Add(dqAcc[rowOffset], dqAcc[rowOffset], dqDiag[rowOffset], curK);
             Add(dkLeft[rowOffset], dkLeft[rowOffset], dkLeftDiag[rowOffset], curK);
             PipeBarrier<PIPE_V>();
-            BuildGate(gate, gDiagRef, gSelf, curK);
+            BuildGate(gate, gLeftRef, gSelf, curK);
             Mul(dkRight[rowOffset], dkRight[rowOffset], gate, curK);
             PipeBarrier<PIPE_V>();
             if (rowEnd < curT) {

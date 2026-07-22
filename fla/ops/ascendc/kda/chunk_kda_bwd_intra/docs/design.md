@@ -2,6 +2,8 @@
 
 > 2026-07-22 stability rollback: the scoped-event plus dedicated-C key-23 artifact still timed out in the first BF16 target-shape launch. Host dispatch now disables both mixed key 15 and grouped key 23 and routes the target domain to the last device-proven AIV key 7. The mixed implementations remain compiled for later isolated repair, but are not delivery paths.
 
+> 2026-07-22 key-7 precision correction: block-wise diagonal accumulation no longer uses a midpoint reference for both directions. The left path factors through the block's right endpoint and the right path through its left endpoint, so the feature-side gate is at most one under the cumulative non-increasing gate contract. The matching outer factor restores the same pairwise `exp2(g_i-g_j)` value. This prevents an otherwise finite sparse contribution from becoming `0 * Inf = NaN` when a legal large BF16 feature is multiplied before a zero `dA` coefficient; instruction count, task partitioning, and buffers are unchanged.
+
 > 2026-07-22 correction: the A2/910B delivery default is the two-slot GM A/B bridge (`KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER=false`). DAV_2201 has no physical AIV-UB-to-AIC-L1 path: AscendC software-emulates `UB -> TSCM` through GM and a registered Matmul KFC client. This direct CATLASS kernel has no KFC client, so enabling the retained TSCM experiment on A2 would be unsupported and would not remove the GM round trip. The main 179,936-byte UB slab remains single-buffered; CATLASS L1/L0 and the GM stage bridge provide the current local and cross-core ping-pong respectively.
 
 ## 1. 目标与范围

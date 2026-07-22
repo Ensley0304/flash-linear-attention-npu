@@ -319,6 +319,11 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "TILING_KEY_IS(15)" in kernel, "pair-wise rollback key must remain compiled"
     assert "TILING_KEY_IS(23)" in kernel
     assert "KERNEL_TASK_TYPE(23, KERNEL_TYPE_MIX_AIC_1_2)" in kernel
+    assert "Directional endpoint references keep the feature-side gate <= 1." in kernel
+    assert "BuildGate(gate, gRightRef, gSource, curK);" in kernel
+    assert "BuildGate(gate, gSource, gLeftRef, curK);" in kernel
+    assert "BuildGate(gate, gSelf, gRightRef, curK);" in kernel
+    assert "BuildGate(gate, gLeftRef, gSelf, curK);" in kernel
     assert "MulAddDst(acc, common, coefficientBrcb" in kernel
     assert "MulAddDst(outG, qCache[rowBegin * BK], dqAcc" in kernel
     assert "MulAddDst(outG, dkRight, kCache[rowBegin * BK]" in kernel
@@ -669,11 +674,17 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         '"${test_file}::test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16"'
         in validation_runner
     )
+    assert (
+        '"${test_file}::test_chunk_kda_bwd_intra_grouped_fastpath_'
+        'off_right_and_pair_bridge_ftz_guard"'
+        in validation_runner
+    )
     assert "timeout --kill-after=15s 120s env" in validation_runner
     assert "preflight_rc=${PIPESTATUS[0]}" in validation_runner
-    assert "target BF16/safe preflight timed out after 120 seconds" in validation_runner
-    assert "[PASS] target BF16/safe preflight completed" in validation_runner
-    assert "[PASS] quick key7 validation complete" in validation_runner
+    assert 'preflight_label="target BF16/safe"' in validation_runner
+    assert 'preflight_label="key7 target/bridge"' in validation_runner
+    assert "[PASS] $preflight_label preflight completed" in validation_runner
+    assert "[PASS] quick key7 target and pair-bridge validation complete" in validation_runner
     assert "CopyStageAbNzRows(" in grouped
     assert "Catlass::layout::zN" in grouped
     assert "Catlass::layout::nZ" in grouped

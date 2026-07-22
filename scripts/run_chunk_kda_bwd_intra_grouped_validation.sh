@@ -1463,7 +1463,17 @@ run_test() {
         "$RUN_ROOT/logs/kda_collect.log"
 
     # Fail fast on the target BF16/safe launch.  In quick mode the wheel contains
-    # only delivery key 7, so this is intentionally the complete debug gate.
+    # only delivery key 7, so also run the endpoint-reassociation precision guard.
+    local -a preflight_nodes=(
+        "${test_file}::test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16"
+    )
+    local preflight_label="target BF16/safe"
+    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+        preflight_nodes+=(
+            "${test_file}::test_chunk_kda_bwd_intra_grouped_fastpath_off_right_and_pair_bridge_ftz_guard"
+        )
+        preflight_label="key7 target/bridge"
+    fi
     local preflight_rc
     set +e
     timeout --kill-after=15s 120s env \
@@ -1484,21 +1494,21 @@ run_test() {
         KDA_EXPECT_AIC_DIAGNOSTIC="$BUILD_AIC_DIAGNOSTIC" \
         PYTHONPATH="$RUNTIME_PYTHONPATH" \
         python3 -m pytest -q -vv -p no:cacheprovider \
-        "${test_file}::test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16" \
+        "${preflight_nodes[@]}" \
         -s 2>&1 | tee \
         "$RUN_ROOT/logs/kda_grouped_preflight_card${PHYSICAL_DEVICE}.log"
     preflight_rc=${PIPESTATUS[0]}
     set -e
     if (( preflight_rc != 0 )); then
         if (( preflight_rc == 124 || preflight_rc == 137 )); then
-            echo "[FAIL] target BF16/safe preflight timed out after 120 seconds " \
+            echo "[FAIL] $preflight_label preflight timed out after 120 seconds " \
                  "(exit=$preflight_rc)" >&2
         else
-            echo "[FAIL] target BF16/safe preflight failed (exit=$preflight_rc)" >&2
+            echo "[FAIL] $preflight_label preflight failed (exit=$preflight_rc)" >&2
         fi
         return "$preflight_rc"
     fi
-    echo "[PASS] target BF16/safe preflight completed"
+    echo "[PASS] $preflight_label preflight completed"
     if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
         cat >"$RUN_ROOT/quick_preflight.pass" <<EOF
 commit=$COMMIT
@@ -1507,10 +1517,11 @@ wheel_kda_digest=$WHEEL_KDA_DIGEST
 physical_device=$PHYSICAL_DEVICE
 validation_mode=$BUILD_VALIDATION_MODE
 tiling_keys=$BUILD_TILING_KEYS
-tests=1
+tests=2
 failures=0
 EOF
-        echo "[PASS] quick key7 validation complete; rebuild without --quick-build for full37"
+        echo "[PASS] quick key7 target and pair-bridge validation complete; " \
+             "rebuild with --stable-build for full37"
         return 0
     fi
 
