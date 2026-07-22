@@ -10,11 +10,11 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| rowBlock3 Cube 源码契约 | 待实验实现满足 | 三个独立 stage key、FP32 MMAD、HF32 off、AIC-only 执行分支且无 CrossCore flag |
+| rowBlock3 Cube 源码契约 | 本地已通过 | key12 单次 L0 登记、MIX 1:2、user workspace、FP32 MMAD/HF32 off、对称反转 flag |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | 待重跑 | 精确 `75535cd` AIV 基线已在 A2/CANN 9.1 clean build；方向端点与 Cube 实验分支待重编 |
-| AscendC NPU 精度 | 基线已通过 | 精确 `75535cd` 原 22 项通过；实验版必须完整通过 28 项，不能删除或放宽既有 guard |
-| Profiling/性能优化 | 基线已采集 | 精确 `75535cd` 为 48.660 ms kernel、51.107 ms end-to-end；修正版待复测 |
+| CANN host/kernel 编译 | key12 待重跑 | 三 launch canary 已 clean build；单 kernel MIX 分支需单算子快速编译 |
+| AscendC NPU 精度 | 三 launch 已通过 | 三 launch canary 为 28 passed；key12 必须重新完整通过 28 项，不能沿用旧 wheel 结论 |
+| Profiling/性能优化 | 基线已采集 | key7 为 48.660 ms；三 launch canary 合计约 46.011 ms；key12 待采集且必须只有一条 KDA 记录 |
 
 ## A2 精度与性能基线（2026-07-21）
 
@@ -99,24 +99,22 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 ## rowBlock3 Cube 实验门禁
 
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且三份 scratch 合计不超过 256 MiB
-和满 chunk。源码契约要求 prep、Cube、consume 使用三个不同的 tiling key；Cube 的 A/B/C 为
-FP32，HF32 显式关闭。Cube stage 使用 `KERNEL_TYPE_AIC_ONLY`，host 侧 `blockDim` 直接等于
-实际使用的 AIC 数量，不生成或等待 AIV 分支。算子目录不得
-出现 `CrossCoreSetFlag`、`CrossCoreWaitFlag` 或 `CrossCoreFlagWithReverse`。
+且 workspace 不超过 256 MiB和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key12 为
+`KERNEL_TYPE_MIX_AIC_1_2`，A/B/C 为 FP32且 HF32 显式关闭。AIC/AIV 使用相同 logical core/slot
+映射；两个 AIV 子核每 slot 各 set 一次 ready、各 wait 一次 done，AIC 各 wait/set 一次。
 
-三 stage 必须由同一 stream 串行提交，稳定 key7 仍是 fallback。目标 shape scratch 为
-`4096 * 46 KiB = 184 MiB`，第一版没有 double buffer。建议按以下顺序放行：
+稳定 key7 仍是 fallback。目标 shape workspace 为 `4096 * 46 KiB = 184 MiB`，第一版没有
+double buffer 或 slot 复用。建议按以下顺序放行：
 
 1. 源码契约和 Python collect 通过；
-2. 单算子 clean build，确认三个 stage 对应设备二进制均进入 wheel；
+2. 单算子快速 build，确认 key12 MIX 实例进入 wheel；
 3. 两路 rowBlock3 canary、zero dA、endpoint guard 通过；
 4. 连续 launch 至少 100 次，无超时或设备复位；
 5. 完整 28 项通过，原容差不删除、不放宽；
-6. msprof 同时出现 AIV prep/consume 和 AIC Cube，性能按三个 kernel duration 之和计算。
+6. msprof 只出现一条 `ChunkKdaBwdIntra`，该行同时具有 AIC/AIV 时间，再与 key7 比较。
 
-上述 NPU 项当前均待验证。未满足第 3～6 项前，不扩大实验 fastpath eligibility，不移除 key7，也不
-引入 double buffer、persistent MMAD 或同 launch AIC/AIV 同步。
+上述 key12 NPU 项当前均待验证。未满足第 3～6 项前，不扩大实验 fastpath eligibility，不移除
+key7，也不引入 double buffer、persistent MMAD 或 workspace ring。
 
 板端通过门槛：四个输出均 finite，且逐输出通过测试中的 CPU FP64 golden 容差。若 safe case 失败，应先分别对比 `dq_local`、`dk_left_pre`、`dk_right`，重点检查 16-token 首/中/尾参考点的内外指数方向。
 

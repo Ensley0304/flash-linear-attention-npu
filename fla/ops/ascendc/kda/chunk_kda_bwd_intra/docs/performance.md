@@ -70,8 +70,8 @@ dA GM elements:      2 * (R * BT + L * 16)
 
 ## 下一阶段候选
 
-最新 profiling 仍显示目标 shape 的 Cube utilization 为 0，因此先用 rowBlock3 off-left 建立最小
-Cube 路径，不直接恢复曾发生设备超时的 stage 内 AIC/AIV 握手。该切片只替换
+稳定 key7 profiling 显示目标 shape 的 Cube utilization 为 0，因此先用 rowBlock3 off-left 建立最小
+Cube 路径。该切片只替换
 `row=[48,64), source=[0,48)` 的两路 left contraction：
 
 ```text
@@ -84,22 +84,24 @@ concat(dAqk_row3_left, dAkk_row3_left) [32,48]
 rowBlock 的 AIV 计算，所以第一轮目标是证明 Cube 能稳定带来净收益，不预设一次降至 10 ms。
 
 实验 eligibility 固定为 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且三份 scratch 合计不超过 256 MiB
-和满 chunk；其他 case 继续使用 key7/legacy。执行由 aclnn executor 在同一 stream 串行排入：
+且 workspace 不超过 256 MiB和满 chunk；其他 case 继续使用 key7/legacy。已验证的三 launch
+canary 仅用于确认 FP32 MMAD 数值，其总 kernel duration 约 46.011 ms，净收益有限且不满足交付
+要求。当前实现改为一次 MIX launch：
 
 ```text
-AIV prep -> Cube stage -> AIV consume
+AIV0 pack A/B + rowBlock0  ┐
+AIV1 rowBlock1/2           ├─ 与 AIC FP32 Cube 重叠 -> AIV0 rowBlock3
+AIC  wait ready -> Cube    ┘
 ```
 
-Cube stage 使用 `KERNEL_TYPE_AIC_ONLY`，host 侧仅启动实际使用的 AIC；HF32 关闭，stage 之间
-不使用任何 CrossCore flag。这样用额外 launch 和 GM scratch
-换取确定的生命周期，避免复杂 ready/done 事件再次造成死锁。稳定 key7 不删除，也不改变非实验
-shape 的调度。
+key12 使用 `KERNEL_TYPE_MIX_AIC_1_2`，host `blockDim=min(slot_count,AIC count)` 并设置 MIX
+schedule mode。两个 AIV 子核共同提交 ready，AIC 完成后广播 done；双方按相同的逻辑 core 和
+slot 步长推进。HF32 关闭，稳定 key7 不删除，也不改变非实验 shape 的调度。
 
 scratch 按 `(chunk,HV)` 分配 46 KiB（A 6 KiB、B 24 KiB、C 16 KiB），目标 shape
 `B=1,T=8192,H=HV=32` 共 4096 slot，约 184 MiB，另加平台 libapi workspace。第一版不启用
-双 buffer、persistent MMAD、slot overlap 或 workspace alias；这些只在 NPU 精度和 profiling
-门禁通过后逐项评估。
+双 buffer、persistent MMAD、slot ring 或 workspace alias；这些只在单 kernel NPU 精度和
+profiling 门禁通过后逐项评估。
 
 完整方向仍可将其余 16-token 子块重写为 FP32 Cube GEMM：
 
@@ -111,6 +113,6 @@ dAkk_right^T @ (beta*K * exp2(g - g_ref_right))
 ```
 
 AIV 负责 gate 预处理和行缩放，AIC 负责 GEMM。后续必须按一个 contraction 切片逐步扩展，不能
-在 rowBlock3 canary 之前引入 diagonal、right、double buffer 或同 launch 深融合。当前实验路径
-尚未完成 NPU 编译、精度或性能验证；性能结论必须按 prep、Cube、consume 三个 kernel duration
-之和统计，并与 48.660 ms 稳定基线比较。
+在 key12 的单 kernel canary 通过前引入 diagonal、right、double buffer 或 workspace ring。当前
+key12 尚未完成 NPU 编译、精度或性能验证；profiling 必须只出现一条 KDA kernel 记录，并与
+48.660 ms 稳定基线以及 46.011 ms 三 launch canary 比较。

@@ -11,7 +11,6 @@
 #include "aclnn_chunk_kda_bwd_intra.h"
 #include "chunk_kda_bwd_intra.h"
 
-#include <initializer_list>
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/make_op_executor.h"
@@ -107,16 +106,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     return tensor == nullptr ? ACLNN_ERR_INNER_NULLPTR : ACLNN_SUCCESS;
 }
 
-op::Shape MakeShape(std::initializer_list<int64_t> dims)
-{
-    op::Shape shape;
-    for (int64_t dim : dims) {
-        shape.AppendDim(dim);
-    }
-    return shape;
-}
-
-bool UseRow3CubeFastPath(const Params &p)
+bool UseRow3MixedFastPath(const Params &p)
 {
     const auto qs = p.q->GetViewShape();
     const auto gs = p.g->GetViewShape();
@@ -153,43 +143,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
         CHECK_RET(MakeContiguous(*tensor, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     }
     std::array<const aclTensor *, 4> result{};
-    if (UseRow3CubeFastPath(p)) {
-        const int64_t slots = p.totalChunks * p.g->GetViewShape().GetDim(1);
-        auto stageA = executorPtr->AllocTensor(MakeShape({slots, 32, 48}), DataType::DT_FLOAT,
-                                               Format::FORMAT_ND);
-        auto stageB = executorPtr->AllocTensor(MakeShape({slots, 48, 128}), DataType::DT_FLOAT,
-                                               Format::FORMAT_ND);
-        auto stageC = executorPtr->AllocTensor(MakeShape({slots, 32, 128}), DataType::DT_FLOAT,
-                                               Format::FORMAT_ND);
-        auto prepDummy0 = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto prepDummy1 = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto cubeDummy0 = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto cubeDummy1 = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto cubeDummy2 = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        CHECK_RET(stageA != nullptr && stageB != nullptr && stageC != nullptr &&
-                      prepDummy0 != nullptr && prepDummy1 != nullptr && cubeDummy0 != nullptr &&
-                      cubeDummy1 != nullptr && cubeDummy2 != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
-
-        auto prep = l0op::ChunkKdaBwdIntra(
-            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 1,
-            stageA, stageB, prepDummy0, prepDummy1, executorPtr);
-        for (const aclTensor *tensor : prep) {
-            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        }
-
-        auto cube = l0op::ChunkKdaBwdIntra(
-            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, stageA, stageB, nullptr, 2,
-            stageC, cubeDummy0, cubeDummy1, cubeDummy2, executorPtr);
-        for (const aclTensor *tensor : cube) {
-            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        }
-
+    if (UseRow3MixedFastPath(p)) {
+        // The BF16/safe target now uses one MIX launch.  AIC and the two AIV
+        // lanes exchange workspace readiness inside the kernel; no executor
+        // tensor or intermediate launcher entry is needed.
         result = l0op::ChunkKdaBwdIntra(
             p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, stageC, 3,
+            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 4,
             p.dqOut, p.dkOut, p.dbOut, p.dgOut, executorPtr);
     } else {
         result = l0op::ChunkKdaBwdIntra(

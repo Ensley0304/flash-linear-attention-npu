@@ -34,9 +34,9 @@ public:
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
-        // Internal executor-owned tensors used by the optional three-stage
-        // BF16/safe Cube fast path.  They are intentionally not exposed by
-        // the public aclnn/Python API.
+        // Legacy internal tensors retained only for the isolated stage 1/2/3
+        // diagnostics.  The public BF16/safe Cube path uses one stage-4 MIX
+        // launch and kernel user workspace instead.
         this->Input("stage_a").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
         this->Input("stage_b").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
         this->Input("stage_c").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);

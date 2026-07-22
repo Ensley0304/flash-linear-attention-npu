@@ -251,7 +251,7 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_dense_random():
 
 
 def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
-    """The serial three-stage fastpath must not retain transient event state."""
+    """The single MIX fastpath must advance every reverse-flag generation."""
     device = _device()
     inputs = _case(t=64, h=1, hv=1, kdim=128, dtype=torch.bfloat16, gate_scale=0.2)
     ref = _golden(*inputs, chunk_size=64, safe_gate=True)
@@ -264,39 +264,53 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
 
 
 def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
-    """Keep the experimental Cube stages isolated from cross-core handshakes."""
+    """Keep the target fastpath to one MIX launch with symmetric AIC/AIV sync."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
     )
+    tiling_source = (op_root / "op_host" / "chunk_kda_bwd_intra_tiling.cpp").read_text(
+        encoding="utf-8"
+    )
+    aclnn_source = (
+        op_root / "op_host" / "op_api" / "aclnn_chunk_kda_bwd_intra.cpp"
+    ).read_text(encoding="utf-8")
     source_files = sorted(
         path for path in op_root.rglob("*") if path.suffix in {".cpp", ".h", ".hpp"}
     )
     source = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
 
-    key_names = (
-        "KDA_ROW3_PREP_TILING_KEY",
-        "KDA_ROW3_CUBE_TILING_KEY",
-        "KDA_ROW3_CONSUME_TILING_KEY",
-    )
-    key_values = []
-    for key_name in key_names:
-        match = re.search(rf"\b{key_name}\b\s*=\s*(\d+)", source)
-        assert match is not None, f"missing independent rowBlock3 stage key: {key_name}"
-        key_values.append(int(match.group(1)))
-    assert len(set(key_values)) == len(key_values), "rowBlock3 prep/Cube/consume keys must be distinct"
+    key_match = re.search(r"\bKDA_ROW3_MIXED_TILING_KEY\b\s*=\s*(\d+)", source)
+    assert key_match is not None, "missing the single-launch rowBlock3 MIX key"
+    mixed_key = int(key_match.group(1))
+    assert mixed_key == 12
 
-    cube_branch = re.search(
-        r"else if \(TILING_KEY_IS\(10\)\) \{(?P<body>.*?)"
-        r"\n\s*\} else if \(TILING_KEY_IS\(11\)\)",
+    mixed_branch = re.search(
+        rf"else if \(TILING_KEY_IS\({mixed_key}\)\) \{{(?P<body>.*?)\n\s*\}}\n\}}",
         kernel_source,
         re.DOTALL,
     )
-    assert cube_branch is not None, "missing standalone rowBlock3 Cube branch"
-    cube_body = cube_branch.group("body")
-    assert "KERNEL_TASK_TYPE(10, KERNEL_TYPE_AIC_ONLY)" in cube_body
-    assert "KERNEL_TYPE_MIX" not in cube_body
-    assert "ASCEND_IS_AIC" not in cube_body
+    assert mixed_branch is not None, "missing single-launch rowBlock3 MIX branch"
+    mixed_body = mixed_branch.group("body")
+    assert f"KERNEL_TASK_TYPE({mixed_key}, KERNEL_TYPE_MIX_AIC_1_2)" in mixed_body
+    assert "ASCEND_IS_AIC" in mixed_body and "ASCEND_IS_AIV" in mixed_body
+    assert "GetUserWorkspace(workspace)" in mixed_body
+    assert "CrossCoreSetFlagWithReverse<0x2" in kernel_source
+    assert "CrossCoreWaitFlagWithReverse<0x2" in kernel_source
+    assert "GetBlockIdx()) / subBlockNum" in kernel_source
+    assert "SetScheduleMode(1)" in tiling_source
+
+    fastpath = re.search(
+        r"if \(UseRow3MixedFastPath\(p\)\) \{(?P<body>.*?)\n\s*\} else \{",
+        aclnn_source,
+        re.DOTALL,
+    )
+    assert fastpath is not None, "missing public single-launch MIX dispatch"
+    fastpath_body = fastpath.group("body")
+    assert fastpath_body.count("l0op::ChunkKdaBwdIntra(") == 1
+    assert "AllocTensor" not in fastpath_body
+    assert re.search(r"nullptr, nullptr, nullptr, 4,", fastpath_body)
+
     assert '#include "lib/matmul_intf.h"' not in kernel_source
     assert "CalcTschBlockDim" not in source
     assert "BlockMmadTla" in source
@@ -309,38 +323,16 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
         source,
     ), "rowBlock3 Cube must explicitly disable HF32"
 
-    for forbidden in ("CrossCoreSetFlag", "CrossCoreWaitFlag", "CrossCoreFlagWithReverse"):
-        assert forbidden not in source, f"rowBlock3 serial stages must not use {forbidden}"
-
-    assert "if ((usedCoreNum_ % nc) == 0)" in kernel_source
-    assert "const uint64_t rotatedRowBlock = (taskLane + iteration) % nc;" in kernel_source
-    assert "const uint64_t task = taskGroup * nc + rotatedRowBlock;" in kernel_source
-
-    # Model the target-shape mapping and prove that rotation neither drops nor
-    # duplicates work while distributing the cheaper rowBlock3 across cores.
-    nc = 4
-    used_core_num = 40
-    task_count = 128 * 32 * nc
-    scheduled = []
-    row_blocks_per_core = []
-    for core_idx in range(used_core_num):
-        core_tasks = []
-        iteration = 0
-        linear_task = core_idx
-        while linear_task < task_count:
-            task_group, task_lane = divmod(linear_task, nc)
-            rotated_row_block = (task_lane + iteration) % nc
-            task = task_group * nc + rotated_row_block
-            scheduled.append(task)
-            core_tasks.append(rotated_row_block)
-            linear_task += used_core_num
-            iteration += 1
-        row_blocks_per_core.append(core_tasks)
-
-    assert sorted(scheduled) == list(range(task_count))
-    for row_block in range(nc):
-        counts = [core_tasks.count(row_block) for core_tasks in row_blocks_per_core]
-        assert max(counts) - min(counts) <= 1
+    # Each logical AIC is paired with exactly two AIV lanes.  Both lanes walk
+    # the same slots and participate in one ready/done generation per slot.
+    slot_count = 128 * 32
+    used_core_num = 20
+    per_core_slots = [list(range(core, slot_count, used_core_num)) for core in range(used_core_num)]
+    assert sorted(slot for slots in per_core_slots for slot in slots) == list(range(slot_count))
+    assert max(map(len, per_core_slots)) - min(map(len, per_core_slots)) <= 1
+    for lane in (0, 1):
+        scheduled = [slot for slots in per_core_slots for slot in slots]
+        assert len(scheduled) == slot_count, f"AIV lane {lane} must visit every slot once"
 
 
 @pytest.mark.parametrize("kdim", [15, 17, 257])

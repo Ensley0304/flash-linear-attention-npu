@@ -15,6 +15,7 @@
 #include "catlass/arch/arch.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/gemm_type.hpp"
 #include "catlass/gemm_coord.hpp"
@@ -26,6 +27,7 @@
 #include "catlass/arch/arch.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/gemm_type.hpp"
 #include "catlass/gemm_coord.hpp"
@@ -45,9 +47,15 @@ constexpr float LN2 = 0.69314718055994530942f;
 constexpr uint64_t KDA_ROW3_PREP_TILING_KEY = 9;
 constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
 constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
+constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
-              KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY,
+              KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY &&
+              KDA_ROW3_CONSUME_TILING_KEY != KDA_ROW3_MIXED_TILING_KEY,
               "ChunkKdaBwdIntra row3 stages require distinct tiling keys");
+constexpr uint32_t KDA_ROW3_READY_FLAG0 = 0;
+constexpr uint32_t KDA_ROW3_READY_FLAG1 = 1;
+constexpr uint32_t KDA_ROW3_DONE_FLAG0 = 2;
+constexpr uint32_t KDA_ROW3_DONE_FLAG1 = 3;
 constexpr uint32_t KDA_ROW3_SOURCE_COUNT = 48;
 constexpr uint32_t KDA_ROW3_MATRIX_ROWS = 32;
 constexpr uint32_t KDA_ROW3_HEAD_DIM = 128;
@@ -102,6 +110,15 @@ public:
             PackA(task, hv, chunkStart);
             PackB(task, hv, chunkStart);
         }
+    }
+
+    __aicore__ inline void ProcessOne(uint64_t task)
+    {
+        const uint64_t hv = task % hv_;
+        const uint64_t chunk = task / hv_;
+        const uint64_t chunkStart = chunk * 64;
+        PackA(task, hv, chunkStart);
+        PackB(task, hv, chunkStart);
     }
 
 private:
@@ -246,6 +263,12 @@ public:
             const uint64_t nOffset = (task % 2) * 64;
             RunOne(slot, nOffset);
         }
+    }
+
+    __aicore__ inline void ProcessSlot(uint64_t slot)
+    {
+        RunOne(slot, 0);
+        RunOne(slot, 64);
     }
 
 private:
@@ -424,6 +447,13 @@ public:
                 ProcessTask(task, nc);
             }
         }
+    }
+
+    __aicore__ inline void ProcessBlockwiseRow(uint64_t cubeTask, uint64_t rowBlock)
+    {
+        static_assert(BLOCKWISE, "explicit row scheduling requires the block-wise kernel");
+        const uint64_t nc = bt_ / BC;
+        ProcessTaskBlockwise(cubeTask * nc + rowBlock, nc);
     }
 
 private:
@@ -1427,6 +1457,94 @@ private:
     uint64_t usedCoreNum_ = 1;
     bool isVarLen_ = false;
 };
+
+class KdaRow3MixedKernel {
+public:
+    __aicore__ inline void InitWorkspace(GM_ADDR workspace,
+                                         const ChunkKdaBwdIntraTilingData &tiling)
+    {
+        __gm__ float *base = reinterpret_cast<__gm__ float *>(workspace);
+        const uint64_t slotCount = static_cast<uint64_t>(tiling.totalChunks) *
+                                   static_cast<uint64_t>(tiling.vHeadNum);
+        stageA_ = reinterpret_cast<GM_ADDR>(base);
+        stageB_ = reinterpret_cast<GM_ADDR>(base + slotCount * KDA_ROW3_A_ELEMENTS);
+        stageC_ = reinterpret_cast<GM_ADDR>(base + slotCount *
+                                           (KDA_ROW3_A_ELEMENTS + KDA_ROW3_B_ELEMENTS));
+        slotCount_ = slotCount;
+        usedCoreNum_ = static_cast<uint64_t>(tiling.usedCoreNum);
+    }
+
+    __aicore__ inline void ProcessAic(const ChunkKdaBwdIntraTilingData &tiling)
+    {
+        KdaRow3CubeKernel cube;
+        cube.Init(stageA_, stageB_, stageC_, tiling);
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx());
+        for (uint64_t slot = coreIdx; slot < slotCount_; slot += usedCoreNum_) {
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
+            cube.ProcessSlot(slot);
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
+        }
+    }
+
+    __aicore__ inline void ProcessAiv(
+        GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
+        GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg, GM_ADDR dqOut, GM_ADDR dkOut,
+        GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR chunkIndices,
+        const ChunkKdaBwdIntraTilingData &tiling, TPipe *pipe)
+    {
+        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
+        if (subBlockNum == 0) {
+            return;
+        }
+        const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+
+        ChunkKdaBwdIntraKernel<bfloat16_t, true, true, true> vector;
+        vector.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                    dqOut, dkOut, dbOut, dgOut, chunkIndices, stageC_, tiling, pipe);
+
+        KdaRow3PrepKernel prep;
+        if (subBlockIdx == 0) {
+            prep.Init(k, g, dAqk, dAkk, stageA_, stageB_, tiling, pipe);
+        }
+
+        for (uint64_t slot = coreIdx; slot < slotCount_; slot += usedCoreNum_) {
+            if (subBlockIdx == 0) {
+                prep.ProcessOne(slot);
+            }
+            // 0x2 merges the two AIV sub-block notifications.  AIC cannot
+            // observe this generation until lane 0 has finished packing A/B.
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(readyFlag_);
+
+            // Run the three independent row blocks while Cube produces the
+            // [48:64, 0:48] prefix for row block 3.
+            if (subBlockIdx == 0) {
+                vector.ProcessBlockwiseRow(slot, 0);
+            } else {
+                vector.ProcessBlockwiseRow(slot, 1);
+                vector.ProcessBlockwiseRow(slot, 2);
+            }
+
+            // The AIC completion is broadcast to both AIV lanes; both must
+            // consume every reverse-flag generation before the next slot.
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(doneFlag_);
+            if (subBlockIdx == 0) {
+                vector.ProcessBlockwiseRow(slot, 3);
+            }
+        }
+    }
+
+private:
+    Catlass::Arch::CrossCoreFlagWithReverse<> readyFlag_{KDA_ROW3_READY_FLAG0,
+                                                         KDA_ROW3_READY_FLAG1};
+    Catlass::Arch::CrossCoreFlagWithReverse<> doneFlag_{KDA_ROW3_DONE_FLAG0,
+                                                        KDA_ROW3_DONE_FLAG1};
+    GM_ADDR stageA_ = nullptr;
+    GM_ADDR stageB_ = nullptr;
+    GM_ADDR stageC_ = nullptr;
+    uint64_t slotCount_ = 0;
+    uint64_t usedCoreNum_ = 1;
+};
 } // namespace
 
 extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
@@ -1436,7 +1554,6 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
     GM_ADDR tiling)
 {
     (void)cuSeqlens;
-    (void)workspace;
     GET_TILING_DATA(tilingData, tiling);
     TPipe pipe;
     if (TILING_KEY_IS(0)) {
@@ -1491,5 +1608,20 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 stageC, tilingData, &pipe);
         op.Process();
+    } else if (TILING_KEY_IS(12)) {
+        KERNEL_TASK_TYPE(12, KERNEL_TYPE_MIX_AIC_1_2);
+        GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
+        if (userWS == nullptr) {
+            return;
+        }
+        KdaRow3MixedKernel op;
+        op.InitWorkspace(userWS, tilingData);
+        if ASCEND_IS_AIC {
+            op.ProcessAic(tilingData);
+        }
+        if ASCEND_IS_AIV {
+            op.ProcessAiv(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                          dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
+        }
     }
 }

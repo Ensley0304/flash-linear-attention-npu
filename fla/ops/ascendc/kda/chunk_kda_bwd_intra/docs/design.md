@@ -90,23 +90,22 @@ block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、
 累加。这样不会重复计算 `source=[0,48)`，也不会改变 `dkLeftPre` 在 `db` 归约前的语义。
 
 实验 fastpath 只允许 `safe_gate=true`、BF16 q/k、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且三份 scratch 合计不超过 256 MiB
-且 chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe case 全部走稳定 key7/legacy
-回退。内部 stage 使用三个独立 tiling key：`KDA_ROW3_PREP_TILING_KEY`、
-`KDA_ROW3_CUBE_TILING_KEY` 和 `KDA_ROW3_CONSUME_TILING_KEY`。
-
-三个 stage 在同一 ACL stream 上严格串行：
+且 workspace 不超过 256 MiB、chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe
+case 全部走稳定 key7/legacy 回退。host 只登记一次 key12，设备侧使用
+`KERNEL_TYPE_MIX_AIC_1_2`：一个逻辑 AIC 与两个 AIV 子核处理相同的 `(chunk,HV)` slot。
 
 ```text
-AIV prep -> AIC-only Cube kernel -> AIV consume
+AIV0: pack A/B -> ready -> rowBlock0 ------- wait done -> rowBlock3 consume
+AIV1:          -> ready -> rowBlock1/2 ----- wait done
+AIC :             wait ready -> FP32 Cube -> done
 ```
 
-stage 之间依赖 stream 顺序，不使用 `CrossCoreSetFlag`、`CrossCoreWaitFlag` 或
-`CrossCoreFlagWithReverse`。Cube 的 A/B/C 均保持 FP32，使用 IEEE FP32 模式并显式关闭 HF32；
-Cube stage 显式使用 `KERNEL_TYPE_AIC_ONLY`，host 侧 `blockDim` 直接取实际使用的 AIC 数量，
-不启动无用 AIV，也不引入 Matmul API server/workspace 协议。第一版每个 `(chunk,HV)` scratch slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部
-512B 对齐。目标 shape 的 4096 个 slot 共约 184 MiB。当前版本不做 scratch/UB 双 buffer，待
-正确性和 NPU profiling 通过后再评估复用与压缩。
+ready 使用 `0x2` 汇合两个 AIV 子核，确保 AIV0 完成 A/B 的 GM 写回后 AIC 才读取；done 由 AIC
+广播，两个 AIV 子核都消费同一代反转 flag，避免下一 slot 误读陈旧事件。前三个 rowBlock 与 Cube
+重叠，rowBlock3 只在 done 后读取 C。A/B/C 均保持 FP32，使用 IEEE FP32 模式并显式关闭 HF32。
+每个 `(chunk,HV)` workspace slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部 512B 对齐；
+目标 shape 的 4096 个 slot 共约 184 MiB。当前版本使用唯一 slot，不做复用或双 buffer，先保证
+无覆盖、无死锁；通过 NPU 门禁后再评估 ring workspace 和更深的 contraction 覆盖。
 
 ## 5. safe_gate 分支
 
@@ -139,9 +138,9 @@ Cube stage 显式使用 `KERNEL_TYPE_AIC_ONLY`，host 侧 `blockDim` 直接取�
 3. 若 Vector/Exp 仍主导，将跨 16-token 子块的 dA×gated-vector 搬到 Cube；
 4. 根据实际 `K/BT/HV` 决定 task 是否沿 K 二次切核。
 
-rowBlock3 off-left 是第 3 步的最小实验切片。稳定 key7 始终保留为非实验形状的默认路径和即时回退；在独立
-Cube canary、完整精度回归、重复 launch 与三 stage 总耗时均完成上板验证前，不把实验路径
-描述为已验证，也不扩大当前 eligibility。
+rowBlock3 off-left 是第 3 步的最小实验切片。稳定 key7 始终保留为非实验形状的默认路径和即时回退；
+在独立 Cube canary、完整精度回归、重复 launch 与单 kernel profiling 均完成上板验证前，不把
+key12 MIX 路径描述为已验证，也不扩大当前 eligibility。
 
 ## 8. 接口约束
 

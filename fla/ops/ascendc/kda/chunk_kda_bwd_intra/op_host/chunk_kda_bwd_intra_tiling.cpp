@@ -34,6 +34,7 @@ constexpr bool ENABLE_BLOCKWISE_SAFE = true;
 constexpr uint64_t KDA_ROW3_PREP_TILING_KEY = 9;
 constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
 constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
+constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr int64_t KDA_ROW3_BYTES_PER_SLOT = (32 * 48 + 48 * 128 + 32 * 128) * 4;
 constexpr int64_t KDA_ROW3_MAX_SLOTS = (256LL * 1024 * 1024) / KDA_ROW3_BYTES_PER_SLOT;
 
@@ -74,7 +75,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t stage = *attrs->GetAttrPointer<int64_t>(ATTR_STAGE);
     if ((chunkSize != 64 && chunkSize != 128) || k < 16 || k > 256 || (k % 16) != 0 ||
         h <= 0 || hv < h || (hv % h) != 0 || h > 128 || hv > 128 || totalChunks <= 0 ||
-        stage < 0 || stage > 3) {
+        stage < 0 || stage > 4) {
         return ge::GRAPH_FAILED;
     }
 
@@ -146,13 +147,15 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         taskCount = scratchSlots;
     } else if (stage == 2) {
         taskCount = scratchSlots * 2;
+    } else if (stage == 4) {
+        taskCount = scratchSlots;
     }
     auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t aivNum = platform.GetCoreNumAiv();
     const uint32_t aicNum = platform.GetCoreNumAic();
     uint32_t usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aivNum));
     uint32_t blockDim = usedCoreNum;
-    if (stage == 2) {
+    if (stage == 2 || stage == 4) {
         usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aicNum));
         if (usedCoreNum == 0) {
             return ge::GRAPH_FAILED;
@@ -163,7 +166,13 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     context->SetBlockDim(blockDim);
-    context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize();
+    if (stage == 4) {
+        context->SetScheduleMode(1);
+    }
+    const uint64_t row3WorkspaceBytes = stage == 4
+        ? static_cast<uint64_t>(scratchSlots) * static_cast<uint64_t>(KDA_ROW3_BYTES_PER_SLOT)
+        : 0;
+    context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize() + row3WorkspaceBytes;
 
     ChunkKdaBwdIntraTilingData tiling;
     tiling.set_batch(batch);
@@ -188,6 +197,8 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         context->SetTilingKey(KDA_ROW3_CUBE_TILING_KEY);
     } else if (stage == 3) {
         context->SetTilingKey(KDA_ROW3_CONSUME_TILING_KEY);
+    } else if (stage == 4) {
+        context->SetTilingKey(KDA_ROW3_MIXED_TILING_KEY);
     } else {
         context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     }
