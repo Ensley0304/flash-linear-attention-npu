@@ -25,11 +25,14 @@ constexpr size_t ATTR_SAFE_GATE = 1;
 constexpr size_t ATTR_TOTAL_CHUNKS = 2;
 constexpr int64_t BC = 16;
 constexpr bool ENABLE_BLOCKWISE_SAFE = true;
-constexpr bool ENABLE_MIXED_SAFE = true;
-// Key 23 keeps the Cube deep-fusion target active.  Its default uses one
-// complete non-UnitFlag event envelope per logical GEMM and writes C into a
-// disjoint workspace tail; the A2 device preflight remains the acceptance gate.
-constexpr bool ENABLE_GROUPED_SAFE = true;
+// Delivery-stability rollback: the original block-wise AIV key 7 is the last
+// implementation with clean-wheel 22/22 and repeated-launch device evidence.
+// Both mixed AIC/AIV candidates remain compiled for controlled experiments,
+// but neither may be selected by normal tiling until it independently passes
+// the single-launch exit gate.  This keeps the target BF16/safe domain runnable
+// while key 15/23 event lifecycles are repaired offline.
+constexpr bool ENABLE_MIXED_SAFE = false;
+constexpr bool ENABLE_GROUPED_SAFE = false;
 constexpr uint64_t MIXED_TILING_KEY = 15;
 constexpr uint64_t GROUPED_TILING_KEY = 23;
 constexpr int64_t MIXED_CHUNK_SIZE = 64;

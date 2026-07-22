@@ -14,6 +14,7 @@ SOC="ascend910b"
 PHYSICAL_DEVICE="2"
 RUN_BASE="/var/tmp"
 JOBS="8"
+QUICK_BUILD=false
 FULL_METRICS=false
 FINAL_GATE=false
 PAIR_GATES_MODE="source"
@@ -60,6 +61,8 @@ Options:
   --physical-device N            Physical device exposed to the process; default: 2
   --run-base PATH                Persistent artifact parent; default: /var/tmp
   --jobs N                       build.sh parallelism; default: 8
+  --quick-build                  Build only delivery key 7 and stop test mode
+                                 after the single target-shape preflight
   --pair-gates MODE              source|factor|direct; build/all only
   --shared-setup MODE            source|overlap|prologue; build/all only
   --stage-epilogue MODE          source|overlap|tail; build/all only
@@ -82,7 +85,8 @@ Options:
 
 Examples:
   bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
-    --mode build --cann-env /path/to/ascend-toolkit/set_env.sh
+    --mode build --quick-build \
+    --cann-env /path/to/ascend-toolkit/set_env.sh
 
   bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
     --mode test --state /var/tmp/wys_kda_grouped_*/state.env \
@@ -115,6 +119,7 @@ while [[ $# -gt 0 ]]; do
         --physical-device) require_option_value "$@"; PHYSICAL_DEVICE="$2"; shift 2 ;;
         --run-base) require_option_value "$@"; RUN_BASE="$2"; shift 2 ;;
         --jobs) require_option_value "$@"; JOBS="$2"; shift 2 ;;
+        --quick-build) QUICK_BUILD=true; shift ;;
         --pair-gates) require_option_value "$@"; PAIR_GATES_MODE="$2"; shift 2 ;;
         --shared-setup) require_option_value "$@"; SHARED_SETUP_MODE="$2"; shift 2 ;;
         --stage-epilogue) require_option_value "$@"; STAGE_EPILOGUE_MODE="$2"; shift 2 ;;
@@ -139,6 +144,10 @@ case "$MODE" in
     build|test|profile|all) ;;
     *) echo "[FAIL] invalid mode: $MODE" >&2; usage; exit 2 ;;
 esac
+if [[ "$QUICK_BUILD" == true && ( "$MODE" == profile || "$MODE" == all ) ]]; then
+    echo "[FAIL] --quick-build supports build mode only; run test with its state.env" >&2
+    exit 2
+fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "[FAIL] --jobs must be positive" >&2; exit 2; }
 [[ "$PHYSICAL_DEVICE" =~ ^[0-9]+$ ]] || {
     echo "[FAIL] --physical-device must be a non-negative integer" >&2
@@ -306,7 +315,7 @@ write_state() {
         BUILD_RUNNER_SHA256 BUILD_PAIR_GATES BUILD_SHARED_SETUP \
         BUILD_STAGE_EPILOGUE BUILD_PAIR_SCRATCH BUILD_TAIL_BLOCKS BUILD_TASK_STORE \
         BUILD_MMAD_ENGINES BUILD_VECTOR_MASK BUILD_DB_REDUCE BUILD_STAGE_A BUILD_CUBE_MODE \
-        BUILD_STAGE_IO BUILD_AIC_DIAGNOSTIC \
+        BUILD_STAGE_IO BUILD_AIC_DIAGNOSTIC BUILD_VALIDATION_MODE BUILD_TILING_KEYS \
         BUILD_VARIANT_ID; do
         printf 'export %s=%q\n' "$name" "${!name}" >>"$state"
     done
@@ -329,7 +338,7 @@ load_state() {
         BUILD_RUNNER_SHA256 BUILD_PAIR_GATES BUILD_SHARED_SETUP \
         BUILD_STAGE_EPILOGUE BUILD_PAIR_SCRATCH BUILD_TAIL_BLOCKS BUILD_TASK_STORE \
         BUILD_MMAD_ENGINES BUILD_VECTOR_MASK BUILD_DB_REDUCE BUILD_STAGE_A BUILD_CUBE_MODE \
-        BUILD_STAGE_IO BUILD_AIC_DIAGNOSTIC \
+        BUILD_STAGE_IO BUILD_AIC_DIAGNOSTIC BUILD_VALIDATION_MODE BUILD_TILING_KEYS \
         BUILD_VARIANT_ID; do
         [[ -n "${!required:-}" ]] || { echo "[FAIL] state misses $required" >&2; exit 2; }
     done
@@ -391,6 +400,21 @@ load_state() {
         echo "[FAIL] invalid AIC diagnostic value in state: $BUILD_AIC_DIAGNOSTIC" >&2
         exit 2
     esac
+    case "$BUILD_VALIDATION_MODE" in quick|audit) ;; *)
+        echo "[FAIL] invalid validation mode in state: $BUILD_VALIDATION_MODE" >&2
+        exit 2
+    esac
+    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+        [[ "$BUILD_TILING_KEYS" == 7 ]] || {
+            echo "[FAIL] quick state must contain only tiling key 7" >&2
+            exit 2
+        }
+    else
+        [[ "$BUILD_TILING_KEYS" == all ]] || {
+            echo "[FAIL] audit state must contain the unfiltered key set" >&2
+            exit 2
+        }
+    fi
     if [[ "$BUILD_STAGE_IO" == tscm && "$BUILD_SOC" == ascend910b ]]; then
         echo "[FAIL] refusing unsupported A2 TSCM stage-I/O artifact from state" >&2
         echo "       rebuild with --stage-io gm" >&2
@@ -979,6 +1003,13 @@ run_build() {
     BUILD_PYTHON_VERSION="$CURRENT_PYTHON_VERSION"
     BUILD_TORCH_VERSION="$CURRENT_TORCH_VERSION"
     BUILD_TORCH_NPU_VERSION="$CURRENT_TORCH_NPU_VERSION"
+    if [[ "$QUICK_BUILD" == true ]]; then
+        BUILD_VALIDATION_MODE="quick"
+        BUILD_TILING_KEYS="7"
+    else
+        BUILD_VALIDATION_MODE="audit"
+        BUILD_TILING_KEYS="all"
+    fi
     local required
     for required in "${VALIDATION_SOURCES[@]}"; do
         git cat-file -e "$COMMIT:$required" || {
@@ -998,11 +1029,18 @@ run_build() {
     WHEEL_SRC="$RUN_ROOT/wheel_src"
     shared_3p="$RUN_ROOT/third_party"
     mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/artifacts" "$RUN_ROOT/tmp" \
-        "$shared_3p" "$probe23" "$probe15" "$WHEEL_SRC"
+        "$shared_3p" "$WHEEL_SRC"
+    if [[ "$BUILD_VALIDATION_MODE" == audit ]]; then
+        mkdir -p "$probe23" "$probe15"
+    fi
     export TMPDIR="$RUN_ROOT/tmp"
 
     local dst
-    for dst in "$probe23" "$probe15" "$WHEEL_SRC"; do
+    local -a build_sources=("$WHEEL_SRC")
+    if [[ "$BUILD_VALIDATION_MODE" == audit ]]; then
+        build_sources=("$probe23" "$probe15" "$WHEEL_SRC")
+    fi
+    for dst in "${build_sources[@]}"; do
         git archive --format=tar "$COMMIT" | tar -xf - -C "$dst"
         [[ ! -e "$dst/third_party" ]] || {
             echo "[FAIL] archive unexpectedly contains third_party: $dst" >&2
@@ -1012,15 +1050,17 @@ run_build() {
         apply_build_variant "$dst"
     done
     local grouped_header_rel="fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/chunk_kda_bwd_intra_grouped.hpp"
-    local probe23_header_sha probe15_header_sha wheel_header_sha
-    probe23_header_sha="$(sha256sum "$probe23/$grouped_header_rel" | awk '{print $1}')"
-    probe15_header_sha="$(sha256sum "$probe15/$grouped_header_rel" | awk '{print $1}')"
+    local probe23_header_sha="" probe15_header_sha="" wheel_header_sha
     wheel_header_sha="$(sha256sum "$WHEEL_SRC/$grouped_header_rel" | awk '{print $1}')"
-    [[ "$probe23_header_sha" == "$probe15_header_sha" && \
-       "$probe23_header_sha" == "$wheel_header_sha" ]] || {
-        echo "[FAIL] A/B variant rewrite differs across clean build sources" >&2
-        exit 1
-    }
+    if [[ "$BUILD_VALIDATION_MODE" == audit ]]; then
+        probe23_header_sha="$(sha256sum "$probe23/$grouped_header_rel" | awk '{print $1}')"
+        probe15_header_sha="$(sha256sum "$probe15/$grouped_header_rel" | awk '{print $1}')"
+        [[ "$probe23_header_sha" == "$probe15_header_sha" && \
+           "$probe23_header_sha" == "$wheel_header_sha" ]] || {
+            echo "[FAIL] A/B variant rewrite differs across clean build sources" >&2
+            exit 1
+        }
+    fi
     VALIDATION_MANIFEST="$RUN_ROOT/validation_sources.sha256"
     (
         cd "$WHEEL_SRC"
@@ -1194,8 +1234,9 @@ assert tscm["physical_layout"]["same_physical_image_for_transpose"] is True
 assert tscm["physical_layout"]["local_nd2nz_required"] is False
 print("[PASS] grouped physical GM traffic model")
 PY
-    printf 'commit=%s\nsource=%s\ncann_env=%s\nvariant=%s\npair_gates=%s\nshared_setup=%s\nstage_epilogue=%s\npair_scratch=%s\ntail_blocks=%s\ntask_store=%s\nmmad_engines=%s\nvector_mask=%s\ndb_reduce=%s\nstage_a=%s\ncube_mode=%s\nstage_io=%s\naic_diagnostic=%s\ngrouped_header_sha256=%s\n' \
+    printf 'commit=%s\nsource=%s\ncann_env=%s\nvariant=%s\nvalidation_mode=%s\ntiling_keys=%s\npair_gates=%s\nshared_setup=%s\nstage_epilogue=%s\npair_scratch=%s\ntail_blocks=%s\ntask_store=%s\nmmad_engines=%s\nvector_mask=%s\ndb_reduce=%s\nstage_a=%s\ncube_mode=%s\nstage_io=%s\naic_diagnostic=%s\ngrouped_header_sha256=%s\n' \
         "$COMMIT" "$SOURCE_ROOT" "$CANN_ENV" "$BUILD_VARIANT_ID" \
+        "$BUILD_VALIDATION_MODE" "$BUILD_TILING_KEYS" \
         "$BUILD_PAIR_GATES" "$BUILD_SHARED_SETUP" "$BUILD_STAGE_EPILOGUE" \
         "$BUILD_PAIR_SCRATCH" "$BUILD_TAIL_BLOCKS" "$BUILD_TASK_STORE" "$BUILD_MMAD_ENGINES" \
         "$BUILD_VECTOR_MASK" "$BUILD_DB_REDUCE" "$BUILD_STAGE_A" "$BUILD_CUBE_MODE" \
@@ -1205,37 +1246,46 @@ PY
     python3 "$WHEEL_SRC/scripts/check_npu_env.py" --build-only
     command -v msprof || true
 
-    probe_key 23 "$probe23"
-    verify_clean_catlass key23
-    BUILD_CATLASS_COMMIT="$(git -C "$shared_3p/catlass" rev-parse HEAD 2>/dev/null)" || {
-        echo "[FAIL] key23 build did not produce a verifiable CATLASS checkout" >&2
-        exit 1
-    }
-    BUILD_CATLASS_TREE="$(git -C "$shared_3p/catlass" rev-parse 'HEAD^{tree}')"
-    [[ "$BUILD_CATLASS_COMMIT" == "$EXPECTED_CATLASS_COMMIT" ]] || {
-        echo "[FAIL] unexpected CATLASS revision: $BUILD_CATLASS_COMMIT" >&2
-        exit 1
-    }
-    printf 'catlass_commit=%s\ncatlass_tree=%s\nvalidation_manifest_sha256=%s\nrunner_sha256=%s\n' \
-        "$BUILD_CATLASS_COMMIT" "$BUILD_CATLASS_TREE" \
-        "$VALIDATION_MANIFEST_SHA256" "$BUILD_RUNNER_SHA256" | \
-        tee -a "$RUN_ROOT/build_identity.txt"
-    probe_key 15 "$probe15"
-
-    echo "===== clean, unfiltered single-op wheel ====="
+    if [[ "$BUILD_VALIDATION_MODE" == audit ]]; then
+        probe_key 23 "$probe23"
+        verify_clean_catlass key23
+        BUILD_CATLASS_COMMIT="$(git -C "$shared_3p/catlass" rev-parse HEAD 2>/dev/null)" || {
+            echo "[FAIL] key23 build did not produce a verifiable CATLASS checkout" >&2
+            exit 1
+        }
+        BUILD_CATLASS_TREE="$(git -C "$shared_3p/catlass" rev-parse 'HEAD^{tree}')"
+        [[ "$BUILD_CATLASS_COMMIT" == "$EXPECTED_CATLASS_COMMIT" ]] || {
+            echo "[FAIL] unexpected CATLASS revision: $BUILD_CATLASS_COMMIT" >&2
+            exit 1
+        }
+        probe_key 15 "$probe15"
+        echo "===== clean, unfiltered single-op wheel ====="
+    else
+        echo "===== quick compile: delivery key 7 only ====="
+    fi
     cd "$WHEEL_SRC"
     unset TILING_KEY
     export FLA_NPU_OPS=chunk_kda_bwd_intra
+    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+        bash build.sh --soc="$SOC" --pkg --vendor_name=fla_npu \
+            --ops=chunk_kda_bwd_intra --tiling_key=7 "-j$JOBS" \
+            2>&1 | tee "$RUN_ROOT/logs/key7_quick_compile.log"
+        export FLA_NPU_SKIP_RUN_BUILD=1
+    fi
     python3 -m pip wheel -v --no-build-isolation --no-deps . \
         -w "$RUN_ROOT/artifacts" 2>&1 | tee "$RUN_ROOT/logs/wheel_build.log"
-    grep -Fq -- '--ops=chunk_kda_bwd_intra' "$RUN_ROOT/logs/wheel_build.log"
-    if grep -F 'START bash build.sh' "$RUN_ROOT/logs/wheel_build.log" | \
-        grep -q -- '--tiling_key'; then
-        echo "[FAIL] validation wheel accidentally inherited a tiling-key filter" >&2
-        exit 1
+    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+        unset FLA_NPU_SKIP_RUN_BUILD
+    else
+        grep -Fq -- '--ops=chunk_kda_bwd_intra' "$RUN_ROOT/logs/wheel_build.log"
+        if grep -F 'START bash build.sh' "$RUN_ROOT/logs/wheel_build.log" | \
+            grep -q -- '--tiling_key'; then
+            echo "[FAIL] validation wheel accidentally inherited a tiling-key filter" >&2
+            exit 1
+        fi
+        verify_unfiltered_wheel_build "$WHEEL_SRC/build" \
+            "$RUN_ROOT/logs/wheel_tiling_filter_audit.log"
     fi
-    verify_unfiltered_wheel_build "$WHEEL_SRC/build" \
-        "$RUN_ROOT/logs/wheel_tiling_filter_audit.log"
     grep -Fq 'TILING_KEY_IS(15)' \
         "$WHEEL_SRC/fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/chunk_kda_bwd_intra.cpp"
     grep -Fq 'TILING_KEY_IS(23)' \
@@ -1285,12 +1335,27 @@ PY
     printf '%s\n' "$WHEEL_KDA_DIGEST" >"$RUN_ROOT/logs/wheel_kda_object.digest"
 
     verify_clean_catlass final-wheel
+    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+        BUILD_CATLASS_COMMIT="$(git -C "$shared_3p/catlass" rev-parse HEAD 2>/dev/null)" || {
+            echo "[FAIL] quick key7 build did not produce a verifiable CATLASS checkout" >&2
+            exit 1
+        }
+        BUILD_CATLASS_TREE="$(git -C "$shared_3p/catlass" rev-parse 'HEAD^{tree}')"
+    fi
+    [[ "$BUILD_CATLASS_COMMIT" == "$EXPECTED_CATLASS_COMMIT" ]] || {
+        echo "[FAIL] unexpected CATLASS revision: $BUILD_CATLASS_COMMIT" >&2
+        exit 1
+    }
     [[ "$(git -C "$shared_3p/catlass" rev-parse HEAD)" == "$BUILD_CATLASS_COMMIT" && \
        "$(git -C "$shared_3p/catlass" rev-parse 'HEAD^{tree}')" == \
            "$BUILD_CATLASS_TREE" ]] || {
         echo "[FAIL] CATLASS changed while building the validation wheel" >&2
         exit 1
     }
+    printf 'catlass_commit=%s\ncatlass_tree=%s\nvalidation_manifest_sha256=%s\nrunner_sha256=%s\n' \
+        "$BUILD_CATLASS_COMMIT" "$BUILD_CATLASS_TREE" \
+        "$VALIDATION_MANIFEST_SHA256" "$BUILD_RUNNER_SHA256" | \
+        tee -a "$RUN_ROOT/build_identity.txt"
 
     STATE_FILE="$RUN_ROOT/state.env"
     write_state "$STATE_FILE"
@@ -1334,9 +1399,8 @@ run_test() {
     grep -Eq '(37 (tests|items) collected|collected 37 items)' \
         "$RUN_ROOT/logs/kda_collect.log"
 
-    # Fail fast on the first real grouped launch before spending up to twenty
-    # minutes in the directed suite. This is the smallest device proof for the
-    # scoped MMAD event envelopes and the disjoint C workspace tail.
+    # Fail fast on the target BF16/safe launch.  In quick mode the wheel contains
+    # only delivery key 7, so this is intentionally the complete debug gate.
     local preflight_rc
     set +e
     timeout --kill-after=15s 120s env \
@@ -1364,14 +1428,28 @@ run_test() {
     set -e
     if (( preflight_rc != 0 )); then
         if (( preflight_rc == 124 || preflight_rc == 137 )); then
-            echo "[FAIL] grouped BF16 preflight timed out after 120 seconds " \
+            echo "[FAIL] target BF16/safe preflight timed out after 120 seconds " \
                  "(exit=$preflight_rc)" >&2
         else
-            echo "[FAIL] grouped BF16 preflight failed (exit=$preflight_rc)" >&2
+            echo "[FAIL] target BF16/safe preflight failed (exit=$preflight_rc)" >&2
         fi
         return "$preflight_rc"
     fi
-    echo "[PASS] grouped BF16 preflight completed"
+    echo "[PASS] target BF16/safe preflight completed"
+    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+        cat >"$RUN_ROOT/quick_preflight.pass" <<EOF
+commit=$COMMIT
+wheel_sha256=$WHEEL_SHA256
+wheel_kda_digest=$WHEEL_KDA_DIGEST
+physical_device=$PHYSICAL_DEVICE
+validation_mode=$BUILD_VALIDATION_MODE
+tiling_keys=$BUILD_TILING_KEYS
+tests=1
+failures=0
+EOF
+        echo "[PASS] quick key7 validation complete; rebuild without --quick-build for full37"
+        return 0
+    fi
 
     timeout --kill-after=30s 1200s env \
         ASCEND_RT_VISIBLE_DEVICES="$PHYSICAL_DEVICE" TEST_DEVICE_ID=0 \
@@ -1448,6 +1526,8 @@ python_version=$BUILD_PYTHON_VERSION
 torch_version=$BUILD_TORCH_VERSION
 torch_npu_version=$BUILD_TORCH_NPU_VERSION
 validation_manifest_sha256=$VALIDATION_MANIFEST_SHA256
+validation_mode=$BUILD_VALIDATION_MODE
+tiling_keys=$BUILD_TILING_KEYS
 catlass_commit=$BUILD_CATLASS_COMMIT
 catlass_tree=$BUILD_CATLASS_TREE
 runner_sha256=$BUILD_RUNNER_SHA256
@@ -1547,6 +1627,10 @@ PY
 
 run_profile() {
     [[ -n "${RUN_ROOT:-}" ]] || load_state
+    [[ "$BUILD_VALIDATION_MODE" == audit ]] || {
+        echo "[FAIL] profiling requires an audit/unfiltered wheel, not quick key7" >&2
+        exit 1
+    }
     [[ -f "$RUN_ROOT/full37.pass" ]] || {
         echo "[FAIL] run --mode test successfully before profiling this wheel" >&2
         exit 1
@@ -1573,6 +1657,8 @@ run_profile() {
     grep -Fxq "torch_npu_version=$BUILD_TORCH_NPU_VERSION" "$RUN_ROOT/full37.pass"
     grep -Fxq "validation_manifest_sha256=$VALIDATION_MANIFEST_SHA256" \
         "$RUN_ROOT/full37.pass"
+    grep -Fxq "validation_mode=$BUILD_VALIDATION_MODE" "$RUN_ROOT/full37.pass"
+    grep -Fxq "tiling_keys=$BUILD_TILING_KEYS" "$RUN_ROOT/full37.pass"
     grep -Fxq "catlass_commit=$BUILD_CATLASS_COMMIT" "$RUN_ROOT/full37.pass"
     grep -Fxq "catlass_tree=$BUILD_CATLASS_TREE" "$RUN_ROOT/full37.pass"
     grep -Fxq "runner_sha256=$BUILD_RUNNER_SHA256" "$RUN_ROOT/full37.pass"

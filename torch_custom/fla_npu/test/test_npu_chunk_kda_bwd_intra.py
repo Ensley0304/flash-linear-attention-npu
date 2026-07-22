@@ -263,7 +263,7 @@ def test_chunk_kda_bwd_intra_default_keeps_upstream_unsafe_contract():
 
 
 def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
-    """Prevent grouped runtime tests from silently falling back to key 15."""
+    """Pin the delivery default to the last device-proven AIV key 7."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     host = (op_root / "op_host" / "chunk_kda_bwd_intra_tiling.cpp").read_text(encoding="utf-8")
     kernel = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(encoding="utf-8")
@@ -290,8 +290,8 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         ROOT / "scripts" / "run_chunk_kda_bwd_intra_grouped_validation.sh"
     ).read_text(encoding="utf-8")
 
-    assert "constexpr bool ENABLE_MIXED_SAFE = true;" in host
-    assert "constexpr bool ENABLE_GROUPED_SAFE = true;" in host
+    assert "constexpr bool ENABLE_MIXED_SAFE = false;" in host
+    assert "constexpr bool ENABLE_GROUPED_SAFE = false;" in host
     assert "constexpr uint64_t GROUPED_TILING_KEY = 23;" in host
     assert "constexpr uint64_t GROUPED_SLOT_ELEMENTS = 49152;" in host
     host_flat = " ".join(host.split())
@@ -369,6 +369,8 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "CMakeCache.txt" in validation_runner
     assert "generated_wheel_tiling_filter=none" in validation_runner
     assert "grep -RIEq -- '--tiling_key='" not in validation_runner
+    assert "--quick-build" in validation_runner
+    assert 'BUILD_TILING_KEYS="7"' in validation_runner
 
     # Exercise the manifest parser and HF32 evidence mapping, rather than only
     # checking that their source tokens exist.  Keep this inside the existing
@@ -666,8 +668,9 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     )
     assert "timeout --kill-after=15s 120s env" in validation_runner
     assert "preflight_rc=${PIPESTATUS[0]}" in validation_runner
-    assert "grouped BF16 preflight timed out after 120 seconds" in validation_runner
-    assert "[PASS] grouped BF16 preflight completed" in validation_runner
+    assert "target BF16/safe preflight timed out after 120 seconds" in validation_runner
+    assert "[PASS] target BF16/safe preflight completed" in validation_runner
+    assert "[PASS] quick key7 validation complete" in validation_runner
     assert "CopyStageAbNzRows(" in grouped
     assert "Catlass::layout::zN" in grouped
     assert "Catlass::layout::nZ" in grouped
@@ -1541,7 +1544,7 @@ def test_chunk_kda_bwd_intra_safe_gate_large_negative_tail():
 
 
 def test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16():
-    """Exercise the DAV_2201 grouped AIC/AIV key instead of its AIV fallback."""
+    """Exercise the target BF16/safe shape on the current delivery path."""
     device = _device()
     inputs = _case(t=64, h=2, hv=2, kdim=128, dtype=torch.bfloat16, gate_scale=0.2)
     ref = _golden(*inputs, chunk_size=64, safe_gate=True)
