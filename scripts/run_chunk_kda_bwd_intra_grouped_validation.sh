@@ -1330,6 +1330,31 @@ run_test() {
     grep -Eq '(37 (tests|items) collected|collected 37 items)' \
         "$RUN_ROOT/logs/kda_collect.log"
 
+    # Fail fast on the first real grouped launch before spending up to twenty
+    # minutes in the directed suite.  This case is the smallest device proof
+    # for the shared-L0C UnitFlag/FIX_M protocol repaired by the scoped path.
+    timeout --kill-after=15s 120s env \
+        ASCEND_RT_VISIBLE_DEVICES="$PHYSICAL_DEVICE" TEST_DEVICE_ID=0 \
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 \
+        KDA_EXPECT_PAIR_GATES="$BUILD_PAIR_GATES" \
+        KDA_EXPECT_SHARED_SETUP="$BUILD_SHARED_SETUP" \
+        KDA_EXPECT_STAGE_EPILOGUE="$BUILD_STAGE_EPILOGUE" \
+        KDA_EXPECT_PAIR_SCRATCH="$BUILD_PAIR_SCRATCH" \
+        KDA_EXPECT_TAIL_BLOCKS="$BUILD_TAIL_BLOCKS" \
+        KDA_EXPECT_TASK_STORE="$BUILD_TASK_STORE" \
+        KDA_EXPECT_MMAD_ENGINES="$BUILD_MMAD_ENGINES" \
+        KDA_EXPECT_VECTOR_MASK="$BUILD_VECTOR_MASK" \
+        KDA_EXPECT_DB_REDUCE="$BUILD_DB_REDUCE" \
+        KDA_EXPECT_STAGE_A="$BUILD_STAGE_A" \
+        KDA_EXPECT_CUBE_MODE="$BUILD_CUBE_MODE" \
+        KDA_EXPECT_STAGE_IO="$BUILD_STAGE_IO" \
+        KDA_EXPECT_AIC_DIAGNOSTIC="$BUILD_AIC_DIAGNOSTIC" \
+        PYTHONPATH="$RUNTIME_PYTHONPATH" \
+        python3 -m pytest -q -vv -p no:cacheprovider \
+        "${test_file}::test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16" \
+        -s 2>&1 | tee \
+        "$RUN_ROOT/logs/kda_grouped_preflight_card${PHYSICAL_DEVICE}.log"
+
     timeout --kill-after=30s 1200s env \
         ASCEND_RT_VISIBLE_DEVICES="$PHYSICAL_DEVICE" TEST_DEVICE_ID=0 \
         PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 \

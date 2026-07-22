@@ -81,11 +81,10 @@ ping-pong；实际稳态为 `C0||P1`、`C1||(consume0+P2)`、`C2||(consume1+P3)`
 才构造 stage 1 首次使用的持久 right-outer、pair bridge 并清零 accumulator，使这段共享准备
 工作与 `C0` 重叠；编译期开关可恢复原 task-prologue 顺序。该流水不会生成随序列长度增长的
 中间张量。不同 M/K 形状和 A-layout 的 BlockMmad 通过
-`MmadPingpongTlaMulti` 串行复用同一份 L1/L0 resource。off-left 与 diagonal-left 各自完成事件
-闭环；同一 stage 的全部 off-right 和 diagonal-right 则复用一个
-`preSetFlags -> operator... -> finalWaitFlags` 包络，减少重复初始化和 drain。每个 stage 的最后一个
-FIX 提交后，AIC 才在 `PIPE_FIX`
-发布 done，保证本 stage 的全部 FP32 C 矩阵写回后 AIV 才能读取。
+`MmadPingpongTlaMulti` 串行复用同一份 L1/L0 resource。默认 scoped 路径的每个逻辑 GEMM 都执行
+`preSetFlags -> operator -> SetFlag/WaitFlag<FIX_M> -> finalWaitFlags`：UnitFlag 仍在单次 GEMM 内重叠
+MMAD/FIXPIPE，但显式 FIX→M 依赖会在下一次调用复用共享 L0C 前收口输出。每个 stage 的最后一个
+FIX 完成后，AIC 再在 `PIPE_FIX` 发布 done，保证本 stage 的全部 FP32 C 矩阵写回后 AIV 才能读取。
 
 AIV 的六类流水依赖各在 `Init` 分配一个 `TEventID`，在 `ProcessAiv` 的全部 task 完成后统一释放；
 每次同步仍执行原来的 `SetFlag -> WaitFlag`，但不再在热路径反复分配和释放事件。局部
@@ -231,10 +230,14 @@ repeated-launch 与同卡 msprof，`scalar` wheel 用于结果和性能回退对
 ### 4.6 AIC 持久双引擎候选
 
 每个 CATLASS `MmadPingpongTlaMulti` 内部已经对 L1A/L1B/L0A/L0B 使用两级 ping-pong。源码默认的
-`scoped` 调度把 left16、left32 和 right16 实例映射到相同的 L0 地址与 local event 0..3，
-因此每次 `operator()` 都必须用独立的 `preSetFlags/finalWaitFlags` 串行复用。此前把同一 stage 的
-2--4 个 right MMAD 放进一个 event envelope；它从 stage 1 首次出现，与 A2 上 stage 0 通过而完整
-路径超时的边界完全吻合，是当前高概率死锁根因，因此该批处理已从交付路径删除。
+`scoped` 调度把 left16、left32 和 right16 实例映射到相同的 L0 地址与 local event 0..3。
+A2 分段结果显示 handshake、stage0-right、stage0-left 和 stage0-both 均可退出，但仅把 stage 1
+改成逐调用 `preSetFlags/finalWaitFlags` 后仍然超时。静态审计进一步确认 unit-flag 分支的
+`finalWaitFlags` 只排空 MTE1/M free token，不等待上一条 FIXPIPE 完成；stage 1 又首次在同一
+done 边界内重复使用相同 BlockMmad/L0C。因此默认路径现在为每个逻辑 GEMM 增加成对的
+`SetFlag/WaitFlag<HardEvent::FIX_M>`，在回收本地 token 前先建立 Fixpipe producer 到下一轮
+PIPE_M consumer 的依赖。该修复仍待 clean-wheel A2 验证，
+但不改变任何 GEMM、gate 或 FP32 累加次序。
 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=true` 仍保留为编译期实验：它通过算子私有派生 wrapper 重绑
 protected L1/L0 tensor 和 event 数组，不修改公共 CATLASS；left32 同时处理实际 K16/K32 以及
 stage 3 的 K32+K16 tail，right16 保持原 M16/K32 路径。
@@ -264,8 +267,8 @@ K32 一轮完成，K48 严格分成 K32+K16 两轮；每轮末尾归还当前 L1
 按 `off-left -> off-right -> diag-right -> diag-left` 调用，不改变 workspace 覆盖、17 个逻辑
 GEMM、约 18 次物理 MMAD 或 K48 cancellation 次序。AIC 的 done flag 仍在 `PIPE_FIX` 上，AIV
 仍先等待 done 再读 slot；unit-flag 模式下 `finalWaitFlags` 只排空 MTE1/M free token，不承担
-Fixpipe 输出可见性。目标模型的 4,096 个 task、69,632 次逻辑 GEMM 保持不变；可靠 scoped 路径
-使用 69,632 个完整 envelope，理论持久化路径为 20 个 AIC Process 各两个、合计 40 个。当前
+Fixpipe 输出可见性。目标模型的 4,096 个 task、69,632 次逻辑 GEMM 保持不变；保守 scoped 路径
+使用 69,632 个含 FIX drain 的完整 envelope，理论持久化路径为 20 个 AIC Process 各两个、合计 40 个。当前
 持久化协议已经有 A2 timeout 反证，不能进入精度或性能 A/B；必须先重新设计逐调用 UnitFlag/Fixpipe
 完成关系，再用 clean wheel、37 项、repeated-launch、slot canary 与同卡 msprof 独立验收。
 

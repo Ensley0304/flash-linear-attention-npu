@@ -46,11 +46,12 @@ whole-tail；`true` 是尚待设备 A/B 的 8-row stage-local overlap 候选。
   后续 AIC stage 重叠；源码默认 `false` 继续在 `StoreTaskOutputs` 执行原 32-row whole-tail，
   两条实现都保留，候选收益尚未上板证明；
 - M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti` 管理共享 L1/L0；源码默认
-  每个逻辑 GEMM 独占一次 `preSetFlags/operator/finalWaitFlags`，每 task 共 17 个完整事件包络；
+  每个逻辑 GEMM 独占一次 `preSetFlags/operator/FIX_M-sync/finalWaitFlags`，每 task 共 17 个
+  保守事件包络；UnitFlag 仍保留单次 GEMM 内 MMAD/FIXPIPE 的 512-B 细粒度重叠；
 - 源码默认 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=false`。此前同一 stage 的 off-right 与
-  diagonal-right 共用一个包络，并进一步尝试跨 task 常驻；它从 stage 1 首次出现，与当前
-  stage-0-pass/full-path-timeout 证据吻合，是高概率设备死锁根因。
-  `true` 分支只作为待重建设备事件协议的编译期实验，不得作为交付或性能基线；
+  diagonal-right 共用一个包络，并进一步尝试跨 task 常驻；逐调用 flag 包络在 A2 上仍 timeout，
+  说明缺失的共享 L0C/FIX→M 完成边界才是下一项待验证根因。`true` 分支只作为待重建设备事件
+  协议的编译期实验，不得作为交付或性能基线；
 - stage 3 off-left 使用静态 K32 加 K16 tail，保留 `2^24 + (-2^24) + 1` 的 FP32
   cancellation 顺序；三个 off-right 使用独立 M16 与 stride-48 ColumnMajor 子视图，避免
   公共 reference 导致 FTZ，也避免 FIX 跨 pair 写入；
@@ -180,9 +181,9 @@ API 数。完成的 `dq/dk/dg` 原位留在三个 accumulator bank，`db` 留在
 必须比较相同 batch-tail 实现的 `store-serial`/`store-overlap`，不能与 scalar-tail 基线混比。
 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES` 只改变 AIC 本地资源生命周期。left32/right16 分别占用
 40/36 KiB L1、8/4 KiB L0A、32/32 KiB L0B、16/8 KiB L0C，并使用 event 0..3/4..7；
-L0B 恰好使用 64 KiB。源码用容量、512 B 对齐和 event 区间断言约束该布局。目标 shape 的可靠
-scoped 路径为 69,632 次逻辑 GEMM/完整 envelope；持久化模型理论上降为 20 个 AIC `Process`
-各两个、合计 40 个，但现有协议已有设备 timeout，不能把这一静态降幅写成可测收益。
+L0B 恰好使用 64 KiB。源码用容量、512 B 对齐和 event 区间断言约束该布局。目标 shape 的保守
+scoped 路径为 69,632 次逻辑 GEMM/含 FIX drain 的完整 envelope；持久化模型理论上降为 20 个 AIC
+`Process` 各两个、合计 40 个，但现有协议已有设备 timeout，不能把这一静态降幅写成可测收益。
 
 `KDA_GROUPED_REUSE_VECTOR_MASK=true` 是不改变数值语义的 Scalar 发射候选。key 23 的 gate、
 pair、stage 累加和输出尾部均为连续 FP32，优化包络内的元素数都是 64 的整数倍且 repeat 不超过

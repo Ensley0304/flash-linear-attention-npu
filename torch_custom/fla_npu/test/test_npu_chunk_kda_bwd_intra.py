@@ -654,6 +654,12 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     )
     assert "--aic-diagnostic MODE" in validation_runner
     assert "partial AIC diagnostic artifacts are build-only" in validation_runner
+    assert "kda_grouped_preflight_card${PHYSICAL_DEVICE}.log" in validation_runner
+    assert (
+        '"${test_file}::test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16"'
+        in validation_runner
+    )
+    assert "timeout --kill-after=15s 120s env" in validation_runner
     assert "CopyStageAbNzRows(" in grouped
     assert "Catlass::layout::zN" in grouped
     assert "Catlass::layout::nZ" in grouped
@@ -707,6 +713,32 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "Batched row scratch must fit in retired tail scratch" in grouped
     assert "struct KdaBwdGroupedPartitionedBlockMmad" in grouped
     assert "this->l0CEventList[i] = static_cast<int32_t>(EVENT_BASE + i);" in grouped
+    fix_to_m_begin = grouped.index("void SyncFixpipeToM()")
+    fix_to_m_end = grouped.index("};", fix_to_m_begin)
+    fix_to_m = grouped[fix_to_m_begin:fix_to_m_end]
+    fix_set = "AscendC::SetFlag<AscendC::HardEvent::FIX_M>("
+    fix_wait = "AscendC::WaitFlag<AscendC::HardEvent::FIX_M>("
+    assert fix_set in fix_to_m
+    assert fix_wait in fix_to_m
+    assert fix_to_m.index(fix_set) < fix_to_m.index(fix_wait)
+    assert fix_to_m.count("this->l0CEventList[0]") == 2
+    finish_mmad_begin = grouped.index(
+        "__aicore__ inline void FinishStageMmad"
+    )
+    finish_mmad_end = grouped.index(
+        "__aicore__ inline uint32_t CacheBlockOffset", finish_mmad_begin
+    )
+    finish_mmad = grouped[finish_mmad_begin:finish_mmad_end]
+    assert "if constexpr (MANAGE_FLAGS)" in finish_mmad
+    assert finish_mmad.count("blockMmad.SyncFixpipeToM();") == 1
+    assert finish_mmad.index("blockMmad.SyncFixpipeToM();") < (
+        finish_mmad.index("blockMmad.finalWaitFlags();")
+    )
+    assert grouped.count(
+        "RunStageMmad(blockMmad, blockA, blockB, blockC, shape);"
+    ) == 6
+    assert grouped.count("FinishStageMmad<MANAGE_FLAGS>(blockMmad);") == 6
+    assert grouped.count("blockMmad.finalWaitFlags();") == 1
     assert "KDA_GROUPED_PERSISTENT_LEFT_L1_BYTES == 40 * 1024" in grouped
     assert "KDA_GROUPED_PERSISTENT_RIGHT_L1_BYTES == 36 * 1024" in grouped
     assert "KDA_GROUPED_PERSISTENT_LEFT_L0B_BYTES == 32 * 1024" in grouped
