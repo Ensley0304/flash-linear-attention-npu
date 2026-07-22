@@ -10,6 +10,27 @@
 
 #include "kernel_operator.h"
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define CATLASS_ARCH 3510
+#else
+#define CATLASS_ARCH 2201
+#endif
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/gemm/block/block_mmad.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+#include "catlass/gemm/dispatch_policy.hpp"
+#include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm_coord.hpp"
+#include "catlass/layout/layout.hpp"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
+
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+
 using namespace AscendC;
 
 namespace {
@@ -1079,6 +1100,9 @@ private:
     uint64_t usedCoreNum_ = 1;
     bool isVarLen_ = false;
 };
+
+#include "chunk_kda_bwd_intra_mixed.hpp"
+#include "chunk_kda_bwd_intra_grouped.hpp"
 } // namespace
 
 extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
@@ -1087,39 +1111,66 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
     GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR workspace, GM_ADDR tiling)
 {
     (void)cuSeqlens;
-    (void)workspace;
+    GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     GET_TILING_DATA(tilingData, tiling);
     TPipe pipe;
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     if (TILING_KEY_IS(0)) {
+        KERNEL_TASK_TYPE(0, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<half, false> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(1)) {
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<half, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(2)) {
+        KERNEL_TASK_TYPE(2, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, false> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(3)) {
+        KERNEL_TASK_TYPE(3, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(5)) {
+        KERNEL_TASK_TYPE(5, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<half, true, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(7)) {
+        KERNEL_TASK_TYPE(7, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, true, true> op;
         op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut, chunkIndices,
                 tilingData, &pipe);
         op.Process();
+    } else if (TILING_KEY_IS(15)) {
+        KERNEL_TASK_TYPE(15, KERNEL_TYPE_MIX_AIC_1_2);
+        ChunkKdaBwdIntraMixedKernel<bfloat16_t> op;
+        op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut,
+                userWS, tilingData, &pipe);
+        if ASCEND_IS_AIC {
+            op.ProcessAic();
+        }
+        if ASCEND_IS_AIV {
+            op.ProcessAiv();
+        }
+    } else if (TILING_KEY_IS(23)) {
+        KERNEL_TASK_TYPE(23, KERNEL_TYPE_MIX_AIC_1_2);
+        ChunkKdaBwdIntraGroupedKernel<bfloat16_t> op;
+        op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg, dqOut, dkOut, dbOut, dgOut,
+                userWS, tilingData, &pipe);
+        if ASCEND_IS_AIC {
+            op.ProcessAic();
+        }
+        if ASCEND_IS_AIV {
+            op.ProcessAiv();
+        }
     }
 }

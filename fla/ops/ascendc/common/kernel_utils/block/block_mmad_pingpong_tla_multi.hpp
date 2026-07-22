@@ -630,6 +630,159 @@ public:
         }
     }
 
+    /// Perform a block-scoped matrix multiply with A and B already resident
+    /// in L1/TSCM.  The caller owns the lifetime and cross-core synchronization
+    /// of both input tensors.  This path deliberately reuses the exact L1->L0
+    /// tiling, MMAD order and L0C->destination epilogue of operator(), while
+    /// omitting only the redundant GM->L1 copies and their local L1 events.
+    ///
+    /// Keeping this as an explicit entry point avoids teaching the existing
+    /// GM path to infer an input position, so operators that do not opt in keep
+    /// their original code generation and event protocol.
+    template <class TensorA, class TensorB, class TensorC>
+    CATLASS_DEVICE void RunFromL1(TensorA &tensorA, TensorB &tensorB,
+        TensorC &tensorC, GemmCoord const &actualShape)
+    {
+        static_assert(!HAS_BIAS,
+            "RunFromL1 currently supports the no-bias path only");
+#if (defined (CATLASS_ARCH) && CATLASS_ARCH == 2201)
+        using CopyL0CToGm = typename TileCopy_::template CopyL0CToGm<TensorC>;
+        CopyL0CToGm copyL0CToDst;
+#endif
+#if (defined (CATLASS_ARCH) && CATLASS_ARCH == 3510)
+        using CopyL0CToDst = typename TileCopy_::template CopyL0CToDst<TensorC>;
+        CopyL0CToDst copyL0CToDst;
+#endif
+
+        uint32_t mBlockActual = actualShape.m();
+        uint32_t kBlockActual = actualShape.k();
+        uint32_t nBlockActual = actualShape.n();
+
+        uint32_t mL1Actual = mBlockActual;
+        if constexpr (std::is_same_v<ArchTag, Arch::AtlasA2>) {
+            // Match operator(): avoid the A2 GEMV MMAD mode.
+            if (mL1Actual == 1) {
+                mL1Actual = 16;
+            }
+        }
+        uint32_t nL1Actual = nBlockActual;
+        auto layoutInL0C = tla::MakeLayoutL0C(mL1Actual, nL1Actual);
+        auto tensorL0C = tla::MakeTensor(
+            l0CTensorList[l0CListId], layoutInL0C, Arch::PositionL0C{});
+
+        if constexpr (!ENABLE_UNIT_FLAG) {
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(
+                l0CEventList[l0CListId]);
+        }
+
+        uint32_t mL0Loop = CeilDiv<L0_TILE_M>(mL1Actual);
+        uint32_t nL0Loop = CeilDiv<L0_TILE_N>(nL1Actual);
+        uint32_t kL1Loop = CeilDiv<L1_TILE_K>(kBlockActual);
+        for (uint32_t kL1Idx = 0; kL1Idx < kL1Loop; ++kL1Idx) {
+            uint32_t kL1Actual = (kL1Idx < kL1Loop - 1) ?
+                L1_TILE_K : (kBlockActual - kL1Idx * L1_TILE_K);
+            auto tensorL1A = GetTileA(
+                tensorA, 0, kL1Idx * L1_TILE_K,
+                mBlockActual, kL1Actual);
+            auto tensorL1B = GetTile(
+                tensorB, tla::MakeCoord(kL1Idx * L1_TILE_K, 0),
+                tla::MakeShape(kL1Actual, nBlockActual));
+            uint32_t kL0Loop = CeilDiv<L0_TILE_K>(kL1Actual);
+
+            for (int mL0Idx = 0; mL0Idx < mL0Loop; ++mL0Idx) {
+                uint32_t mL0Actual = (mL0Idx < mL0Loop - 1) ?
+                    L0_TILE_M : (mL1Actual - mL0Idx * L0_TILE_M);
+                for (int kL0Idx = 0; kL0Idx < kL0Loop; ++kL0Idx) {
+                    uint32_t kL0Actual = (kL0Idx < kL0Loop - 1) ?
+                        L0_TILE_K : (kL1Actual - kL0Idx * L0_TILE_K);
+
+                    auto l0ATile = l0ATensorList[l0AListId];
+                    auto layoutAInL0 =
+                        tla::MakeLayout<ElementA, LayoutTagL0A>(
+                            mL0Actual, kL0Actual);
+                    auto tensorL0A = tla::MakeTensor(
+                        l0ATile, layoutAInL0, Arch::PositionL0A{});
+                    auto tensorTileL1A = GetTileA(
+                        tensorL1A, mL0Idx * L0_TILE_M,
+                        kL0Idx * L0_TILE_K, mL0Actual, kL0Actual);
+
+                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(
+                        l0AEventList[l0AListId]);
+                    copyL1ToL0A(tensorL0A, tensorTileL1A);
+
+                    bool initC = ((kL1Idx == 0) && (kL0Idx == 0));
+                    for (int nL0Idx = 0; nL0Idx < nL0Loop; ++nL0Idx) {
+                        uint32_t nL0Actual = (nL0Idx < nL0Loop - 1) ?
+                            L0_TILE_N : (nL1Actual - nL0Idx * L0_TILE_N);
+                        auto l0BTile = l0BTensorList[l0BListId];
+                        auto layoutBInL0 =
+                            tla::MakeLayout<ElementB, LayoutTagL0B>(
+                                kL0Actual, nL0Actual);
+                        auto tensorL0B = tla::MakeTensor(
+                            l0BTile, layoutBInL0, Arch::PositionL0B{});
+                        auto tensorTileL1B = GetTile(
+                            tensorL1B,
+                            tla::MakeCoord(kL0Idx * L0_TILE_K,
+                                           nL0Idx * L0_TILE_N),
+                            tla::MakeShape(kL0Actual, nL0Actual));
+
+                        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(
+                            l0BEventList[l0BListId]);
+                        copyL1ToL0B(tensorL0B, tensorTileL1B);
+
+                        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(
+                            l0CEventList[l0CListId]);
+                        auto tensorTileL0C = GetTile(
+                            tensorL0C,
+                            tla::MakeCoord(mL0Idx * L0_TILE_M,
+                                           nL0Idx * L0_TILE_N),
+                            tla::MakeShape(mL0Actual, nL0Actual));
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(
+                            l0CEventList[l0CListId]);
+
+                        uint8_t unitFlag = 0b00;
+                        if constexpr (ENABLE_UNIT_FLAG) {
+                            if ((kL1Idx == kL1Loop - 1) &&
+                                (mL0Idx == mL0Loop - 1) &&
+                                (kL0Idx == kL0Loop - 1) &&
+                                (nL0Idx == nL0Loop - 1)) {
+                                unitFlag = 0b11;
+                            } else {
+                                unitFlag = 0b10;
+                            }
+                        }
+                        tileMmad(tensorTileL0C, tensorL0A, tensorL0B,
+                            mL0Actual, nL0Actual, kL0Actual,
+                            initC, unitFlag);
+
+                        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(
+                            l0BEventList[l0BListId]);
+                        l0BListId = (l0BListId + 1 < L0B_STAGES) ?
+                            (l0BListId + 1) : 0;
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(
+                        l0AEventList[l0AListId]);
+                    l0AListId = (l0AListId + 1 < L0A_STAGES) ?
+                        (l0AListId + 1) : 0;
+                }
+            }
+        }
+
+        if constexpr (!ENABLE_UNIT_FLAG) {
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(
+                l0CEventList[l0CListId]);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(
+                l0CEventList[l0CListId]);
+            copyL0CToDst(tensorC, tensorL0C);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(
+                l0CEventList[l0CListId]);
+            l0CListId = (l0CListId + 1 < L0C_STAGES) ?
+                (l0CListId + 1) : 0;
+        } else {
+            copyL0CToDst(tensorC, tensorL0C, 0b11);
+        }
+    }
+
 protected:
     template<class TensorA>
     CATLASS_DEVICE auto GetTileA(TensorA &tensorA, uint32_t mIndex, uint32_t kIndex, uint32_t mSize, uint32_t kSize)
