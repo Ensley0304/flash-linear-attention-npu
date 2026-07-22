@@ -395,6 +395,28 @@ public:
         const uint64_t nc = bt_ / BC;
         const uint64_t flatChunks = isVarLen_ ? nt_ : b_ * nt_;
         const uint64_t taskCount = flatChunks * hv_ * nc;
+        if constexpr (CUBE_ROW3) {
+            // The target shape launches 40 AIV cores for four row blocks.  A
+            // plain block-stride loop pins each core to blockIdx % 4 because
+            // 40 is divisible by four, so only one quarter of the cores see
+            // the rowBlock3 work removed by Cube.  Rotate the row block once
+            // per scheduling wave to spread that saving across every core.
+            // Keep the original bijective mapping as a fallback when a
+            // platform exposes an AIV count that is not divisible by nc.
+            if ((usedCoreNum_ % nc) == 0) {
+                uint64_t iteration = 0;
+                for (uint64_t linearTask = static_cast<uint64_t>(GetBlockIdx());
+                     linearTask < taskCount;
+                     linearTask += usedCoreNum_, ++iteration) {
+                    const uint64_t taskGroup = linearTask / nc;
+                    const uint64_t taskLane = linearTask % nc;
+                    const uint64_t rotatedRowBlock = (taskLane + iteration) % nc;
+                    const uint64_t task = taskGroup * nc + rotatedRowBlock;
+                    ProcessTaskBlockwise(task, nc);
+                }
+                return;
+            }
+        }
         for (uint64_t task = static_cast<uint64_t>(GetBlockIdx()); task < taskCount; task += usedCoreNum_) {
             if constexpr (BLOCKWISE) {
                 ProcessTaskBlockwise(task, nc);

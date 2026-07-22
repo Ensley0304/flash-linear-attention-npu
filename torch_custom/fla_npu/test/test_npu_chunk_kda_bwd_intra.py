@@ -312,6 +312,36 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     for forbidden in ("CrossCoreSetFlag", "CrossCoreWaitFlag", "CrossCoreFlagWithReverse"):
         assert forbidden not in source, f"rowBlock3 serial stages must not use {forbidden}"
 
+    assert "if ((usedCoreNum_ % nc) == 0)" in kernel_source
+    assert "const uint64_t rotatedRowBlock = (taskLane + iteration) % nc;" in kernel_source
+    assert "const uint64_t task = taskGroup * nc + rotatedRowBlock;" in kernel_source
+
+    # Model the target-shape mapping and prove that rotation neither drops nor
+    # duplicates work while distributing the cheaper rowBlock3 across cores.
+    nc = 4
+    used_core_num = 40
+    task_count = 128 * 32 * nc
+    scheduled = []
+    row_blocks_per_core = []
+    for core_idx in range(used_core_num):
+        core_tasks = []
+        iteration = 0
+        linear_task = core_idx
+        while linear_task < task_count:
+            task_group, task_lane = divmod(linear_task, nc)
+            rotated_row_block = (task_lane + iteration) % nc
+            task = task_group * nc + rotated_row_block
+            scheduled.append(task)
+            core_tasks.append(rotated_row_block)
+            linear_task += used_core_num
+            iteration += 1
+        row_blocks_per_core.append(core_tasks)
+
+    assert sorted(scheduled) == list(range(task_count))
+    for row_block in range(nc):
+        counts = [core_tasks.count(row_block) for core_tasks in row_blocks_per_core]
+        assert max(counts) - min(counts) <= 1
+
 
 @pytest.mark.parametrize("kdim", [15, 17, 257])
 def test_chunk_kda_bwd_intra_rejects_unsupported_k(kdim):
