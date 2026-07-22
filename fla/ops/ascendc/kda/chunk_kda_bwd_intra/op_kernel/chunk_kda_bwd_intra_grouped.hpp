@@ -48,10 +48,15 @@ constexpr bool KDA_GROUPED_DOUBLE_BUFFER_PAIR_SCRATCH = false;
 // correctness candidate.  Flip only after a separate UnitFlag implementation
 // has clean-wheel device evidence.
 constexpr bool KDA_GROUPED_ENABLE_UNIT_FLAG = false;
-// Keep every logical GEMM independently scoped.  The persistent branch is
-// retained only as a compile-time experiment and must not become the delivery
-// default until its multi-invocation event protocol has independent evidence.
-constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = false;
+// Keep the two layout-specific MMAD engines alive for the complete AIC task,
+// but serialize both through one local hard-event domain.  Stage 1 is the first
+// stage with several consecutive GEMMs; repeatedly creating/draining event
+// envelopes there timed out on A2, while assigning the second engine event IDs
+// 4..7 introduced another unproven event domain.  One owner initializes IDs
+// 0..3/L0C-0 once, every GEMM returns the same tokens, and the owner drains them
+// once at kernel exit.  The engines retain disjoint L1/L0 storage, so an input
+// preload cannot overwrite the other layout's in-flight tile.
+constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = true;
 // Experimental non-A2 path: Vector builds every stage's A/B operands directly
 // in two ping-pong TSCM slots and Cube consumes them from L1.  Keep this off on
 // Atlas A2/910B.  On __NPU_ARCH__ == 2201 the AscendC UB->TSCM API is
@@ -149,20 +154,33 @@ constexpr uint32_t KDA_GROUPED_B_OFF_RIGHT = 7680;
 constexpr uint32_t KDA_GROUPED_B_DIAG_RIGHT = 19968;
 constexpr uint32_t KDA_GROUPED_A_DIAG = 24064;
 constexpr uint32_t KDA_GROUPED_B_DIAG_LEFT = 24576;
-constexpr uint32_t KDA_GROUPED_SLOT_ELEMENTS = 26624;
-constexpr uint32_t KDA_GROUPED_SLOT_BYTES =
-    KDA_GROUPED_SLOT_ELEMENTS * sizeof(float);
+constexpr uint32_t KDA_GROUPED_INPUT_SLOT_ELEMENTS = 26624;
 // Integer TSCM mask bit 2 maps VECTOR0 and VECTOR1 onto the same Cube L1
 // addresses.  The two AIVs write disjoint eight-row halves of each matrix.
 constexpr uint32_t KDA_GROUPED_TSCM_BLOCK_GROUP_MASK = 1U << 2;
 
-// Outputs deliberately overwrite inputs that have already been fully loaded
-// into L1.  Keep this exact call order on AIC:
-// off-left -> off-right -> diag-right -> diag-left.
-constexpr uint32_t KDA_GROUPED_C_OFF_LEFT = 0;
-constexpr uint32_t KDA_GROUPED_C_DIAG_RIGHT = 4096;
-constexpr uint32_t KDA_GROUPED_C_OFF_RIGHT = KDA_GROUPED_B_OFF_RIGHT;
-constexpr uint32_t KDA_GROUPED_C_DIAG_LEFT = KDA_GROUPED_B_DIAG_RIGHT;
+// Keep every Fixpipe destination disjoint from all stage inputs.  The former
+// compact layout overwrote B matrices in place after their apparent L1 load;
+// that couples correctness to an implicit MTE2/MTE1/Fixpipe completion order
+// across consecutive BlockMmad calls.  A dedicated C tail makes the ownership
+// explicit and lets AIV consume results only after the existing done flag.
+// Preserve the 32x128 pair stride so the coalesced off-right AIV gather remains
+// unchanged (the upper 16 rows of each reserved pair tile are padding).
+constexpr uint32_t KDA_GROUPED_C_OFF_LEFT =
+    KDA_GROUPED_INPUT_SLOT_ELEMENTS;
+constexpr uint32_t KDA_GROUPED_C_OFF_RIGHT =
+    KDA_GROUPED_C_OFF_LEFT + 2 * KDA_GROUPED_BC * KDA_GROUPED_K;
+constexpr uint32_t KDA_GROUPED_C_DIAG_RIGHT =
+    KDA_GROUPED_C_OFF_RIGHT +
+    KDA_GROUPED_MAX_OFF_PAIRS * KDA_GROUPED_RIGHT_PAIR_ELEMENTS;
+constexpr uint32_t KDA_GROUPED_C_DIAG_LEFT =
+    KDA_GROUPED_C_DIAG_RIGHT + KDA_GROUPED_BC * KDA_GROUPED_K;
+constexpr uint32_t KDA_GROUPED_SLOT_ELEMENTS =
+    KDA_GROUPED_C_DIAG_LEFT + 2 * KDA_GROUPED_BC * KDA_GROUPED_K;
+constexpr uint32_t KDA_GROUPED_SLOT_BYTES =
+    KDA_GROUPED_SLOT_ELEMENTS * sizeof(float);
+constexpr uint32_t KDA_GROUPED_STAGE_AB_SLOT_BYTES =
+    KDA_GROUPED_INPUT_SLOT_ELEMENTS * sizeof(float);
 
 // Packed-A retains the existing Boff-left and Bdiag-left capacities.  The
 // maximum 32x64 A slab consumes exactly Aoff+Adiag's former total space, so
@@ -171,9 +189,9 @@ constexpr uint32_t KDA_GROUPED_PACKED_A = 6144;
 constexpr uint32_t KDA_GROUPED_PACKED_B_OFF_RIGHT = 8192;
 constexpr uint32_t KDA_GROUPED_PACKED_B_DIAG_RIGHT = 20480;
 constexpr uint32_t KDA_GROUPED_PACKED_C_OFF_RIGHT =
-    KDA_GROUPED_PACKED_B_OFF_RIGHT;
+    KDA_GROUPED_C_OFF_RIGHT;
 constexpr uint32_t KDA_GROUPED_PACKED_C_DIAG_LEFT =
-    KDA_GROUPED_PACKED_B_DIAG_RIGHT;
+    KDA_GROUPED_C_DIAG_LEFT;
 
 static_assert(KDA_GROUPED_A_OFF == 48 * KDA_GROUPED_K,
               "Boff-left must reserve the maximum 48 source rows");
@@ -186,17 +204,26 @@ static_assert(KDA_GROUPED_A_DIAG == KDA_GROUPED_B_DIAG_RIGHT + 32 * KDA_GROUPED_
               "Bdiag-right must reserve 32x128 elements");
 static_assert(KDA_GROUPED_B_DIAG_LEFT == KDA_GROUPED_A_DIAG + 32 * KDA_GROUPED_BC,
               "Adiag must reserve 32x16 elements");
-static_assert(KDA_GROUPED_SLOT_ELEMENTS == KDA_GROUPED_B_DIAG_LEFT +
+static_assert(KDA_GROUPED_INPUT_SLOT_ELEMENTS == KDA_GROUPED_B_DIAG_LEFT +
                   KDA_GROUPED_BC * KDA_GROUPED_K,
-              "Bdiag-left must end exactly at the slot boundary");
-static_assert(KDA_GROUPED_C_DIAG_RIGHT + KDA_GROUPED_BC * KDA_GROUPED_K ==
-                  KDA_GROUPED_A_OFF,
-              "Diagonal-right output must reuse only retired Boff-left storage");
-static_assert(KDA_GROUPED_C_DIAG_LEFT + 2 * KDA_GROUPED_BC * KDA_GROUPED_K ==
-                  KDA_GROUPED_A_DIAG,
-              "Diagonal-left output must reuse only retired Bdiag-right storage");
-static_assert(KDA_GROUPED_C_OFF_RIGHT == KDA_GROUPED_B_OFF_RIGHT,
-              "Each off-right output must overwrite its own retired B pair");
+              "Bdiag-left must end exactly at the input-slot boundary");
+static_assert(KDA_GROUPED_C_OFF_LEFT == KDA_GROUPED_INPUT_SLOT_ELEMENTS &&
+                  KDA_GROUPED_C_OFF_RIGHT ==
+                      KDA_GROUPED_C_OFF_LEFT +
+                          2 * KDA_GROUPED_BC * KDA_GROUPED_K &&
+                  KDA_GROUPED_C_DIAG_RIGHT ==
+                      KDA_GROUPED_C_OFF_RIGHT +
+                          KDA_GROUPED_MAX_OFF_PAIRS *
+                              KDA_GROUPED_RIGHT_PAIR_ELEMENTS &&
+                  KDA_GROUPED_C_DIAG_LEFT ==
+                      KDA_GROUPED_C_DIAG_RIGHT +
+                          KDA_GROUPED_BC * KDA_GROUPED_K &&
+                  KDA_GROUPED_SLOT_ELEMENTS ==
+                      KDA_GROUPED_C_DIAG_LEFT +
+                          2 * KDA_GROUPED_BC * KDA_GROUPED_K,
+              "Dedicated grouped C regions must be contiguous and disjoint");
+static_assert(KDA_GROUPED_SLOT_ELEMENTS == 49152,
+              "Update host grouped workspace size with the kernel slot layout");
 static_assert(KDA_GROUPED_PACKED_A == KDA_GROUPED_A_OFF,
               "Packed A must begin at the retired Aoff boundary");
 static_assert(KDA_GROUPED_PACKED_B_OFF_RIGHT ==
@@ -212,19 +239,14 @@ static_assert(KDA_GROUPED_B_DIAG_LEFT ==
                   KDA_GROUPED_PACKED_B_DIAG_RIGHT +
                       2 * KDA_GROUPED_BC * KDA_GROUPED_K,
               "Packed diagonal-right B must end at Bdiag-left");
-static_assert(KDA_GROUPED_C_DIAG_RIGHT +
-                      KDA_GROUPED_BC * KDA_GROUPED_K ==
-                  KDA_GROUPED_PACKED_A,
-              "Packed diagonal-right output must end at packed A");
 static_assert(KDA_GROUPED_PACKED_C_OFF_RIGHT ==
-                  KDA_GROUPED_PACKED_B_OFF_RIGHT,
-              "Packed off-right output must overwrite its retired B pair");
-static_assert(KDA_GROUPED_PACKED_C_DIAG_LEFT +
-                      2 * KDA_GROUPED_BC * KDA_GROUPED_K ==
-                  KDA_GROUPED_B_DIAG_LEFT,
-              "Packed diagonal-left output must overwrite only Bdiag-right");
-static_assert(KDA_GROUPED_SLOT_BYTES % 512 == 0,
-              "Each grouped workspace slot must be 512-byte aligned");
+                  KDA_GROUPED_C_OFF_RIGHT &&
+                  KDA_GROUPED_PACKED_C_DIAG_LEFT ==
+                      KDA_GROUPED_C_DIAG_LEFT,
+              "Packed and split A layouts must share the disjoint C tail");
+static_assert(KDA_GROUPED_SLOT_BYTES % 512 == 0 &&
+                  KDA_GROUPED_STAGE_AB_SLOT_BYTES % 512 == 0,
+              "Grouped workspace and optional TSCM A/B slots must be 512-byte aligned");
 static_assert(KDA_GROUPED_STAGES % KDA_GROUPED_QUEUE_DEPTH == 0,
               "Reverse flag phases must return to zero at every task boundary");
 static_assert((KDA_GROUPED_BC * sizeof(float)) % KDA_GROUPED_DATA_BLOCK_BYTES == 0,
@@ -536,15 +558,18 @@ using KdaBwdGroupedRightBlockMmad = Catlass::Gemm::Block::BlockMmadTla<
     KdaBwdGroupedTileShape<M, 32>, float, float, float, void,
     KdaBwdGroupedRightTileCopy>;
 
-constexpr uint32_t KDA_GROUPED_LOCAL_EVENT_CAPACITY = 8;
+// This operator deliberately uses only the audited low four local event IDs.
+// Higher IDs are unnecessary once both serialized MMAD layouts share an owner.
+constexpr uint32_t KDA_GROUPED_LOCAL_EVENT_CAPACITY = 4;
 constexpr uint32_t KDA_GROUPED_LOCAL_BUFFER_ALIGNMENT = 512;
 
 // The repository-local MmadPingpongTlaMulti extension deliberately keeps flag
 // setup/drain out of its constructor/destructor and exposes preSetFlags() /
 // finalWaitFlags().  Its BlockMmad constructor accepts only an L1 start address.
 // This operator-private wrapper keeps those contracts, then partitions
-// L0A/L0B/L0C and the local hard-event IDs as well.  No CATLASS-wide API or
-// specialization is changed.
+// L0A/L0B/L0C and optionally re-numbers the local hard-event IDs.  Two engines
+// may intentionally use the same EVENT_BASE when all calls are serialized by
+// one event owner.  No CATLASS-wide API or specialization is changed.
 template <typename BaseMmad, uint32_t L1_BASE, uint32_t L0A_BASE,
           uint32_t L0B_BASE, uint32_t L0C_BASE, uint32_t EVENT_BASE>
 struct KdaBwdGroupedPartitionedBlockMmad : BaseMmad {
@@ -698,8 +723,7 @@ constexpr uint32_t KDA_GROUPED_PERSISTENT_RIGHT_L0B_BYTES =
 constexpr uint32_t KDA_GROUPED_PERSISTENT_RIGHT_L0C_BYTES =
     KdaBwdGroupedPersistentRightBase::L0C_TILE_SIZE *
     KdaBwdGroupedPersistentRightBase::L0C_STAGES;
-constexpr uint32_t KDA_GROUPED_PERSISTENT_LEFT_EVENT_BASE = 0;
-constexpr uint32_t KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE = 4;
+constexpr uint32_t KDA_GROUPED_PERSISTENT_EVENT_BASE = 0;
 
 static_assert(KDA_GROUPED_PERSISTENT_LEFT_L1_BYTES == 40 * 1024 &&
                   KDA_GROUPED_PERSISTENT_RIGHT_L1_BYTES == 36 * 1024,
@@ -753,34 +777,35 @@ static_assert(KDA_GROUPED_PERSISTENT_LEFT_L1_BYTES +
                        KdaBwdGroupedArchTag::L0C_SIZE,
                "Persistent grouped MMAD partitions exceed local memory");
 static_assert(
-    KDA_GROUPED_PERSISTENT_LEFT_EVENT_BASE +
+    KdaBwdGroupedPersistentLeftBase::L1A_STAGES ==
+            KdaBwdGroupedPersistentRightBase::L1A_STAGES &&
+        KdaBwdGroupedPersistentLeftBase::L1B_STAGES ==
+            KdaBwdGroupedPersistentRightBase::L1B_STAGES &&
+        KdaBwdGroupedPersistentLeftBase::L0A_STAGES ==
+            KdaBwdGroupedPersistentRightBase::L0A_STAGES &&
+        KdaBwdGroupedPersistentLeftBase::L0B_STAGES ==
+            KdaBwdGroupedPersistentRightBase::L0B_STAGES &&
+        KdaBwdGroupedPersistentLeftBase::L0C_STAGES ==
+            KdaBwdGroupedPersistentRightBase::L0C_STAGES,
+    "Shared grouped MMAD event ownership requires identical stage counts");
+static_assert(
+    KDA_GROUPED_PERSISTENT_EVENT_BASE +
                 KdaBwdGroupedPersistentLeftBase::L1A_STAGES +
                 KdaBwdGroupedPersistentLeftBase::L1B_STAGES <=
-            KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE &&
-        KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE +
-                KdaBwdGroupedPersistentRightBase::L1A_STAGES +
-                KdaBwdGroupedPersistentRightBase::L1B_STAGES <=
             KDA_GROUPED_LOCAL_EVENT_CAPACITY &&
-        KDA_GROUPED_PERSISTENT_LEFT_EVENT_BASE +
+        KDA_GROUPED_PERSISTENT_EVENT_BASE +
                 KdaBwdGroupedPersistentLeftBase::L0A_STAGES +
                 KdaBwdGroupedPersistentLeftBase::L0B_STAGES <=
-            KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE &&
-        KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE +
-                KdaBwdGroupedPersistentRightBase::L0A_STAGES +
-                KdaBwdGroupedPersistentRightBase::L0B_STAGES <=
             KDA_GROUPED_LOCAL_EVENT_CAPACITY &&
-        KDA_GROUPED_PERSISTENT_LEFT_EVENT_BASE +
+        KDA_GROUPED_PERSISTENT_EVENT_BASE +
                 KdaBwdGroupedPersistentLeftBase::L0C_STAGES <=
-            KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE &&
-        KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE +
-                KdaBwdGroupedPersistentRightBase::L0C_STAGES <=
             KDA_GROUPED_LOCAL_EVENT_CAPACITY,
-    "Persistent grouped MMAD event partitions overlap or exceed IDs 0..7");
+    "Persistent grouped MMAD shared event domain exceeds IDs 0..3");
 
 using KdaBwdGroupedPersistentLeftMmad =
     KdaBwdGroupedPartitionedBlockMmad<
         KdaBwdGroupedPersistentLeftBase, 0, 0, 0, 0,
-        KDA_GROUPED_PERSISTENT_LEFT_EVENT_BASE>;
+        KDA_GROUPED_PERSISTENT_EVENT_BASE>;
 using KdaBwdGroupedPersistentRightMmad =
     KdaBwdGroupedPartitionedBlockMmad<
         KdaBwdGroupedPersistentRightBase,
@@ -788,10 +813,10 @@ using KdaBwdGroupedPersistentRightMmad =
         KDA_GROUPED_PERSISTENT_LEFT_L0A_BYTES,
         KDA_GROUPED_PERSISTENT_LEFT_L0B_BYTES,
         KDA_GROUPED_PERSISTENT_LEFT_L0C_BYTES,
-        KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE>;
+        KDA_GROUPED_PERSISTENT_EVENT_BASE>;
 
 constexpr uint32_t KDA_GROUPED_TSCM_AB_BYTES =
-    KDA_GROUPED_QUEUE_DEPTH * KDA_GROUPED_SLOT_BYTES;
+    KDA_GROUPED_QUEUE_DEPTH * KDA_GROUPED_STAGE_AB_SLOT_BYTES;
 constexpr uint32_t KDA_GROUPED_TSCM_AB_BASE =
     KdaBwdGroupedArchTag::L1_SIZE - KDA_GROUPED_TSCM_AB_BYTES;
 static_assert(KDA_GROUPED_TSCM_AB_BYTES < KdaBwdGroupedArchTag::L1_SIZE,
@@ -857,7 +882,7 @@ public:
                 // depth=1 is sufficient because each publication is dequeued
                 // immediately.  num=2 is the actual stage ping-pong storage.
                 pipe_->InitBuffer(stageAbQueue_, KDA_GROUPED_QUEUE_DEPTH,
-                                  KDA_GROUPED_SLOT_BYTES);
+                                  KDA_GROUPED_STAGE_AB_SLOT_BYTES);
             }
             AllocAivSyncEvents();
             if constexpr (KDA_GROUPED_DOUBLE_BUFFER_PAIR_SCRATCH) {
@@ -902,15 +927,17 @@ public:
                     KDA_GROUPED_TSCM_AB_BASE);
             stageAbSlots_[1] =
                 resource.l1Buf.template GetBufferByByte<float>(
-                    KDA_GROUPED_TSCM_AB_BASE + KDA_GROUPED_SLOT_BYTES);
+                    KDA_GROUPED_TSCM_AB_BASE +
+                        KDA_GROUPED_STAGE_AB_SLOT_BYTES);
         }
         if constexpr (KDA_GROUPED_PERSISTENT_MMAD_ENGINES) {
             KdaBwdGroupedPersistentLeftMmad left32(resource);
             KdaBwdGroupedPersistentRightMmad right16(resource);
-            // Both engines own disjoint L1/L0/event partitions, so their free
-            // tokens can remain live across every stage and task on this AIC.
+            // Both engines own disjoint L1/L0 storage but deliberately share
+            // one serialized event domain.  left32 is its sole owner: initialize
+            // once here, let either engine consume/return the tokens, and drain
+            // once after the complete task loop.
             left32.preSetFlags();
-            right16.preSetFlags();
             const uint64_t taskCount = batch_ * chunks_ * heads_;
             for (uint64_t task = logicalCoreIdx_; task < taskCount;
                  task += usedCoreNum_) {
@@ -956,9 +983,8 @@ public:
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
             }
-            // Unit-flag Fixpipe completion is carried by each PIPE_FIX done
-            // signal.  These waits only drain the engines' local free tokens.
-            right16.finalWaitFlags();
+            // Every logical GEMM has returned the shared L1/L0/Fixpipe tokens;
+            // one drain closes the event domain without per-call reinitialization.
             left32.finalWaitFlags();
         } else {
             KdaBwdGroupedScopedLeft16Mmad left16(resource);
@@ -2548,6 +2574,10 @@ private:
             KDA_GROUPED_PACK_STAGE_A ?
                 KDA_GROUPED_PACKED_B_OFF_RIGHT :
                 KDA_GROUPED_B_OFF_RIGHT;
+        constexpr uint32_t cBase =
+            KDA_GROUPED_PACK_STAGE_A ?
+                KDA_GROUPED_PACKED_C_OFF_RIGHT :
+                KDA_GROUPED_C_OFF_RIGHT;
         constexpr uint32_t pairOffset =
             EARLY * KDA_GROUPED_RIGHT_PAIR_ELEMENTS;
         // Split Aoff is RowMajor [32, offPrefix], while packed A is RowMajor
@@ -2564,7 +2594,7 @@ private:
         auto tensorB = MakeStageInputTensor(
             slotBase, rightBase + pairOffset, layoutB);
         auto tensorC = tla::MakeTensor(
-            workspace_[slotBase + rightBase + pairOffset],
+            workspace_[slotBase + cBase + pairOffset],
             layoutC, Catlass::Arch::PositionGM{});
         auto blockA = GetTile(
             tensorA, tla::MakeCoord(EARLY * KDA_GROUPED_BC, 0),

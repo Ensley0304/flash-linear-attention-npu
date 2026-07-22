@@ -1,5 +1,7 @@
 # ChunkKdaBwdIntra 性能分析
 
+> 2026-07-22 target gate: the accepted objective is grouped key 23 below 10 ms for `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`. The 48.660 ms AIV key-7 measurement is only the correctness rollback and cannot satisfy delivery. The current grouped candidate keeps the 17 Cube GEMMs, replaces per-call/multi-domain event management with one serialized owner, and removes input/output workspace aliasing. No grouped performance number is accepted before single-launch exit and full precision pass.
+
 > 2026-07-22 correction: the source-default A2 path remains the two-slot GM A/B bridge. The 2.813329 GB A/B-on-chip figure is only an architectural lower-bound model; it is not attainable by calling AscendC `UB -> TSCM` on DAV_2201 because that route is software-emulated through GM and Matmul KFC. The supported target-shape model is therefore still 5.078254 GB of issued GM traffic (1269.563 GB/s at 4 ms). A realistic AIC stage-local L1 cache would remove only repeated A reads: 0.083886 GB, or 1.65% of the current target traffic; every B image has one consumer and C must still return to AIV. Reaching 4 ms must come from fewer staged operands/results, more reuse inside each AIV or AIC, coarser fusion, and better overlap—not from labeling the emulated TSCM route as on-chip. The target remains unverified until clean-wheel msprof.
 
 ## 当前实现
@@ -45,14 +47,11 @@ whole-tail；`true` 是尚待设备 A/B 的 8-row stage-local overlap 候选。
   8-row block 的 `db` K-reduce 和 `dk_left_pre*beta`，使 stage 0--2 的 epilogue 有机会与
   后续 AIC stage 重叠；源码默认 `false` 继续在 `StoreTaskOutputs` 执行原 32-row whole-tail，
   两条实现都保留，候选收益尚未上板证明；
-- M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti` 管理共享 L1/L0；源码默认
-  `KDA_GROUPED_ENABLE_UNIT_FLAG=false`，每个逻辑 GEMM 独占一次
-  `preSetFlags/operator/finalWaitFlags`，由公共 non-UnitFlag 分支完成 `M_FIX/FIX_M`，每 task 共 17 个
-  保守事件包络；这会暂时放弃 MMAD/FIXPIPE 的 512-B 细粒度重叠；
-- 源码默认 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=false`。此前同一 stage 的 off-right 与
-  diagonal-right 共用一个包络，并进一步尝试跨 task 常驻；逐调用 UnitFlag 包络以及额外手工
-  `FIX_M` 的两个 A2 clean-wheel 候选都 timeout。`true` 分支只作为待重建设备事件协议的编译期实验，
-  不得作为交付或性能基线；
+- M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti`；源码默认
+  `KDA_GROUPED_ENABLE_UNIT_FLAG=false` 和 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=true`。两种
+  layout 保持 L1/L0 buffer 分区，但串行共享 event 0..3/L0C-0；只有 left32 在整个 Process 前后
+  各执行一次 `preSetFlags/finalWaitFlags`，17 个逻辑 GEMM 都通过公共 non-UnitFlag
+  `M_FIX/FIX_M` 返回同一组 token。scoped 每调用独立包络仍作为源码回退；
 - stage 3 off-left 使用静态 K32 加 K16 tail，保留 `2^24 + (-2^24) + 1` 的 FP32
   cancellation 顺序；三个 off-right 使用独立 M16 与 stride-48 ColumnMajor 子视图，避免
   公共 reference 导致 FTZ，也避免 FIX 跨 pair 写入；
@@ -143,8 +142,9 @@ key 15/23 都把 64×64 causal 区域保持为 10 个 16×16 block pair 的数�
 1,155 MiB，4 ms 对应约
 302.8 GB/s，因此算量、AIV Exp/标量发射和跨核同步仍需分别确认。
 
-每个 grouped workspace slot 为 26,624 个 FP32，即 106,496 B（104 KiB），双槽每逻辑 AIC
-为 208 KiB；workspace 总量只随实际使用的 AIC 核数增长，不随 `T` 增长。两个 AIV 在
+每个 grouped workspace slot 为 49,152 个 FP32，即 196,608 B（192 KiB），其中前 104 KiB
+为 A/B、后 88 KiB 为不与输入重叠的 C；双槽每逻辑 AIC 为 384 KiB。workspace 总量只随实际
+使用的 AIC 核数增长，不随 `T` 增长。两个 AIV 在
 slot n+1 准备数据时，AIC 计算 slot n，AIV 随后消费结果并完成外层 gate、`db` reduce 和
 四个输出累加。32 行 beta 在 feature load 时一次 `Brcb` 后常驻 `REDUCE_UB`，同时服务
 `k*beta` cache 和最终 `dk_left_pre*beta`，默认 whole-tail 不再重复广播；目标 shape 静态减少
@@ -180,11 +180,12 @@ API 数。完成的 `dq/dk/dg` 原位留在三个 accumulator bank，`db` 留在
 因此可以在旧输出写回期间计算下一 task 的前两个 Cube stage，AIV 在清零 accumulator 前通过
 `MTE3_V` 收口。候选不增加 179,936-B UB 上限；收益只可能来自缩短 task-boundary AIC 空洞，
 必须比较相同 batch-tail 实现的 `store-serial`/`store-overlap`，不能与 scalar-tail 基线混比。
-`KDA_GROUPED_PERSISTENT_MMAD_ENGINES` 只改变 AIC 本地资源生命周期。left32/right16 分别占用
-40/36 KiB L1、8/4 KiB L0A、32/32 KiB L0B、16/8 KiB L0C，并使用 event 0..3/4..7；
-L0B 恰好使用 64 KiB。源码用容量、512 B 对齐和 event 区间断言约束该布局。目标 shape 的保守
-scoped 路径为 69,632 次逻辑 GEMM/含 FIX drain 的完整 envelope；持久化模型理论上降为 20 个 AIC
-`Process` 各两个、合计 40 个，但现有协议已有设备 timeout，不能把这一静态降幅写成可测收益。
+`KDA_GROUPED_PERSISTENT_MMAD_ENGINES` 只改变 AIC 本地资源与事件生命周期。left32/right16
+分别占用 40/36 KiB L1、8/4 KiB L0A、32/32 KiB L0B、16/8 KiB L0C；L0B 恰好使用
+64 KiB。两者 buffer 不重叠，但都使用 event 0..3/L0C-0，并由 left32 单独拥有初始化/收口。
+源码用容量、512 B 对齐、相同 stage 数和低四个 event ID 断言约束该布局。目标 shape 的 scoped
+回退为 69,632 次完整 envelope；当前模型为 20 个 AIC `Process` 各一个、合计 20 个。该静态
+降幅必须先通过设备退出与精度门禁，不能直接写成可测收益。
 
 `KDA_GROUPED_REUSE_VECTOR_MASK=true` 是不改变数值语义的 Scalar 发射候选。key 23 的 gate、
 pair、stage 累加和输出尾部均为连续 FP32，优化包络内的元素数都是 64 的整数倍且 repeat 不超过
@@ -396,7 +397,8 @@ CATLASS Resource；off-left、每个 off-right、diagonal-right 与 diagonal-lef
 这些约束已经写入源码，但仍需 clean build、stride-48
 M16/slot canary 和重复 launch 在设备上证明。
 
-当前 key 23 每槽固定为 26,624 个 FP32（104 KiB），以下区间均以 FP32 元素计，右边界不包含：
+当前 key 23 每槽固定为 49,152 个 FP32（192 KiB）；前 26,624 个元素只放 A/B，后
+22,528 个元素只放 C。以下区间均以 FP32 元素计，右边界不包含：
 
 ```text
 prepare input:
@@ -406,9 +408,9 @@ prepare input:
   Adiag   [24064, 24576)    BdiagL  [24576, 26624)
 
 consume output:
-  CoffL   [    0,  4096)    CdiagR  [ 4096,  6144)
-  CoffR0  [ 7680,  9728)    CoffR1  [11776, 13824)
-  CoffR2  [15872, 17920)    CdiagL  [19968, 24064)
+  CoffL   [26624, 30720)    CoffR0  [30720, 32768)
+  CoffR1  [34816, 36864)    CoffR2  [38912, 40960)
+  CdiagR  [43008, 45056)    CdiagL  [45056, 49152)
 ```
 
 `KDA_GROUPED_PACK_STAGE_A=true` 使用同尺寸 alternate layout；packed A 的有效宽度随 stage
@@ -422,15 +424,14 @@ prepare input:
   BdiagL  [24576, 26624)
 
 consume output:
-  CoffL   [    0,  4096)    CdiagR  [ 4096,  6144)
-  CoffR0  [ 8192, 10240)    CoffR1  [12288, 14336)
-  CoffR2  [16384, 18432)    CdiagL  [20480, 24576)
+  CoffL   [26624, 30720)    CoffR0  [30720, 32768)
+  CoffR1  [34816, 36864)    CoffR2  [38912, 40960)
+  CdiagR  [43008, 45056)    CdiagL  [45056, 49152)
 ```
 
-输出只覆盖已退役的输入区间。每次 CATLASS 调用仍必须在 FIXPIPE 写 C 前完整读完与 C 重叠的
-A/B，并保证 M16/M32 实际 store 不越界；该条件必须用 clean build、slot canary 和 NPU one-hot
-验证，不能只凭静态地址计算认定安全。host 与 kernel 的 `GROUPED_SLOT_ELEMENTS` 均应为
-26,624；key 15 自己的 workspace 布局保持不变，两个路径不能混用 workspace 尺寸。
+输出与全部输入区间严格分离；off-right 仍保留 4096 元素的 pair stride，其中每槽高 16 行是
+padding，以保持现有 AIV 合并搬运不变。host 与 kernel 的 `GROUPED_SLOT_ELEMENTS` 均应为
+49,152；key 15 自己的 workspace 布局保持不变，两个路径不能混用 workspace 尺寸。
 
 ### 为什么否决 14-GEMM 和 8-GEMM
 

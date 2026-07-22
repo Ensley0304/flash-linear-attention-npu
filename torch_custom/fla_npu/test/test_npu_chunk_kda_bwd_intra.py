@@ -290,9 +290,10 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         ROOT / "scripts" / "run_chunk_kda_bwd_intra_grouped_validation.sh"
     ).read_text(encoding="utf-8")
 
+    assert "constexpr bool ENABLE_MIXED_SAFE = true;" in host
     assert "constexpr bool ENABLE_GROUPED_SAFE = true;" in host
     assert "constexpr uint64_t GROUPED_TILING_KEY = 23;" in host
-    assert "constexpr uint64_t GROUPED_SLOT_ELEMENTS = 26624;" in host
+    assert "constexpr uint64_t GROUPED_SLOT_ELEMENTS = 49152;" in host
     host_flat = " ".join(host.split())
     assert (
         "const bool useFastDomain = safeGate && "
@@ -318,6 +319,9 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "TILING_KEY_IS(15)" in kernel, "pair-wise rollback key must remain compiled"
     assert "TILING_KEY_IS(23)" in kernel
     assert "KERNEL_TASK_TYPE(23, KERNEL_TYPE_MIX_AIC_1_2)" in kernel
+    assert "MulAddDst(acc, common, coefficientBrcb" in kernel
+    assert "MulAddDst(outG, qCache[rowBegin * BK], dqAcc" in kernel
+    assert "MulAddDst(outG, dkRight, kCache[rowBegin * BK]" in kernel
     multi_include = '#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"'
     grouped_include = '#include "chunk_kda_bwd_intra_grouped.hpp"'
     assert multi_include in kernel
@@ -533,14 +537,15 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         "l0CEventList",
     ):
         assert member in multi_mmad
-    assert "constexpr uint32_t KDA_GROUPED_SLOT_ELEMENTS = 26624;" in grouped
+    assert "constexpr uint32_t KDA_GROUPED_SLOT_ELEMENTS =" in grouped
+    assert "KDA_GROUPED_SLOT_ELEMENTS == 49152" in grouped
     expected_pair_gates = os.environ.get("KDA_EXPECT_PAIR_GATES", "factor")
     expected_shared_setup = os.environ.get("KDA_EXPECT_SHARED_SETUP", "overlap")
     expected_stage_epilogue = os.environ.get("KDA_EXPECT_STAGE_EPILOGUE", "tail")
     expected_pair_scratch = os.environ.get("KDA_EXPECT_PAIR_SCRATCH", "single")
     expected_tail_blocks = os.environ.get("KDA_EXPECT_TAIL_BLOCKS", "batch")
     expected_task_store = os.environ.get("KDA_EXPECT_TASK_STORE", "serial")
-    expected_mmad_engines = os.environ.get("KDA_EXPECT_MMAD_ENGINES", "scoped")
+    expected_mmad_engines = os.environ.get("KDA_EXPECT_MMAD_ENGINES", "persistent")
     expected_vector_mask = os.environ.get("KDA_EXPECT_VECTOR_MASK", "reuse")
     expected_db_reduce = os.environ.get("KDA_EXPECT_DB_REDUCE", "coalesced")
     expected_stage_a = os.environ.get("KDA_EXPECT_STAGE_A", "split")
@@ -748,8 +753,15 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "KDA_GROUPED_PERSISTENT_RIGHT_L1_BYTES == 36 * 1024" in grouped
     assert "KDA_GROUPED_PERSISTENT_LEFT_L0B_BYTES == 32 * 1024" in grouped
     assert "KDA_GROUPED_PERSISTENT_RIGHT_L0B_BYTES == 32 * 1024" in grouped
-    assert "KDA_GROUPED_PERSISTENT_LEFT_EVENT_BASE = 0" in grouped
-    assert "KDA_GROUPED_PERSISTENT_RIGHT_EVENT_BASE = 4" in grouped
+    assert "KDA_GROUPED_PERSISTENT_EVENT_BASE = 0" in grouped
+    assert grouped.count("KDA_GROUPED_PERSISTENT_EVENT_BASE>") == 2
+    assert "right16.preSetFlags();" not in grouped
+    assert "right16.finalWaitFlags();" not in grouped
+    assert "left32.preSetFlags();" in grouped
+    assert "left32.finalWaitFlags();" in grouped
+    assert "KDA_GROUPED_C_OFF_LEFT =\n    KDA_GROUPED_INPUT_SLOT_ELEMENTS" in grouped
+    assert "workspace_[slotBase + cBase + pairOffset]" in grouped
+    assert "workspace_[slotBase + rightBase + pairOffset]" not in grouped
     assert grouped.index("KDA_GROUPED_ROW_BLOCK_ELEMENTS =") < grouped.index(
         "KDA_GROUPED_RIGHT_OUTER_ELEMENTS ="
     )
@@ -1072,12 +1084,12 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     persistent_aic = aic[persistent_begin:scoped_begin]
     persistent_loop = persistent_aic.index("for (uint64_t task")
     persistent_last_done = persistent_aic.rindex("doneFlag_")
-    assert persistent_aic.count(".preSetFlags();") == 2
-    assert persistent_aic.count(".finalWaitFlags();") == 2
+    assert persistent_aic.count(".preSetFlags();") == 1
+    assert persistent_aic.count(".finalWaitFlags();") == 1
     assert persistent_aic.index("left32.preSetFlags();") < persistent_loop
-    assert persistent_aic.index("right16.preSetFlags();") < persistent_loop
-    assert persistent_aic.index("right16.finalWaitFlags();") > persistent_last_done
     assert persistent_aic.index("left32.finalWaitFlags();") > persistent_last_done
+    assert "right16.preSetFlags();" not in persistent_aic
+    assert "right16.finalWaitFlags();" not in persistent_aic
     assert "ComputeDiagonalPersistentAic(left32, right16, 0);" in persistent_aic
     assert "ComputeGroupedStagePersistentAic<1>(left32, right16, 1);" in persistent_aic
     assert "ComputeGroupedStagePersistentAic<2>(left32, right16, 0);" in persistent_aic

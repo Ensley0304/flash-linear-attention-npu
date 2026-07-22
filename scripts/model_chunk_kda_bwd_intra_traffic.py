@@ -31,7 +31,8 @@ FP32_BYTES = 4
 DEFAULT_QK_BYTES = 2
 DEFAULT_USED_AIC = 20
 
-WORKSPACE_SLOT_ELEMENTS = 26_624
+WORKSPACE_INPUT_ELEMENTS = 26_624
+WORKSPACE_SLOT_ELEMENTS = 49_152
 WORKSPACE_QUEUE_DEPTH = 2
 
 A2_UB_BYTES = 192 * 1024
@@ -40,11 +41,12 @@ GROUPED_SINGLE_UB_BYTES = 179_936
 GROUPED_PAIR_PINGPONG_UB_BYTES = 192_256
 PAIR_SCRATCH_BANKS = 3
 PERSISTENT_MMAD_L1_BYTES = (40 + 36) * 1024
-# The delivery path gives each of the 17 logical GEMMs its own complete local
-# event transaction.  Stage-level batching of 2--4 right MMAD calls under one
-# flag envelope deadlocks on A2 and is intentionally not counted as scoped.
+# The scoped rollback gives each logical GEMM a complete local event transaction.
+# The target path keeps two layout-specific engines but serializes them through
+# one persistent local-event owner per AIC.
 SCOPED_MMAD_ENVELOPES_PER_TASK = 17
 PERSISTENT_MMAD_ENGINES_PER_AIC = 2
+PERSISTENT_MMAD_EVENT_OWNERS_PER_AIC = 1
 FP32_C0_ELEMENTS = 32 // FP32_BYTES
 FP32_CUBE_ROWS = 16
 
@@ -472,7 +474,7 @@ def build_report(
     )
     scoped_mmad_envelopes_target = tasks * SCOPED_MMAD_ENVELOPES_PER_TASK
     persistent_mmad_envelopes_target = (
-        min(tasks, used_aic) * PERSISTENT_MMAD_ENGINES_PER_AIC
+        min(tasks, used_aic) * PERSISTENT_MMAD_EVENT_OWNERS_PER_AIC
     )
 
     max_stage = stages[-1]
@@ -624,7 +626,7 @@ def build_report(
         },
         "persistent_mmad_scheduling": {
             "source_level_model": True,
-            "source_default_enabled": False,
+            "source_default_enabled": True,
             "changes_fp32_arithmetic": False,
             "changes_logical_gemm_order": False,
             "changes_gm_bytes": False,
@@ -632,13 +634,17 @@ def build_report(
             "scoped_envelopes_per_task": SCOPED_MMAD_ENVELOPES_PER_TASK,
             "scoped_envelopes_target": scoped_mmad_envelopes_target,
             "persistent_engines_per_aic": PERSISTENT_MMAD_ENGINES_PER_AIC,
+            "persistent_event_owners_per_aic": (
+                PERSISTENT_MMAD_EVENT_OWNERS_PER_AIC
+            ),
             "persistent_envelopes_target": persistent_mmad_envelopes_target,
             "envelope_reduction": (
                 scoped_mmad_envelopes_target
                 / persistent_mmad_envelopes_target
             ),
             "scoped_one_envelope_per_logical_gemm": True,
-            "persistent_compile_time_experiment_retained": True,
+            "shared_event_domain_serializes_both_layouts": True,
+            "scoped_compile_time_rollback_retained": True,
         },
         "pair_scratch_pingpong": {
             "source_default_enabled": False,
@@ -708,6 +714,7 @@ def build_report(
         },
         "workspace": {
             "queue_depth": WORKSPACE_QUEUE_DEPTH,
+            "input_elements": WORKSPACE_INPUT_ELEMENTS,
             "slot_elements": WORKSPACE_SLOT_ELEMENTS,
             "slot_bytes": WORKSPACE_SLOT_ELEMENTS * FP32_BYTES,
             "capacity_bytes_per_logical_core": (
@@ -807,7 +814,7 @@ def build_report(
         assert task_aiv_pairs == 8_192
         assert logical_gemm_calls_target == 69_632
         assert scoped_mmad_envelopes_target == 69_632
-        assert persistent_mmad_envelopes_target == 40
+        assert persistent_mmad_envelopes_target == 20
         assert pair_scratch_pairs_per_task == 6
         assert pair_scratch_mte3_bytes_per_task == 147_456
         assert pair_scratch_mte3_bytes_per_task * tasks == 603_979_776

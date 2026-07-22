@@ -92,7 +92,7 @@ Examples:
   bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
     --mode all --cann-env /path/to/ascend-toolkit/set_env.sh \
     --pair-gates direct --shared-setup overlap --stage-epilogue tail \
-    --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines scoped \
+    --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines persistent \
     --vector-mask reuse --db-reduce coalesced --stage-a split --cube-mode ieee \
     --stage-io gm
 EOF
@@ -1140,15 +1140,18 @@ assert scalar_hot["persistent_gate_loop_iterations_target_before"] == 24_576
 assert scalar_hot["persistent_gate_loop_iterations_target_after"] == 0
 assert scalar_hot["kernel_entry_get_subblock_reads_unchanged"] is True
 persistent_mmad = report["persistent_mmad_scheduling"]
-assert persistent_mmad["source_default_enabled"] is False
+assert persistent_mmad["source_default_enabled"] is True
 assert persistent_mmad["changes_fp32_arithmetic"] is False
 assert persistent_mmad["changes_logical_gemm_order"] is False
 assert persistent_mmad["changes_gm_bytes"] is False
 assert persistent_mmad["logical_gemm_calls_target"] == 69_632
 assert persistent_mmad["scoped_envelopes_target"] == 69_632
-assert persistent_mmad["persistent_envelopes_target"] == 40
+assert persistent_mmad["persistent_engines_per_aic"] == 2
+assert persistent_mmad["persistent_event_owners_per_aic"] == 1
+assert persistent_mmad["persistent_envelopes_target"] == 20
 assert persistent_mmad["scoped_one_envelope_per_logical_gemm"] is True
-assert persistent_mmad["persistent_compile_time_experiment_retained"] is True
+assert persistent_mmad["shared_event_domain_serializes_both_layouts"] is True
+assert persistent_mmad["scoped_compile_time_rollback_retained"] is True
 pair_scratch = report["pair_scratch_pingpong"]
 assert pair_scratch["source_default_enabled"] is False
 assert pair_scratch["active"] is (expected_pair_scratch == "pingpong")
@@ -1331,8 +1334,8 @@ run_test() {
         "$RUN_ROOT/logs/kda_collect.log"
 
     # Fail fast on the first real grouped launch before spending up to twenty
-    # minutes in the directed suite.  This case is the smallest device proof
-    # for the scoped non-UnitFlag M_FIX/FIX_M transaction.
+    # minutes in the directed suite. This is the smallest device proof for the
+    # shared persistent MMAD event domain and disjoint C workspace tail.
     local preflight_rc
     set +e
     timeout --kill-after=15s 120s env \

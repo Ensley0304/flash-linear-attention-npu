@@ -26,13 +26,16 @@ constexpr size_t ATTR_TOTAL_CHUNKS = 2;
 constexpr int64_t BC = 16;
 constexpr bool ENABLE_BLOCKWISE_SAFE = true;
 constexpr bool ENABLE_MIXED_SAFE = true;
+// Key 23 keeps the Cube deep-fusion target active.  Its two layout-specific
+// MMAD engines now share one serialized local-event owner and write C into a
+// disjoint workspace tail; the A2 device preflight remains the acceptance gate.
 constexpr bool ENABLE_GROUPED_SAFE = true;
 constexpr uint64_t MIXED_TILING_KEY = 15;
 constexpr uint64_t GROUPED_TILING_KEY = 23;
 constexpr int64_t MIXED_CHUNK_SIZE = 64;
 constexpr int64_t MIXED_HEAD_DIM = 128;
 constexpr uint64_t MIXED_SLOT_ELEMENTS = 15360;
-constexpr uint64_t GROUPED_SLOT_ELEMENTS = 26624;
+constexpr uint64_t GROUPED_SLOT_ELEMENTS = 49152;
 constexpr uint64_t MIXED_SLOT_COUNT = 2;
 constexpr uint64_t MIXED_FP32_BYTES = sizeof(float);
 static_assert(MIXED_SLOT_ELEMENTS * MIXED_FP32_BYTES % 512 == 0,
@@ -132,12 +135,11 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     tiling.set_dataType(qDesc->GetDataType() == ge::DT_BF16 ? 1 : 0);
     tiling.set_safeGate(safeGate ? 1 : 0);
     const uint64_t baseTilingKey = (qDesc->GetDataType() == ge::DT_BF16 ? 2 : 0) + (safeGate ? 1 : 0);
-    // Keys 0..3 retain the proven row-wise implementation and keys 5/7 retain
-    // the AIV block-wise safe path. Key 15 remains the pair-wise mixed AIC/AIV
-    // rollback path; key 23 groups pairs by late block for the exact BF16
-    // DAV_2201 (A2/A3) fast domain. Every unsupported shape still falls back
-    // immediately; A2 is the current measured target and A3 needs its own
-    // device validation before the grouped path is treated as proven there.
+    // Keys 0..3 retain the row-wise implementation and keys 5/7 retain the
+    // AIV block-wise safe path. Key 15 is the pair-wise AIC/AIV fallback and
+    // key 23 is the target-domain grouped Cube path. Unsupported shapes still
+    // fall back immediately; A2 clean-wheel exit/precision/performance remains
+    // mandatory before treating the grouped implementation as delivered.
     context->SetTilingKey(useGroupedFast ? GROUPED_TILING_KEY :
         (useMixedFast ? MIXED_TILING_KEY :
          baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0)));

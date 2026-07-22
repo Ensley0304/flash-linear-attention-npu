@@ -1,5 +1,7 @@
 # ChunkKdaBwdIntra AscendC 设计
 
+> 2026-07-22 stage-1 event redesign: grouped key 23 remains the active target-domain candidate. Its row-major and column-major MMAD engines use disjoint L1/L0 buffers but one serialized event domain, initialized/drained once by a single owner. All Fixpipe destinations live in a dedicated C workspace tail, so no GEMM output aliases a staged input. This graph is pending clean-wheel device exit/precision evidence and is not yet a delivery baseline.
+
 > 2026-07-22 correction: the A2/910B delivery default is the two-slot GM A/B bridge (`KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER=false`). DAV_2201 has no physical AIV-UB-to-AIC-L1 path: AscendC software-emulates `UB -> TSCM` through GM and a registered Matmul KFC client. This direct CATLASS kernel has no KFC client, so enabling the retained TSCM experiment on A2 would be unsupported and would not remove the GM round trip. The main 179,936-byte UB slab remains single-buffered; CATLASS L1/L0 and the GM stage bridge provide the current local and cross-core ping-pong respectively.
 
 ## 1. 目标与范围
@@ -75,13 +77,14 @@ off-left/diagonal-left 的 32x128 C 具有相同的双 8 行几何。默认
 UB `dstStride=0` 的 CopyIn 把 dq 与 dk-left 的两段 C 搬到相邻 scratch；后续两条 FP32
 `MulAddDst` 仍分别写入原 dq/dk-left accumulator。
 
-每个逻辑核组使用两个 104 KiB、512B 对齐的 workspace slot，形成 producer/consumer
+每个逻辑核组使用两个 192 KiB、512B 对齐的 workspace slot，形成 producer/consumer
 ping-pong；实际稳态为 `C0||P1`、`C1||(consume0+P2)`、`C2||(consume1+P3)`、
 `C3||consume2`，task 尾的 `consume3+store` 仍未被 AIC 覆盖。stage 0 发布 ready 后，AIV
 才构造 stage 1 首次使用的持久 right-outer、pair bridge 并清零 accumulator，使这段共享准备
 工作与 `C0` 重叠；编译期开关可恢复原 task-prologue 顺序。该流水不会生成随序列长度增长的
 中间张量。不同 M/K 形状和 A-layout 的 BlockMmad 通过
-`MmadPingpongTlaMulti` 串行复用同一份 L1/L0 resource。默认 scoped 路径的每个逻辑 GEMM 都执行
+`MmadPingpongTlaMulti` 使用分区 L1/L0 buffer，并串行共享一个本地 event owner。默认 persistent
+路径只在整个 AIC `Process` 前后初始化/收口一次；scoped 回退的每个逻辑 GEMM 都执行
 `preSetFlags -> operator -> finalWaitFlags`，并关闭 UnitFlag；公共 non-UnitFlag 分支在 `operator` 内建立
 完整的 `M_FIX/FIX_M` L0C 生命周期，`finalWaitFlags` 再排空该调用的全部事件。每个 stage 的最后一个
 FIX 完成后，AIC 再在 `PIPE_FIX` 发布 done，保证本 stage 的全部 FP32 C 矩阵写回后 AIV 才能读取。
@@ -182,8 +185,9 @@ bank，32 个 `db` 行保存在 reference cache 前的 128-B prefix。`dq/dk` �
 与 `k*beta` bank，`dg` 在旧 `dk_right` 被 `dk` 加法和差值同时消费后直接搬入该 accumulator，
 完整 4096 元素的 `dk_left-dk_right` 则复用已经由四尾块 batch 断言保护的
 `KDA_GROUPED_BATCH_ROW_TMP_UB`，其右边界为 179,456 B，低于 179,840-B causal-state 起点。
-每个 grouped slot 为 26,624 个 FP32（106,496 B，即 104 KiB），双槽为 208 KiB/逻辑 AIC；
-user workspace 总量为 `used_aic * 2 * 106,496 B`。
+每个 grouped slot 为 49,152 个 FP32（196,608 B，即 192 KiB），前 26,624 个元素为 A/B，
+后 22,528 个元素为独立 C tail；双槽为 384 KiB/逻辑 AIC。user workspace 总量为
+`used_aic * 2 * 196,608 B`。
 
 `KDA_GROUPED_PACK_STAGE_A=true` 复用同一 slot 的另一种静态布局：AIV 将已经完成 causal mask
 的 `dAqk/dAkk` 完整 prefix 各写一次，组成 RowMajor `[32,prefix]` 的 packed A；off-left 与
