@@ -41,9 +41,9 @@ GROUPED_SINGLE_UB_BYTES = 179_936
 GROUPED_PAIR_PINGPONG_UB_BYTES = 192_256
 PAIR_SCRATCH_BANKS = 3
 PERSISTENT_MMAD_L1_BYTES = (40 + 36) * 1024
-# The scoped rollback gives each logical GEMM a complete local event transaction.
-# The target path keeps two layout-specific engines but serializes them through
-# one persistent local-event owner per AIC.
+# The source default gives each logical GEMM a complete scoped local-event
+# transaction.  The model also keeps the two-layout persistent owner as a
+# source-level experiment for later bounded-batch performance work.
 SCOPED_MMAD_ENVELOPES_PER_TASK = 17
 PERSISTENT_MMAD_ENGINES_PER_AIC = 2
 PERSISTENT_MMAD_EVENT_OWNERS_PER_AIC = 1
@@ -626,7 +626,8 @@ def build_report(
         },
         "persistent_mmad_scheduling": {
             "source_level_model": True,
-            "source_default_enabled": True,
+            "source_default_enabled": False,
+            "source_default": "scoped",
             "changes_fp32_arithmetic": False,
             "changes_logical_gemm_order": False,
             "changes_gm_bytes": False,

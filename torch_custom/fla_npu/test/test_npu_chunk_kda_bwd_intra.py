@@ -545,7 +545,7 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     expected_pair_scratch = os.environ.get("KDA_EXPECT_PAIR_SCRATCH", "single")
     expected_tail_blocks = os.environ.get("KDA_EXPECT_TAIL_BLOCKS", "batch")
     expected_task_store = os.environ.get("KDA_EXPECT_TASK_STORE", "serial")
-    expected_mmad_engines = os.environ.get("KDA_EXPECT_MMAD_ENGINES", "persistent")
+    expected_mmad_engines = os.environ.get("KDA_EXPECT_MMAD_ENGINES", "scoped")
     expected_vector_mask = os.environ.get("KDA_EXPECT_VECTOR_MASK", "reuse")
     expected_db_reduce = os.environ.get("KDA_EXPECT_DB_REDUCE", "coalesced")
     expected_stage_a = os.environ.get("KDA_EXPECT_STAGE_A", "split")

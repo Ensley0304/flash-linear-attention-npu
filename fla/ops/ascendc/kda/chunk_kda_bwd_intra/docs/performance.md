@@ -1,6 +1,6 @@
 # ChunkKdaBwdIntra 性能分析
 
-> 2026-07-22 target gate: the accepted objective is grouped key 23 below 10 ms for `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`. The 48.660 ms AIV key-7 measurement is only the correctness rollback and cannot satisfy delivery. The current grouped candidate keeps the 17 Cube GEMMs, replaces per-call/multi-domain event management with one serialized owner, and removes input/output workspace aliasing. No grouped performance number is accepted before single-launch exit and full precision pass.
+> 2026-07-22 target gate: the accepted objective is grouped key 23 below 10 ms for `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`. The 48.660 ms AIV key-7 measurement is only the correctness rollback and cannot satisfy delivery. The current grouped candidate keeps the 17 Cube GEMMs and grouped AIV cache, removes input/output workspace aliasing, and temporarily restores per-GEMM event envelopes to obtain a stable Cube baseline. No grouped performance number is accepted before single-launch exit and full precision pass; persistent or two-GEMM event batching is reconsidered only after that baseline is measured.
 
 > 2026-07-22 correction: the source-default A2 path remains the two-slot GM A/B bridge. The 2.813329 GB A/B-on-chip figure is only an architectural lower-bound model; it is not attainable by calling AscendC `UB -> TSCM` on DAV_2201 because that route is software-emulated through GM and Matmul KFC. The supported target-shape model is therefore still 5.078254 GB of issued GM traffic (1269.563 GB/s at 4 ms). A realistic AIC stage-local L1 cache would remove only repeated A reads: 0.083886 GB, or 1.65% of the current target traffic; every B image has one consumer and C must still return to AIV. Reaching 4 ms must come from fewer staged operands/results, more reuse inside each AIV or AIC, coarser fusion, and better overlap—not from labeling the emulated TSCM route as on-chip. The target remains unverified until clean-wheel msprof.
 
@@ -48,10 +48,10 @@ whole-tail；`true` 是尚待设备 A/B 的 8-row stage-local overlap 候选。
   后续 AIC stage 重叠；源码默认 `false` 继续在 `StoreTaskOutputs` 执行原 32-row whole-tail，
   两条实现都保留，候选收益尚未上板证明；
 - M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti`；源码默认
-  `KDA_GROUPED_ENABLE_UNIT_FLAG=false` 和 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=true`。两种
-  layout 保持 L1/L0 buffer 分区，但串行共享 event 0..3/L0C-0；只有 left32 在整个 Process 前后
-  各执行一次 `preSetFlags/finalWaitFlags`，17 个逻辑 GEMM 都通过公共 non-UnitFlag
-  `M_FIX/FIX_M` 返回同一组 token。scoped 每调用独立包络仍作为源码回退；
+  `KDA_GROUPED_ENABLE_UNIT_FLAG=false` 和 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=false`。17 个逻辑
+  GEMM 各自执行完整 `preSetFlags/operator/finalWaitFlags` 包络，并通过公共 non-UnitFlag
+  `M_FIX/FIX_M` 收口。该 scoped 默认仍保留 grouped AIV 缓存和独立 C tail；persistent 仅作为
+  后续 bounded-batch 性能实验；
 - stage 3 off-left 使用静态 K32 加 K16 tail，保留 `2^24 + (-2^24) + 1` 的 FP32
   cancellation 顺序；三个 off-right 使用独立 M16 与 stride-48 ColumnMajor 子视图，避免
   公共 reference 导致 FTZ，也避免 FIX 跨 pair 写入；
@@ -182,10 +182,11 @@ API 数。完成的 `dq/dk/dg` 原位留在三个 accumulator bank，`db` 留在
 必须比较相同 batch-tail 实现的 `store-serial`/`store-overlap`，不能与 scalar-tail 基线混比。
 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES` 只改变 AIC 本地资源与事件生命周期。left32/right16
 分别占用 40/36 KiB L1、8/4 KiB L0A、32/32 KiB L0B、16/8 KiB L0C；L0B 恰好使用
-64 KiB。两者 buffer 不重叠，但都使用 event 0..3/L0C-0，并由 left32 单独拥有初始化/收口。
-源码用容量、512 B 对齐、相同 stage 数和低四个 event ID 断言约束该布局。目标 shape 的 scoped
-回退为 69,632 次完整 envelope；当前模型为 20 个 AIC `Process` 各一个、合计 20 个。该静态
-降幅必须先通过设备退出与精度门禁，不能直接写成可测收益。
+64 KiB。两者 buffer 不重叠，但都使用 event 0..3/L0C-0，并由 left32 单独拥有 persistent 候选的
+初始化/收口。源码用容量、512 B 对齐、相同 stage 数和低四个 event ID 断言约束该布局。目标
+shape 的默认 scoped 路径为 69,632 次完整 envelope；persistent 模型为每个 AIC `Process` 一个。
+后者只有在 scoped 非别名版本通过设备退出、精度并取得性能基线后，才能按最多两个 GEMM 一组
+重新启用，不能把静态降幅直接写成可测收益。
 
 `KDA_GROUPED_REUSE_VECTOR_MASK=true` 是不改变数值语义的 Scalar 发射候选。key 23 的 gate、
 pair、stage 累加和输出尾部均为连续 FP32，优化包络内的元素数都是 64 的整数倍且 repeat 不超过

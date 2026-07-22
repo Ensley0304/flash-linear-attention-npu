@@ -48,15 +48,15 @@ constexpr bool KDA_GROUPED_DOUBLE_BUFFER_PAIR_SCRATCH = false;
 // correctness candidate.  Flip only after a separate UnitFlag implementation
 // has clean-wheel device evidence.
 constexpr bool KDA_GROUPED_ENABLE_UNIT_FLAG = false;
-// Keep the two layout-specific MMAD engines alive for the complete AIC task,
-// but serialize both through one local hard-event domain.  Stage 1 is the first
-// stage with several consecutive GEMMs; repeatedly creating/draining event
-// envelopes there timed out on A2, while assigning the second engine event IDs
-// 4..7 introduced another unproven event domain.  One owner initializes IDs
-// 0..3/L0C-0 once, every GEMM returns the same tokens, and the owner drains them
-// once at kernel exit.  The engines retain disjoint L1/L0 storage, so an input
-// preload cannot overwrite the other layout's in-flight tile.
-constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = true;
+// Use one complete non-UnitFlag event envelope per logical GEMM.  Device
+// isolation proved both stage-0 GEMMs independently and together, but the
+// persistent event domain still timed out as soon as stage 1 chained four
+// GEMMs.  Earlier scoped runs were not a valid counterexample because their C
+// outputs still aliased staged B inputs.  The current scoped default combines
+// the proven per-call CATLASS lifecycle with the disjoint C tail below while
+// retaining all 17 Cube GEMMs and the grouped AIV cache.  Persistent engines
+// remain compiled as a later performance experiment only.
+constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = false;
 // Experimental non-A2 path: Vector builds every stage's A/B operands directly
 // in two ping-pong TSCM slots and Cube consumes them from L1.  Keep this off on
 // Atlas A2/910B.  On __NPU_ARCH__ == 2201 the AscendC UB->TSCM API is

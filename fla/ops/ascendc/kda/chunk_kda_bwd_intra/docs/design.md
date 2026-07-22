@@ -1,6 +1,6 @@
 # ChunkKdaBwdIntra AscendC 设计
 
-> 2026-07-22 stage-1 event redesign: grouped key 23 remains the active target-domain candidate. Its row-major and column-major MMAD engines use disjoint L1/L0 buffers but one serialized event domain, initialized/drained once by a single owner. All Fixpipe destinations live in a dedicated C workspace tail, so no GEMM output aliases a staged input. This graph is pending clean-wheel device exit/precision evidence and is not yet a delivery baseline.
+> 2026-07-22 stage-1 event redesign: grouped key 23 remains the active target-domain candidate. All Fixpipe destinations live in a dedicated C workspace tail, so no GEMM output aliases a staged input. The source now defaults to one complete non-UnitFlag event envelope per logical GEMM; this combines the proven key-15 CATLASS lifecycle with grouped key-23 caching without reverting to the 48 ms Vector path. Persistent event reuse remains compiled but disabled until the scoped, non-aliasing graph passes clean-wheel device exit and precision.
 
 > 2026-07-22 correction: the A2/910B delivery default is the two-slot GM A/B bridge (`KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER=false`). DAV_2201 has no physical AIV-UB-to-AIC-L1 path: AscendC software-emulates `UB -> TSCM` through GM and a registered Matmul KFC client. This direct CATLASS kernel has no KFC client, so enabling the retained TSCM experiment on A2 would be unsupported and would not remove the GM round trip. The main 179,936-byte UB slab remains single-buffered; CATLASS L1/L0 and the GM stage bridge provide the current local and cross-core ping-pong respectively.
 
@@ -83,11 +83,11 @@ ping-pong；实际稳态为 `C0||P1`、`C1||(consume0+P2)`、`C2||(consume1+P3)`
 才构造 stage 1 首次使用的持久 right-outer、pair bridge 并清零 accumulator，使这段共享准备
 工作与 `C0` 重叠；编译期开关可恢复原 task-prologue 顺序。该流水不会生成随序列长度增长的
 中间张量。不同 M/K 形状和 A-layout 的 BlockMmad 通过
-`MmadPingpongTlaMulti` 使用分区 L1/L0 buffer，并串行共享一个本地 event owner。默认 persistent
-路径只在整个 AIC `Process` 前后初始化/收口一次；scoped 回退的每个逻辑 GEMM 都执行
+`MmadPingpongTlaMulti` 使用分区 L1/L0 buffer。默认 scoped 路径的每个逻辑 GEMM 都执行
 `preSetFlags -> operator -> finalWaitFlags`，并关闭 UnitFlag；公共 non-UnitFlag 分支在 `operator` 内建立
 完整的 `M_FIX/FIX_M` L0C 生命周期，`finalWaitFlags` 再排空该调用的全部事件。每个 stage 的最后一个
 FIX 完成后，AIC 再在 `PIPE_FIX` 发布 done，保证本 stage 的全部 FP32 C 矩阵写回后 AIV 才能读取。
+跨 `Process` 复用一个本地 event owner 的 persistent 分支仍保留为编译期实验，但不参与默认验收。
 
 AIV 的六类流水依赖各在 `Init` 分配一个 `TEventID`，在 `ProcessAiv` 的全部 task 完成后统一释放；
 每次同步仍执行原来的 `SetFlag -> WaitFlag`，但不再在热路径反复分配和释放事件。局部
@@ -235,12 +235,13 @@ repeated-launch 与同卡 msprof，`scalar` wheel 用于结果和性能回退对
 
 每个 CATLASS `MmadPingpongTlaMulti` 内部已经对 L1A/L1B/L0A/L0B 使用两级 ping-pong。源码默认的
 `scoped` 调度把 left16、left32 和 right16 实例映射到相同的 L0 地址与 local event 0..3。
-A2 分段结果显示 handshake、stage0-right、stage0-left 和 stage0-both 均可退出，但 stage 1
-切为逐调用 `preSetFlags/finalWaitFlags` 后仍然超时。随后在 UnitFlag 分支外手工增加
+A2 分段结果显示 handshake、stage0-right、stage0-left 和 stage0-both 均可退出，但旧 scoped
+版本的 C 结果仍覆盖同一 workspace slot 的 B 输入，因此它的 stage-1 超时不能否定逐调用事件
+包络。随后在 UnitFlag 分支外手工增加
 `SetFlag/WaitFlag<HardEvent::FIX_M>` 的 clean-wheel 预检也在 120 秒后退出，证明不能把普通
 事件协议叠加到 UnitFlag 的细粒度 MMAD/Fixpipe 协议上。默认路径因此改为
 `KDA_GROUPED_ENABLE_UNIT_FLAG=false`，直接复用公共实现已经配对的 `M_FIX/FIX_M` 事务；该候选仍待
-clean-wheel A2 验证，但不改变任何 GEMM、gate 或 FP32 累加次序。
+clean-wheel A2 验证，并同时使用独立 C tail 消除输入/输出别名，但不改变任何 GEMM、gate 或 FP32 累加次序。
 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=true` 仍保留为编译期实验：它通过算子私有派生 wrapper 重绑
 protected L1/L0 tensor 和 event 数组，不修改公共 CATLASS；left32 同时处理实际 K16/K32 以及
 stage 3 的 K32+K16 tail，right16 保持原 M16/K32 路径。
@@ -254,8 +255,8 @@ HF32 舍入，workspace、FP32 accumulator、GEMM 次序和 Vector 路径均不�
 | 引擎 | L1 | L0A | L0B | L0C | local event |
 |---|---:|---:|---:|---:|---|
 | left32 | 40 KiB | 8 KiB | 32 KiB | 16 KiB | 0..3 |
-| right16 | 36 KiB | 4 KiB | 32 KiB | 8 KiB | 4..7 |
-| 合计 | 76 KiB | 12 KiB | 64 KiB | 24 KiB | 0..7 |
+| right16 | 36 KiB | 4 KiB | 32 KiB | 8 KiB | 0..3（与 left 串行共享） |
+| 合计 | 76 KiB | 12 KiB | 64 KiB | 24 KiB | 0..3 |
 
 L0B 恰好用满 DAV_2201 的 64 KiB，所有起点保持 512 B 对齐，并由编译期容量、互斥区间和 event
 上限断言保护。wrapper 显式重绑 non-UnitFlag 路径使用的 `l0CEventList`；scoped 回退类型也经
@@ -266,7 +267,7 @@ workspace slot 会被 AIV 反复覆写，即使 GM 地址与 tile 坐标相同�
 K32 一轮完成，K48 严格分成 K32+K16 两轮；每轮末尾归还当前 L1/L0 free token，索引只在两槽间
 轮换，不要求跨调用重置。
 
-持久化候选在整个 `ProcessAic` 外只为 left/right 各建立和排空一次 event envelope，task/stage 内继续
+持久化候选在整个 `ProcessAic` 外由 left owner 建立和排空一次共享 event envelope，task/stage 内继续
 按 `off-left -> off-right -> diag-right -> diag-left` 调用，不改变 workspace 覆盖、17 个逻辑
 GEMM、约 18 次物理 MMAD 或 K48 cancellation 次序。AIC 的 done flag 仍在 `PIPE_FIX` 上，AIV
 仍先等待 done 再读 slot。目标模型的 4,096 个 task、69,632 次逻辑 GEMM 保持不变；保守 scoped

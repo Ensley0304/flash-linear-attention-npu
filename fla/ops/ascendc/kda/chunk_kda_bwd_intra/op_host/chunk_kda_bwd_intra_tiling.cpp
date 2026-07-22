@@ -26,8 +26,8 @@ constexpr size_t ATTR_TOTAL_CHUNKS = 2;
 constexpr int64_t BC = 16;
 constexpr bool ENABLE_BLOCKWISE_SAFE = true;
 constexpr bool ENABLE_MIXED_SAFE = true;
-// Key 23 keeps the Cube deep-fusion target active.  Its two layout-specific
-// MMAD engines now share one serialized local-event owner and write C into a
+// Key 23 keeps the Cube deep-fusion target active.  Its default uses one
+// complete non-UnitFlag event envelope per logical GEMM and writes C into a
 // disjoint workspace tail; the A2 device preflight remains the acceptance gate.
 constexpr bool ENABLE_GROUPED_SAFE = true;
 constexpr uint64_t MIXED_TILING_KEY = 15;
