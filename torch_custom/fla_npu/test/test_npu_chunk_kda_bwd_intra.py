@@ -378,6 +378,7 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "--stable-build" in validation_runner
     assert 'BUILD_TILING_KEYS="7"' in validation_runner
     assert 'BUILD_TILING_KEYS="0,2,5,7"' in validation_runner
+    assert "after target-shape and pair-bridge preflights" in validation_runner
     assert "verify_filtered_tiling_keys" in validation_runner
 
     # Exercise the manifest parser and HF32 evidence mapping, rather than only

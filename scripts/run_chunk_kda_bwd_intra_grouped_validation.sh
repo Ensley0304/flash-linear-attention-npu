@@ -63,7 +63,7 @@ Options:
   --run-base PATH                Persistent artifact parent; default: /var/tmp
   --jobs N                       build.sh parallelism; default: 8
   --quick-build                  Build only delivery key 7 and stop test mode
-                                 after the single target-shape preflight
+                                 after target-shape and pair-bridge preflights
   --stable-build                 Build stable runtime keys 0,2,5,7 once, skip
                                  key 15/23 probes, and permit the full37 test
   --pair-gates MODE              source|factor|direct; build/all only
