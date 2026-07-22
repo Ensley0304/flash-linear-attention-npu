@@ -91,8 +91,8 @@ rowBlock 的 AIV 计算，所以第一轮目标是证明 Cube 能稳定带来净
 AIV prep -> Cube stage -> AIV consume
 ```
 
-Cube stage 使用 `KERNEL_TYPE_MIX_AIC_1_2`，但只有 `ASCEND_IS_AIC` 分支执行 FP32 MMAD，AIV
-分支为空；HF32 关闭，stage 之间不使用任何 CrossCore flag。这样用额外 launch 和 GM scratch
+Cube stage 使用 `KERNEL_TYPE_AIC_ONLY`，host 侧仅启动实际使用的 AIC；HF32 关闭，stage 之间
+不使用任何 CrossCore flag。这样用额外 launch 和 GM scratch
 换取确定的生命周期，避免复杂 ready/done 事件再次造成死锁。稳定 key7 不删除，也不改变非实验
 shape 的调度。
 

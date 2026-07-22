@@ -9,7 +9,6 @@
  */
 
 #include "kernel_operator.h"
-#include "lib/matmul_intf.h"
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
@@ -1460,12 +1459,10 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
         op.Init(k, g, dAqk, dAkk, dqOut, dkOut, tilingData, &pipe);
         op.Process();
     } else if (TILING_KEY_IS(10)) {
-        KERNEL_TASK_TYPE(10, KERNEL_TYPE_MIX_AIC_1_2);
-        if ASCEND_IS_AIC {
-            KdaRow3CubeKernel op;
-            op.Init(stageA, stageB, dqOut, tilingData);
-            op.Process();
-        }
+        KERNEL_TASK_TYPE(10, KERNEL_TYPE_AIC_ONLY);
+        KdaRow3CubeKernel op;
+        op.Init(stageA, stageB, dqOut, tilingData);
+        op.Process();
     } else if (TILING_KEY_IS(11)) {
         KERNEL_TASK_TYPE(11, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaBwdIntraKernel<bfloat16_t, true, true, true> op;

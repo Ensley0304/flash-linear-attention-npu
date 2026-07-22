@@ -157,9 +157,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         if (usedCoreNum == 0) {
             return ge::GRAPH_FAILED;
         }
-        const uint32_t pairedAivNum = std::min<uint32_t>(aivNum, usedCoreNum * 2);
-        blockDim = platform.CalcTschBlockDim(pairedAivNum, aicNum, aivNum);
-        blockDim = std::max(blockDim, usedCoreNum);
+        blockDim = usedCoreNum;
     }
     if (blockDim == 0 || usedCoreNum == 0) {
         return ge::GRAPH_FAILED;

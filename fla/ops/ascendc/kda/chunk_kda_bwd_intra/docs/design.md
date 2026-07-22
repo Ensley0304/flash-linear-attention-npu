@@ -98,13 +98,13 @@ block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、
 三个 stage 在同一 ACL stream 上严格串行：
 
 ```text
-AIV prep -> MIX kernel 的 AIC-only Cube 分支（AIV no-op） -> AIV consume
+AIV prep -> AIC-only Cube kernel -> AIV consume
 ```
 
 stage 之间依赖 stream 顺序，不使用 `CrossCoreSetFlag`、`CrossCoreWaitFlag` 或
 `CrossCoreFlagWithReverse`。Cube 的 A/B/C 均保持 FP32，使用 IEEE FP32 模式并显式关闭 HF32；
-`KERNEL_TYPE_MIX_AIC_1_2` 仅用于当前构建系统承载 AIC 分支，不允许在该 stage 内增加 AIV
-等待。第一版每个 `(chunk,HV)` scratch slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部
+Cube stage 显式使用 `KERNEL_TYPE_AIC_ONLY`，host 侧 `blockDim` 直接取实际使用的 AIC 数量，
+不启动无用 AIV，也不引入 Matmul API server/workspace 协议。第一版每个 `(chunk,HV)` scratch slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部
 512B 对齐。目标 shape 的 4096 个 slot 共约 184 MiB。当前版本不做 scratch/UB 双 buffer，待
 正确性和 NPU profiling 通过后再评估复用与压缩。
 

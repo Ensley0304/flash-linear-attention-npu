@@ -101,8 +101,8 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 且三份 scratch 合计不超过 256 MiB
 和满 chunk。源码契约要求 prep、Cube、consume 使用三个不同的 tiling key；Cube 的 A/B/C 为
-FP32，HF32 显式关闭。由于当前构建注册需要 mixed 核型，Cube stage 使用
-`KERNEL_TYPE_MIX_AIC_1_2`，但只允许 `ASCEND_IS_AIC` 执行 MMAD，AIV 为 no-op。算子目录不得
+FP32，HF32 显式关闭。Cube stage 使用 `KERNEL_TYPE_AIC_ONLY`，host 侧 `blockDim` 直接等于
+实际使用的 AIC 数量，不生成或等待 AIV 分支。算子目录不得
 出现 `CrossCoreSetFlag`、`CrossCoreWaitFlag` 或 `CrossCoreFlagWithReverse`。
 
 三 stage 必须由同一 stream 串行提交，稳定 key7 仍是 fallback。目标 shape scratch 为

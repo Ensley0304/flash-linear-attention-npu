@@ -286,10 +286,19 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
         key_values.append(int(match.group(1)))
     assert len(set(key_values)) == len(key_values), "rowBlock3 prep/Cube/consume keys must be distinct"
 
-    assert "KERNEL_TYPE_MIX_AIC_1_2" in source
-    assert '#include "lib/matmul_intf.h"' in kernel_source
-    assert '#ifndef TORCH_MODE\n#include "lib/matmul_intf.h"' not in kernel_source
-    assert "if ASCEND_IS_AIC" in source
+    cube_branch = re.search(
+        r"else if \(TILING_KEY_IS\(10\)\) \{(?P<body>.*?)"
+        r"\n\s*\} else if \(TILING_KEY_IS\(11\)\)",
+        kernel_source,
+        re.DOTALL,
+    )
+    assert cube_branch is not None, "missing standalone rowBlock3 Cube branch"
+    cube_body = cube_branch.group("body")
+    assert "KERNEL_TASK_TYPE(10, KERNEL_TYPE_AIC_ONLY)" in cube_body
+    assert "KERNEL_TYPE_MIX" not in cube_body
+    assert "ASCEND_IS_AIC" not in cube_body
+    assert '#include "lib/matmul_intf.h"' not in kernel_source
+    assert "CalcTschBlockDim" not in source
     assert "BlockMmadTla" in source
     for element in ("ElementA", "ElementB", "ElementC"):
         assert re.search(rf"\busing\s+{element}\s*=\s*float\s*;", source), (
