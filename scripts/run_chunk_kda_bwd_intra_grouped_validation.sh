@@ -1332,7 +1332,9 @@ run_test() {
 
     # Fail fast on the first real grouped launch before spending up to twenty
     # minutes in the directed suite.  This case is the smallest device proof
-    # for the shared-L0C UnitFlag/FIX_M protocol repaired by the scoped path.
+    # for the scoped non-UnitFlag M_FIX/FIX_M transaction.
+    local preflight_rc
+    set +e
     timeout --kill-after=15s 120s env \
         ASCEND_RT_VISIBLE_DEVICES="$PHYSICAL_DEVICE" TEST_DEVICE_ID=0 \
         PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 \
@@ -1354,6 +1356,18 @@ run_test() {
         "${test_file}::test_chunk_kda_bwd_intra_safe_gate_grouped_fastpath_bf16" \
         -s 2>&1 | tee \
         "$RUN_ROOT/logs/kda_grouped_preflight_card${PHYSICAL_DEVICE}.log"
+    preflight_rc=${PIPESTATUS[0]}
+    set -e
+    if (( preflight_rc != 0 )); then
+        if (( preflight_rc == 124 || preflight_rc == 137 )); then
+            echo "[FAIL] grouped BF16 preflight timed out after 120 seconds " \
+                 "(exit=$preflight_rc)" >&2
+        else
+            echo "[FAIL] grouped BF16 preflight failed (exit=$preflight_rc)" >&2
+        fi
+        return "$preflight_rc"
+    fi
+    echo "[PASS] grouped BF16 preflight completed"
 
     timeout --kill-after=30s 1200s env \
         ASCEND_RT_VISIBLE_DEVICES="$PHYSICAL_DEVICE" TEST_DEVICE_ID=0 \

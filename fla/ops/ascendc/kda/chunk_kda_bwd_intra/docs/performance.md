@@ -46,12 +46,13 @@ whole-tail；`true` 是尚待设备 A/B 的 8-row stage-local overlap 候选。
   后续 AIC stage 重叠；源码默认 `false` 继续在 `StoreTaskOutputs` 执行原 32-row whole-tail，
   两条实现都保留，候选收益尚未上板证明；
 - M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti` 管理共享 L1/L0；源码默认
-  每个逻辑 GEMM 独占一次 `preSetFlags/operator/FIX_M-sync/finalWaitFlags`，每 task 共 17 个
-  保守事件包络；UnitFlag 仍保留单次 GEMM 内 MMAD/FIXPIPE 的 512-B 细粒度重叠；
+  `KDA_GROUPED_ENABLE_UNIT_FLAG=false`，每个逻辑 GEMM 独占一次
+  `preSetFlags/operator/finalWaitFlags`，由公共 non-UnitFlag 分支完成 `M_FIX/FIX_M`，每 task 共 17 个
+  保守事件包络；这会暂时放弃 MMAD/FIXPIPE 的 512-B 细粒度重叠；
 - 源码默认 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=false`。此前同一 stage 的 off-right 与
-  diagonal-right 共用一个包络，并进一步尝试跨 task 常驻；逐调用 flag 包络在 A2 上仍 timeout，
-  说明缺失的共享 L0C/FIX→M 完成边界才是下一项待验证根因。`true` 分支只作为待重建设备事件
-  协议的编译期实验，不得作为交付或性能基线；
+  diagonal-right 共用一个包络，并进一步尝试跨 task 常驻；逐调用 UnitFlag 包络以及额外手工
+  `FIX_M` 的两个 A2 clean-wheel 候选都 timeout。`true` 分支只作为待重建设备事件协议的编译期实验，
+  不得作为交付或性能基线；
 - stage 3 off-left 使用静态 K32 加 K16 tail，保留 `2^24 + (-2^24) + 1` 的 FP32
   cancellation 顺序；三个 off-right 使用独立 M16 与 stride-48 ColumnMajor 子视图，避免
   公共 reference 导致 FTZ，也避免 FIX 跨 pair 写入；
@@ -258,8 +259,9 @@ A/B 只把 `vector-mask` 从 `reuse` 改为 `per-call`；最小 db 归约 A/B �
 并保持其余十一维不变。也可用十二个 `source` 复现
 当前提交默认值；不得把 `source` 标签直接写入变体身份，identity 记录的必须是解析后的具体值。
 
-先运行默认 scoped 版确认 grouped key 23 可以退出并取得真实 AIC/AIV bound。persistent 分支在
-重建并独立验证 UnitFlag/Fixpipe 协议前不进入性能 A/B。随后固定 batch tail 对
+先运行默认 non-UnitFlag scoped 版确认 grouped key 23 可以退出并取得真实 AIC/AIV bound，同时记录
+关闭 UnitFlag 的 Cube/Fixpipe 串行成本。persistent 与 UnitFlag 分支在重建并独立验证协议前不进入
+性能 A/B。随后固定 batch tail 对
 `store-serial`/`store-overlap` 做最小 A/B，再分别测试局部 scratch ping-pong 与 packed stage-A；
 前者只延后三个立即 MTE3 wait，后者只减少每个非零 stage 的两次 AIV MTE3 row-copy 提交，均不能预设为 4 ms
 的主收益。当前 phase1 的 MTE3

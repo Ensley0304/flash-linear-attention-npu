@@ -39,13 +39,18 @@ constexpr bool KDA_GROUPED_BATCH_TAIL_BLOCKS = true;
 // and the whole-task db epilogue; both rollback paths remain compiled.
 constexpr bool KDA_GROUPED_OVERLAP_TASK_STORE = false;
 constexpr bool KDA_GROUPED_DOUBLE_BUFFER_PAIR_SCRATCH = false;
-// Keep the conservative CATLASS event contract as the source default: every
-// BlockMmad invocation owns one preSetFlags/operator/FIX_M-sync/finalWaitFlags
-// envelope.  UnitFlag finalWaitFlags drains only the local MTE1/M free tokens,
-// so the explicit FIX->M dependency protects the shared L0C before the next
-// logical GEMM reuses it.  The persistent branch is retained only as a
-// compile-time experiment and must not become the delivery default until its
-// multi-invocation UnitFlag/Fixpipe protocol has independent device evidence.
+// Grouped stage 1 is the first point that submits more than two independent
+// MMAD/Fixpipe transactions before the AIV consumes their GM outputs.  The
+// UnitFlag path timed out there even with per-call flag envelopes, and adding
+// an external FIX_M event to that fine-grained protocol made the first grouped
+// preflight time out as well.  Default to the shared CATLASS non-UnitFlag path:
+// it owns the complete M_FIX/FIX_M L0C transaction and is the conservative
+// correctness candidate.  Flip only after a separate UnitFlag implementation
+// has clean-wheel device evidence.
+constexpr bool KDA_GROUPED_ENABLE_UNIT_FLAG = false;
+// Keep every logical GEMM independently scoped.  The persistent branch is
+// retained only as a compile-time experiment and must not become the delivery
+// default until its multi-invocation event protocol has independent evidence.
 constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = false;
 // Experimental non-A2 path: Vector builds every stage's A/B operands directly
 // in two ping-pong TSCM slots and Cube consumes them from L1.  Keep this off on
@@ -499,7 +504,11 @@ using KdaBwdGroupedArchTag = Catlass::Arch::AtlasA2;
 #endif
 using KdaBwdGroupedDispatchPolicy =
     Catlass::Gemm::MmadPingpongTlaMulti<
-        KdaBwdGroupedArchTag, true, KDA_GROUPED_USE_HF32_CUBE>;
+        KdaBwdGroupedArchTag, KDA_GROUPED_ENABLE_UNIT_FLAG,
+        KDA_GROUPED_USE_HF32_CUBE>;
+static_assert(KdaBwdGroupedDispatchPolicy::ENABLE_UNIT_FLAG ==
+                  KDA_GROUPED_ENABLE_UNIT_FLAG,
+              "ChunkKdaBwdIntra grouped UnitFlag mode must match its switch");
 static_assert(KdaBwdGroupedDispatchPolicy::USE_HF32_MODE ==
                   KDA_GROUPED_USE_HF32_CUBE,
               "ChunkKdaBwdIntra grouped Cube mode must match its A/B switch");
@@ -554,10 +563,10 @@ struct KdaBwdGroupedPartitionedBlockMmad : BaseMmad {
     static constexpr uint32_t L0C_BYTES =
         BaseMmad::L0C_TILE_SIZE * BaseMmad::L0C_STAGES;
 
-    static_assert(BaseMmad::ENABLE_UNIT_FLAG,
-                  "Grouped MMAD wrapper requires unit-flag completion");
+    static_assert(!BaseMmad::ENABLE_UNIT_FLAG,
+                  "Grouped delivery wrapper requires explicit L0C events");
     static_assert(BaseMmad::L0C_STAGES == 1,
-                  "Grouped FIX_M synchronization assumes one UnitFlag L0C stage");
+                  "Grouped event partition assumes one L0C stage");
     static_assert(!BaseMmad::HAS_BIAS,
                   "Persistent grouped MMAD does not reserve bias resources");
     static_assert(!BaseMmad::ENABLE_L1_RESIDENT,
@@ -630,25 +639,10 @@ struct KdaBwdGroupedPartitionedBlockMmad : BaseMmad {
                 this->l0CTensorList[i] =
                     resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(
                         L0C_BASE + BaseMmad::L0C_TILE_SIZE * i);
-                // The unit-flag branch of the shared constructor initializes
-                // l0C storage but not this event list; make it deterministic.
+                // Rebind both the L0C storage and its complete M_FIX/FIX_M
+                // transaction to the wrapper's deterministic partition.
                 this->l0CEventList[i] = static_cast<int32_t>(EVENT_BASE + i);
             }
-        }
-    }
-
-    CATLASS_DEVICE
-    void SyncFixpipeToM()
-    {
-        if ASCEND_IS_AIC {
-            // UnitFlag closes the fine-grained MMAD/Fixpipe transaction but
-            // does not create a reusable-L0C dependency for the next separate
-            // BlockMmad invocation.  Reuse the wrapper's deterministic L0C
-            // event to order the completed Fixpipe producer before PIPE_M.
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(
-                this->l0CEventList[0]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(
-                this->l0CEventList[0]);
         }
     }
 };
@@ -662,8 +656,8 @@ static_assert(KdaBwdGroupedPersistentLeftBase::L1_TILE_K == 32 &&
               "Persistent grouped MMAD K16/K32/K48 proof assumes K32 tiles");
 
 // The rollback scoped path intentionally keeps all three MMAD objects aliased at
-// local-memory/event base zero and brackets every use with its own flag plus
-// FIX_M-sync envelope.  Use the private wrapper there as well so unit-flag L0C
+// local-memory/event base zero and brackets every use with its own complete
+// non-UnitFlag event envelope.  Use the private wrapper there as well so L0C
 // event zero is initialized deterministically without changing the shared
 // implementation.
 using KdaBwdGroupedScopedLeft16Mmad =
@@ -1612,11 +1606,9 @@ private:
     __aicore__ inline void FinishStageMmad(BlockMmad &blockMmad)
     {
         if constexpr (MANAGE_FLAGS) {
-            // UnitFlag overlaps MMAD with the L0C->GM Fixpipe transfer.  The
-            // shared BlockMmad finalWaitFlags() only drains MTE1/M free tokens;
-            // it does not establish the FIX->M dependency needed before all
-            // scoped grouped engines reuse L0C address zero.
-            blockMmad.SyncFixpipeToM();
+            // With UnitFlag disabled, operator() publishes FIX_M after its
+            // L0C->GM copy and finalWaitFlags() consumes that token together
+            // with all L1/L0 free tokens before the aliased engine is reused.
             blockMmad.finalWaitFlags();
         }
     }
@@ -2774,9 +2766,8 @@ private:
                                           KDA_GROUPED_A_OFF,
                                           KDA_GROUPED_B_OFF_LEFT,
                                           KDA_GROUPED_C_OFF_LEFT);
-            // Keep every logical GEMM independently scoped.  FinishStageMmad
-            // also establishes FIX_M because finalWaitFlags alone does not
-            // make the shared UnitFlag L0C reusable by the next invocation.
+            // Keep every logical GEMM independently scoped; the non-UnitFlag
+            // BlockMmad transaction makes shared L0C reusable before return.
             RunOffRightPairAic<STAGE, 0>(rightMmad, slotBase);
             if constexpr (STAGE > 1) {
                 RunOffRightPairAic<STAGE, 1>(rightMmad, slotBase);

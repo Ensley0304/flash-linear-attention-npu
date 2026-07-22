@@ -660,11 +660,16 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         in validation_runner
     )
     assert "timeout --kill-after=15s 120s env" in validation_runner
+    assert "preflight_rc=${PIPESTATUS[0]}" in validation_runner
+    assert "grouped BF16 preflight timed out after 120 seconds" in validation_runner
+    assert "[PASS] grouped BF16 preflight completed" in validation_runner
     assert "CopyStageAbNzRows(" in grouped
     assert "Catlass::layout::zN" in grouped
     assert "Catlass::layout::nZ" in grouped
+    assert "constexpr bool KDA_GROUPED_ENABLE_UNIT_FLAG = false;" in grouped
     assert (
-        "KdaBwdGroupedArchTag, true, KDA_GROUPED_USE_HF32_CUBE>"
+        "KdaBwdGroupedArchTag, KDA_GROUPED_ENABLE_UNIT_FLAG,\n"
+        "        KDA_GROUPED_USE_HF32_CUBE>"
         in grouped
     )
     assert "KDA_GROUPED_FP32_REPEAT_ELEMENTS = 64" in grouped
@@ -712,16 +717,18 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "Retired k-beta storage must hold one full staged dk input" in grouped
     assert "Batched row scratch must fit in retired tail scratch" in grouped
     assert "struct KdaBwdGroupedPartitionedBlockMmad" in grouped
+    assert "static_assert(!BaseMmad::ENABLE_UNIT_FLAG" in grouped
     assert "this->l0CEventList[i] = static_cast<int32_t>(EVENT_BASE + i);" in grouped
-    fix_to_m_begin = grouped.index("void SyncFixpipeToM()")
-    fix_to_m_end = grouped.index("};", fix_to_m_begin)
-    fix_to_m = grouped[fix_to_m_begin:fix_to_m_end]
-    fix_set = "AscendC::SetFlag<AscendC::HardEvent::FIX_M>("
-    fix_wait = "AscendC::WaitFlag<AscendC::HardEvent::FIX_M>("
-    assert fix_set in fix_to_m
-    assert fix_wait in fix_to_m
-    assert fix_to_m.index(fix_set) < fix_to_m.index(fix_wait)
-    assert fix_to_m.count("this->l0CEventList[0]") == 2
+    assert "void SyncFixpipeToM()" not in grouped
+    copy_out_begin = multi_mmad.index("// copy block out")
+    copy_out_end = multi_mmad.index(
+        "/// Perform a block-scoped matrix multiply", copy_out_begin
+    )
+    copy_out = multi_mmad[copy_out_begin:copy_out_end]
+    assert "if constexpr (!ENABLE_UNIT_FLAG)" in copy_out
+    assert "AscendC::SetFlag<AscendC::HardEvent::M_FIX>(" in copy_out
+    assert "AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(" in copy_out
+    assert "AscendC::SetFlag<AscendC::HardEvent::FIX_M>(" in copy_out
     finish_mmad_begin = grouped.index(
         "__aicore__ inline void FinishStageMmad"
     )
@@ -730,10 +737,8 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     )
     finish_mmad = grouped[finish_mmad_begin:finish_mmad_end]
     assert "if constexpr (MANAGE_FLAGS)" in finish_mmad
-    assert finish_mmad.count("blockMmad.SyncFixpipeToM();") == 1
-    assert finish_mmad.index("blockMmad.SyncFixpipeToM();") < (
-        finish_mmad.index("blockMmad.finalWaitFlags();")
-    )
+    assert "SyncFixpipeToM" not in finish_mmad
+    assert finish_mmad.count("blockMmad.finalWaitFlags();") == 1
     assert grouped.count(
         "RunStageMmad(blockMmad, blockA, blockB, blockC, shape);"
     ) == 6

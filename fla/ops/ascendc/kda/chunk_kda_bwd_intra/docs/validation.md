@@ -126,10 +126,11 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode hf32 --stage-io gm
 
-# 默认 scoped 源码现在会在每个逻辑 GEMM 后显式建立 FIX_M 依赖，再复用共享 L0C。
-# 先用 clean wheel 跑 grouped BF16 单测确认可退出，再进入 37 项精度和性能验收；
-# 逐调用 flag 包络但无 FIX drain 的旧结果仍为 timeout，不能视为精度证据。
-# runner 的 test/all 模式会先执行 120 秒 grouped BF16 预检，失败时不会继续等待 directed/full37。
+# 默认 scoped 源码现在关闭 UnitFlag，由公共 BlockMmad non-UnitFlag 分支为每个逻辑 GEMM
+# 建立完整的 M_FIX/FIX_M 事务。先用 clean wheel 跑 grouped BF16 单测确认可退出，再进入
+# 37 项精度和性能验收；逐调用 UnitFlag 包络和外加 FIX_M 的旧结果均为 timeout。
+# runner 的 test/all 模式会先执行 120 秒 grouped BF16 预检；超时会显式打印 exit=124/137，
+# 并停止进入 directed/full37，避免只返回 shell prompt 而无法判断退出原因。
 
 # 仅构建 persistent MMAD 实验；当前协议已知 timeout，不用于精度或性能验收。
 bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
