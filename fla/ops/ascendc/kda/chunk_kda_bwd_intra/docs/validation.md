@@ -1,6 +1,6 @@
 # ChunkKdaBwdIntra 验证说明
 
-> 2026-07-22 stability rollback: the scoped-event plus disjoint-C artifact timed out after 120 seconds as well. Default tiling now disables key 15/23 and routes the BF16 target shape to the previously validated AIV key 7. `--quick-build` compiles only key 7 and test mode stops after the single target-shape preflight; an unfiltered build without that option remains mandatory before full37 or profiling.
+> 2026-07-22 stability rollback: the scoped-event plus disjoint-C artifact timed out after 120 seconds as well. Default tiling now disables key 15/23 and routes the BF16 target shape to the previously validated AIV key 7. The key-7-only `--quick-build` target preflight passed on physical device 3 (`1 passed in 10.01s`). For the next correctness gate, `--stable-build` compiles the only runtime-reachable keys (`0,2,5,7`) once and permits full37 while skipping both mixed-key probes. A final unfiltered audit build remains mandatory before delivery.
 
 > 2026-07-22 correction: DAV_2201 validation accepts only the GM stage bridge. The retained `--stage-io tscm` source experiment is rejected for `ascend910b`, because A2 emulates AIV `UB -> TSCM` through GM/Matmul KFC and this direct CATLASS kernel has no KFC client. Stage I/O remains part of the wheel identity so an unsupported artifact cannot be mistaken for the GM baseline. The required gate is still a clean CANN 9.1 build, complete 37-case NPU suite, repeated launches, and same-card msprof.
 

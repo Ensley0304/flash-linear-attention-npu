@@ -15,6 +15,7 @@ PHYSICAL_DEVICE="2"
 RUN_BASE="/var/tmp"
 JOBS="8"
 QUICK_BUILD=false
+STABLE_BUILD=false
 FULL_METRICS=false
 FINAL_GATE=false
 PAIR_GATES_MODE="source"
@@ -63,6 +64,8 @@ Options:
   --jobs N                       build.sh parallelism; default: 8
   --quick-build                  Build only delivery key 7 and stop test mode
                                  after the single target-shape preflight
+  --stable-build                 Build stable runtime keys 0,2,5,7 once, skip
+                                 key 15/23 probes, and permit the full37 test
   --pair-gates MODE              source|factor|direct; build/all only
   --shared-setup MODE            source|overlap|prologue; build/all only
   --stage-epilogue MODE          source|overlap|tail; build/all only
@@ -86,6 +89,10 @@ Options:
 Examples:
   bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
     --mode build --quick-build \
+    --cann-env /path/to/ascend-toolkit/set_env.sh
+
+  bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
+    --mode build --stable-build \
     --cann-env /path/to/ascend-toolkit/set_env.sh
 
   bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
@@ -120,6 +127,7 @@ while [[ $# -gt 0 ]]; do
         --run-base) require_option_value "$@"; RUN_BASE="$2"; shift 2 ;;
         --jobs) require_option_value "$@"; JOBS="$2"; shift 2 ;;
         --quick-build) QUICK_BUILD=true; shift ;;
+        --stable-build) STABLE_BUILD=true; shift ;;
         --pair-gates) require_option_value "$@"; PAIR_GATES_MODE="$2"; shift 2 ;;
         --shared-setup) require_option_value "$@"; SHARED_SETUP_MODE="$2"; shift 2 ;;
         --stage-epilogue) require_option_value "$@"; STAGE_EPILOGUE_MODE="$2"; shift 2 ;;
@@ -146,6 +154,10 @@ case "$MODE" in
 esac
 if [[ "$QUICK_BUILD" == true && ( "$MODE" == profile || "$MODE" == all ) ]]; then
     echo "[FAIL] --quick-build supports build mode only; run test with its state.env" >&2
+    exit 2
+fi
+if [[ "$QUICK_BUILD" == true && "$STABLE_BUILD" == true ]]; then
+    echo "[FAIL] --quick-build and --stable-build are mutually exclusive" >&2
     exit 2
 fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "[FAIL] --jobs must be positive" >&2; exit 2; }
@@ -400,21 +412,30 @@ load_state() {
         echo "[FAIL] invalid AIC diagnostic value in state: $BUILD_AIC_DIAGNOSTIC" >&2
         exit 2
     esac
-    case "$BUILD_VALIDATION_MODE" in quick|audit) ;; *)
+    case "$BUILD_VALIDATION_MODE" in quick|stable|audit) ;; *)
         echo "[FAIL] invalid validation mode in state: $BUILD_VALIDATION_MODE" >&2
         exit 2
     esac
-    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
-        [[ "$BUILD_TILING_KEYS" == 7 ]] || {
-            echo "[FAIL] quick state must contain only tiling key 7" >&2
-            exit 2
-        }
-    else
-        [[ "$BUILD_TILING_KEYS" == all ]] || {
-            echo "[FAIL] audit state must contain the unfiltered key set" >&2
-            exit 2
-        }
-    fi
+    case "$BUILD_VALIDATION_MODE" in
+        quick)
+            [[ "$BUILD_TILING_KEYS" == 7 ]] || {
+                echo "[FAIL] quick state must contain only tiling key 7" >&2
+                exit 2
+            }
+            ;;
+        stable)
+            [[ "$BUILD_TILING_KEYS" == 0,2,5,7 ]] || {
+                echo "[FAIL] stable state must contain runtime keys 0,2,5,7" >&2
+                exit 2
+            }
+            ;;
+        audit)
+            [[ "$BUILD_TILING_KEYS" == all ]] || {
+                echo "[FAIL] audit state must contain the unfiltered key set" >&2
+                exit 2
+            }
+            ;;
+    esac
     if [[ "$BUILD_STAGE_IO" == tscm && "$BUILD_SOC" == ascend910b ]]; then
         echo "[FAIL] refusing unsupported A2 TSCM stage-I/O artifact from state" >&2
         echo "       rebuild with --stage-io gm" >&2
@@ -709,6 +730,42 @@ PY
         -path '*chunk_kda_bwd_intra*' -name '*.o' -print | sort)
     [[ ${#objects[@]} -gt 0 ]] || { echo "[FAIL] key$key has no KDA object" >&2; exit 1; }
     sha256sum "${objects[@]}" | tee "$RUN_ROOT/logs/key${key}_objects.sha256"
+}
+
+verify_filtered_tiling_keys() {
+    local src=$1 expected=$2
+    BUILD_SOURCE="$src" BUILD_TILING_KEYS="$expected" python3 - <<'PY'
+import os
+import pathlib
+import re
+
+root = pathlib.Path(os.environ["BUILD_SOURCE"]) / "build"
+expected = os.environ["BUILD_TILING_KEYS"]
+option_pattern = re.compile(
+    r"--tiling[_-]key(?:=|\s+)(?:\"|')?" + re.escape(expected)
+    + r"(?:\"|')?(?=$|[\s)\\])"
+)
+cache_pattern = re.compile(
+    r"^TILING_KEY(?::[^=]*)?=" + re.escape(expected) + r"$", re.MULTILINE
+)
+matches = []
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    try:
+        if path.stat().st_size > 8 * 1024 * 1024:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        continue
+    if option_pattern.search(text) or cache_pattern.search(text):
+        matches.append(path)
+if not matches:
+    raise SystemExit(f"filtered tiling keys were not recorded in build graph: {expected}")
+print("[PASS] generated build tiling keys:", expected)
+for path in matches[:8]:
+    print("  ", path)
+PY
 }
 
 read_bool_constant() {
@@ -1006,6 +1063,9 @@ run_build() {
     if [[ "$QUICK_BUILD" == true ]]; then
         BUILD_VALIDATION_MODE="quick"
         BUILD_TILING_KEYS="7"
+    elif [[ "$STABLE_BUILD" == true ]]; then
+        BUILD_VALIDATION_MODE="stable"
+        BUILD_TILING_KEYS="0,2,5,7"
     else
         BUILD_VALIDATION_MODE="audit"
         BUILD_TILING_KEYS="all"
@@ -1260,21 +1320,24 @@ PY
         }
         probe_key 15 "$probe15"
         echo "===== clean, unfiltered single-op wheel ====="
+    elif [[ "$BUILD_VALIDATION_MODE" == stable ]]; then
+        echo "===== fast full37 compile: stable runtime keys 0,2,5,7 ====="
     else
         echo "===== quick compile: delivery key 7 only ====="
     fi
     cd "$WHEEL_SRC"
     unset TILING_KEY
     export FLA_NPU_OPS=chunk_kda_bwd_intra
-    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+    if [[ "$BUILD_VALIDATION_MODE" != audit ]]; then
         bash build.sh --soc="$SOC" --pkg --vendor_name=fla_npu \
-            --ops=chunk_kda_bwd_intra --tiling_key=7 "-j$JOBS" \
-            2>&1 | tee "$RUN_ROOT/logs/key7_quick_compile.log"
+            --ops=chunk_kda_bwd_intra --tiling_key="$BUILD_TILING_KEYS" "-j$JOBS" \
+            2>&1 | tee "$RUN_ROOT/logs/${BUILD_VALIDATION_MODE}_compile.log"
+        verify_filtered_tiling_keys "$WHEEL_SRC" "$BUILD_TILING_KEYS"
         export FLA_NPU_SKIP_RUN_BUILD=1
     fi
     python3 -m pip wheel -v --no-build-isolation --no-deps . \
         -w "$RUN_ROOT/artifacts" 2>&1 | tee "$RUN_ROOT/logs/wheel_build.log"
-    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+    if [[ "$BUILD_VALIDATION_MODE" != audit ]]; then
         unset FLA_NPU_SKIP_RUN_BUILD
     else
         grep -Fq -- '--ops=chunk_kda_bwd_intra' "$RUN_ROOT/logs/wheel_build.log"
@@ -1335,9 +1398,9 @@ PY
     printf '%s\n' "$WHEEL_KDA_DIGEST" >"$RUN_ROOT/logs/wheel_kda_object.digest"
 
     verify_clean_catlass final-wheel
-    if [[ "$BUILD_VALIDATION_MODE" == quick ]]; then
+    if [[ "$BUILD_VALIDATION_MODE" != audit ]]; then
         BUILD_CATLASS_COMMIT="$(git -C "$shared_3p/catlass" rev-parse HEAD 2>/dev/null)" || {
-            echo "[FAIL] quick key7 build did not produce a verifiable CATLASS checkout" >&2
+            echo "[FAIL] final wheel build did not produce a verifiable CATLASS checkout" >&2
             exit 1
         }
         BUILD_CATLASS_TREE="$(git -C "$shared_3p/catlass" rev-parse 'HEAD^{tree}')"
@@ -1627,8 +1690,8 @@ PY
 
 run_profile() {
     [[ -n "${RUN_ROOT:-}" ]] || load_state
-    [[ "$BUILD_VALIDATION_MODE" == audit ]] || {
-        echo "[FAIL] profiling requires an audit/unfiltered wheel, not quick key7" >&2
+    [[ "$BUILD_VALIDATION_MODE" != quick ]] || {
+        echo "[FAIL] profiling requires a full37-capable wheel, not quick key7" >&2
         exit 1
     }
     [[ -f "$RUN_ROOT/full37.pass" ]] || {

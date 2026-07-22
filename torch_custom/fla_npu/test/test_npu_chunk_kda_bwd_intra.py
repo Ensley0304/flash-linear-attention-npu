@@ -370,7 +370,10 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "generated_wheel_tiling_filter=none" in validation_runner
     assert "grep -RIEq -- '--tiling_key='" not in validation_runner
     assert "--quick-build" in validation_runner
+    assert "--stable-build" in validation_runner
     assert 'BUILD_TILING_KEYS="7"' in validation_runner
+    assert 'BUILD_TILING_KEYS="0,2,5,7"' in validation_runner
+    assert "verify_filtered_tiling_keys" in validation_runner
 
     # Exercise the manifest parser and HF32 evidence mapping, rather than only
     # checking that their source tokens exist.  Keep this inside the existing
