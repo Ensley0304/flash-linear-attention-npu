@@ -407,6 +407,54 @@ verify_clean_catlass() {
     }
 }
 
+verify_unfiltered_wheel_build() {
+    local build_dir=$1
+    local audit_log=$2
+    local generated_file
+    local found_filter=false
+    local audited_files=0
+
+    : >"$audit_log"
+    while IFS= read -r -d '' generated_file; do
+        audited_files=$((audited_files + 1))
+        printf 'audited_file=%s\n' "$generated_file" >>"$audit_log"
+        case "$(basename "$generated_file")" in
+            custom_compile_options.ini)
+                if grep -nE -- '--tiling[_-]key([=[:space:]]|$)' \
+                    "$generated_file" >>"$audit_log"; then
+                    found_filter=true
+                fi
+                ;;
+            custom_tiling_keys.ini)
+                if grep -n '[^[:space:]]' "$generated_file" >>"$audit_log"; then
+                    found_filter=true
+                fi
+                ;;
+            CMakeCache.txt)
+                if grep -nE -- '^TILING_KEY(:[^=]*)?=[^[:space:]].*$' \
+                    "$generated_file" >>"$audit_log"; then
+                    found_filter=true
+                fi
+                ;;
+        esac
+    done < <(find "$build_dir" -type f \
+        \( -name custom_compile_options.ini -o \
+           -name custom_tiling_keys.ini -o \
+           -name CMakeCache.txt \) -print0 2>/dev/null)
+
+    if [[ $audited_files -eq 0 ]]; then
+        echo "[FAIL] no generated wheel build configuration was available to audit" >&2
+        return 1
+    fi
+    if $found_filter; then
+        echo "[FAIL] generated wheel build configuration contains a tiling-key filter" >&2
+        cat "$audit_log" >&2
+        return 1
+    fi
+    echo "generated_wheel_tiling_filter=none audited_files=$audited_files" | \
+        tee -a "$audit_log"
+}
+
 verify_runtime_identity() {
     [[ "$CURRENT_CANN_ENV" == "$BUILD_CANN_ENV" ]] || {
         echo "[FAIL] CANN env differs from build: $CURRENT_CANN_ENV != $BUILD_CANN_ENV" >&2
@@ -1047,10 +1095,8 @@ PY
         echo "[FAIL] validation wheel accidentally inherited a tiling-key filter" >&2
         exit 1
     fi
-    if grep -RIEq -- '--tiling_key=' "$WHEEL_SRC/build" 2>/dev/null; then
-        echo "[FAIL] generated wheel build commands contain a tiling-key filter" >&2
-        exit 1
-    fi
+    verify_unfiltered_wheel_build "$WHEEL_SRC/build" \
+        "$RUN_ROOT/logs/wheel_tiling_filter_audit.log"
     grep -Fq 'TILING_KEY_IS(15)' \
         "$WHEEL_SRC/fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/chunk_kda_bwd_intra.cpp"
     grep -Fq 'TILING_KEY_IS(23)' \

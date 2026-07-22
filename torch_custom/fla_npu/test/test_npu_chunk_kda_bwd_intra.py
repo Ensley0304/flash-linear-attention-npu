@@ -286,6 +286,9 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     profile_comparator = (
         ROOT / "scripts" / "compare_chunk_kda_bwd_intra_profiles.py"
     ).read_text(encoding="utf-8")
+    validation_runner = (
+        ROOT / "scripts" / "run_chunk_kda_bwd_intra_grouped_validation.sh"
+    ).read_text(encoding="utf-8")
 
     assert "constexpr bool ENABLE_GROUPED_SAFE = true;" in host
     assert "constexpr uint64_t GROUPED_TILING_KEY = 23;" in host
@@ -354,6 +357,12 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "IDENTITY_INVARIANTS" in profile_comparator
     assert "MANIFEST_INVARIANTS" in profile_comparator
     assert "def _verify_hash_manifest(" in profile_comparator
+    assert "verify_unfiltered_wheel_build()" in validation_runner
+    assert "custom_compile_options.ini" in validation_runner
+    assert "custom_tiling_keys.ini" in validation_runner
+    assert "CMakeCache.txt" in validation_runner
+    assert "generated_wheel_tiling_filter=none" in validation_runner
+    assert "grep -RIEq -- '--tiling_key='" not in validation_runner
 
     # Exercise the manifest parser and HF32 evidence mapping, rather than only
     # checking that their source tokens exist.  Keep this inside the existing
