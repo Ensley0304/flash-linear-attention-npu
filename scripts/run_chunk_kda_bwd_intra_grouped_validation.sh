@@ -72,7 +72,8 @@ Options:
   --stage-a MODE                 source|packed|split; build/all only
   --cube-mode MODE               source|ieee|hf32; build/all only
   --stage-io MODE                source|tscm|gm; build/all only. tscm is rejected on ascend910b
-  --aic-diagnostic MODE          source|full|handshake|stage0-right|stage0-left;
+  --aic-diagnostic MODE          source|full|handshake|stage0-right|stage0-left|
+                                 stage0-both|through-stage1|through-stage2;
                                  build only. Partial modes are timeout diagnostics,
                                  never precision/performance candidates
   --full-metrics                 Collect all seven msprof metric groups + sample mode
@@ -192,8 +193,8 @@ case "$STAGE_IO_MODE" in
     *) echo "[FAIL] --stage-io must be source, tscm or gm" >&2; exit 2 ;;
 esac
 case "$AIC_DIAGNOSTIC_MODE" in
-    source|full|handshake|stage0-right|stage0-left) ;;
-    *) echo "[FAIL] --aic-diagnostic must be source, full, handshake, stage0-right or stage0-left" >&2; exit 2 ;;
+    source|full|handshake|stage0-right|stage0-left|stage0-both|through-stage1|through-stage2) ;;
+    *) echo "[FAIL] invalid --aic-diagnostic mode: $AIC_DIAGNOSTIC_MODE" >&2; exit 2 ;;
 esac
 if [[ "$MODE" == test || "$MODE" == profile ]]; then
     [[ "$PAIR_GATES_MODE" == source && "$SHARED_SETUP_MODE" == source && \
@@ -386,7 +387,7 @@ load_state() {
         echo "[FAIL] invalid stage-I/O value in state: $BUILD_STAGE_IO" >&2
         exit 2
     esac
-    case "$BUILD_AIC_DIAGNOSTIC" in full|handshake|stage0-right|stage0-left) ;; *)
+    case "$BUILD_AIC_DIAGNOSTIC" in full|handshake|stage0-right|stage0-left|stage0-both|through-stage1|through-stage2) ;; *)
         echo "[FAIL] invalid AIC diagnostic value in state: $BUILD_AIC_DIAGNOSTIC" >&2
         exit 2
     esac
@@ -861,6 +862,9 @@ resolve_build_variant() {
         handshake) aic_diagnostic_value=1 ;;
         stage0-right) aic_diagnostic_value=2 ;;
         stage0-left) aic_diagnostic_value=3 ;;
+        stage0-both) aic_diagnostic_value=4 ;;
+        through-stage1) aic_diagnostic_value=5 ;;
+        through-stage2) aic_diagnostic_value=6 ;;
     esac
     [[ "$factor_value" == true ]] && BUILD_PAIR_GATES=factor || BUILD_PAIR_GATES=direct
     [[ "$overlap_value" == true ]] && BUILD_SHARED_SETUP=overlap || BUILD_SHARED_SETUP=prologue
@@ -879,6 +883,9 @@ resolve_build_variant() {
         1) BUILD_AIC_DIAGNOSTIC=handshake ;;
         2) BUILD_AIC_DIAGNOSTIC=stage0-right ;;
         3) BUILD_AIC_DIAGNOSTIC=stage0-left ;;
+        4) BUILD_AIC_DIAGNOSTIC=stage0-both ;;
+        5) BUILD_AIC_DIAGNOSTIC=through-stage1 ;;
+        6) BUILD_AIC_DIAGNOSTIC=through-stage2 ;;
         *) echo "[FAIL] invalid KDA_GROUPED_AIC_DIAGNOSTIC_MODE=$aic_diagnostic_value" >&2; exit 2 ;;
     esac
     if [[ "$BUILD_STAGE_IO" == tscm && "$SOC" == ascend910b ]]; then
@@ -922,6 +929,9 @@ apply_build_variant() {
         handshake) aic_diagnostic_value=1 ;;
         stage0-right) aic_diagnostic_value=2 ;;
         stage0-left) aic_diagnostic_value=3 ;;
+        stage0-both) aic_diagnostic_value=4 ;;
+        through-stage1) aic_diagnostic_value=5 ;;
+        through-stage2) aic_diagnostic_value=6 ;;
         *) echo "[FAIL] invalid build AIC diagnostic mode: $BUILD_AIC_DIAGNOSTIC" >&2; exit 2 ;;
     esac
     rewrite_bool_constant "$header" KDA_GROUPED_FACTOR_PAIR_GATES "$factor_value"

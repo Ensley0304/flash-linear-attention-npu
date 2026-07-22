@@ -68,8 +68,11 @@ constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_FULL = 0;
 constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_HANDSHAKE = 1;
 constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_RIGHT = 2;
 constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_LEFT = 3;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_BOTH = 4;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE1 = 5;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE2 = 6;
 static_assert(KDA_GROUPED_AIC_DIAGNOSTIC_MODE <=
-                  KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_LEFT,
+                  KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE2,
               "Unknown grouped AIC diagnostic mode");
 // Pack the off-diagonal prefix and causal diagonal into one 32x(prefix) A
 // slab.  Both GEMMs keep their original references and arithmetic; only two
@@ -898,26 +901,33 @@ public:
                  task += usedCoreNum_) {
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
-                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_FULL ||
+                              KDA_GROUPED_AIC_DIAGNOSTIC_MODE >=
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_BOTH) {
                     ComputeDiagonalPersistentAic(left32, right16, 0);
                 } else if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
                                      KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_RIGHT) {
                     ComputeDiagonalRightAic<false>(right16, 0);
-                } else {
+                } else if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                                     KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_LEFT) {
                     ComputeDiagonalLeftAic<false>(left32, 0);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
-                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_FULL ||
+                              KDA_GROUPED_AIC_DIAGNOSTIC_MODE >=
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE1) {
                     ComputeGroupedStagePersistentAic<1>(left32, right16, 1);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
-                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_FULL ||
+                              KDA_GROUPED_AIC_DIAGNOSTIC_MODE >=
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE2) {
                     ComputeGroupedStagePersistentAic<2>(left32, right16, 0);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
@@ -943,26 +953,33 @@ public:
             for (uint64_t task = logicalCoreIdx_; task < taskCount; task += usedCoreNum_) {
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
-                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_FULL ||
+                              KDA_GROUPED_AIC_DIAGNOSTIC_MODE >=
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_BOTH) {
                     ComputeDiagonalAic(left16, right16, 0);
                 } else if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
                                      KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_RIGHT) {
                     ComputeDiagonalRightAic<true>(right16, 0);
-                } else {
+                } else if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                                     KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_LEFT) {
                     ComputeDiagonalLeftAic<true>(left16, 0);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
-                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_FULL ||
+                              KDA_GROUPED_AIC_DIAGNOSTIC_MODE >=
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE1) {
                     ComputeGroupedStageAic<1>(left16, right16, left16, 1);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
-                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_FULL ||
+                              KDA_GROUPED_AIC_DIAGNOSTIC_MODE >=
+                                  KDA_GROUPED_AIC_DIAGNOSTIC_THROUGH_STAGE2) {
                     ComputeGroupedStageAic<2>(left32, right16, left16, 0);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);

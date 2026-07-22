@@ -560,7 +560,8 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert expected_cube_mode in {"ieee", "hf32"}
     assert expected_stage_io in {"tscm", "gm"}
     assert expected_aic_diagnostic in {
-        "full", "handshake", "stage0-right", "stage0-left"
+        "full", "handshake", "stage0-right", "stage0-left",
+        "stage0-both", "through-stage1", "through-stage2",
     }
     factor_literal = "true" if expected_pair_gates == "factor" else "false"
     overlap_literal = "true" if expected_shared_setup == "overlap" else "false"
@@ -579,6 +580,9 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         "handshake": "1",
         "stage0-right": "2",
         "stage0-left": "3",
+        "stage0-both": "4",
+        "through-stage1": "5",
+        "through-stage2": "6",
     }[expected_aic_diagnostic]
     assert (
         f"constexpr bool KDA_GROUPED_FACTOR_PAIR_GATES = {factor_literal};"
