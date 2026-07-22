@@ -2,6 +2,8 @@
 
 > 2026-07-22 correction: DAV_2201 validation accepts only the GM stage bridge. The retained `--stage-io tscm` source experiment is rejected for `ascend910b`, because A2 emulates AIV `UB -> TSCM` through GM/Matmul KFC and this direct CATLASS kernel has no KFC client. Stage I/O remains part of the wheel identity so an unsupported artifact cannot be mistaken for the GM baseline. The required gate is still a clean CANN 9.1 build, complete 37-case NPU suite, repeated launches, and same-card msprof.
 
+> 2026-07-22 runtime diagnosis: key 23 clean compilation and wheel packaging pass, but the first grouped BF16 runtime case remains blocked for persistent MMAD, scoped MMAD, and the fully conservative grouped variant; the latter was killed after the timeout with status 137. Therefore grouped precision and profiling are not accepted. `--aic-diagnostic handshake|stage0-right|stage0-left` creates build-only, explicitly labelled clean wheels that isolate the four-stage cross-core handshake and the first right/left Cube calls. Partial-mode numerical output is intentionally invalid: only return-vs-timeout is evidence, and the runner refuses to use such state for normal test/profile modes.
+
 ## 当前状态
 
 本地开发机没有 CANN、PyTorch/NPU 运行时和昇腾设备，因此当前只能完成源码级检查；不能据此声明 AscendC 已编译、上板精度已通过或性能已达标。

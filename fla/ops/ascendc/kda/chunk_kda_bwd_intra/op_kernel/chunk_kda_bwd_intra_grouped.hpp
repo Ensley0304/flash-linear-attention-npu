@@ -57,6 +57,20 @@ constexpr bool KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER = false;
 static_assert(!KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER,
               "DAV_2201 must use the explicit two-slot GM stage bridge");
 #endif
+// Clean-wheel deadlock isolation only.  Mode 0 is the production path;
+// validation builds may rewrite this literal to distinguish the outer
+// AIV/AIC handshake from the first right/left Cube call.  Partial modes still
+// execute the complete AIV producer/consumer loop, so their numerical outputs
+// are intentionally invalid and must never be used for precision/performance
+// acceptance.
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_MODE = 0;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_FULL = 0;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_HANDSHAKE = 1;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_RIGHT = 2;
+constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_LEFT = 3;
+static_assert(KDA_GROUPED_AIC_DIAGNOSTIC_MODE <=
+                  KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_LEFT,
+              "Unknown grouped AIC diagnostic mode");
 // Pack the off-diagonal prefix and causal diagonal into one 32x(prefix) A
 // slab.  Both GEMMs keep their original references and arithmetic; only two
 // redundant AIV MTE3 row-copy submissions per nonzero stage are removed.
@@ -839,6 +853,27 @@ public:
 
     __aicore__ inline void ProcessAic()
     {
+        if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                      KDA_GROUPED_AIC_DIAGNOSTIC_HANDSHAKE) {
+            // Deliberately omit Resource/BlockMmad construction as well as
+            // every Cube call.  A non-timeout result proves that both AIVs
+            // can prepare/consume all four stages and that the forward and
+            // reverse cross-core flag counts close at the task boundary.
+            const uint64_t taskCount = batch_ * chunks_ * heads_;
+            for (uint64_t task = logicalCoreIdx_; task < taskCount;
+                 task += usedCoreNum_) {
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
+                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
+                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
+                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
+                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
+            }
+            return;
+        }
+
         Catlass::Arch::Resource<KdaBwdGroupedArchTag> resource;
         if constexpr (KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER) {
             // TPipe allocates block-group TSCM from the top of L1.  The AIC
@@ -862,21 +897,38 @@ public:
             for (uint64_t task = logicalCoreIdx_; task < taskCount;
                  task += usedCoreNum_) {
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-                ComputeDiagonalPersistentAic(left32, right16, 0);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeDiagonalPersistentAic(left32, right16, 0);
+                } else if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                                     KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_RIGHT) {
+                    ComputeDiagonalRightAic<false>(right16, 0);
+                } else {
+                    ComputeDiagonalLeftAic<false>(left32, 0);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-                ComputeGroupedStagePersistentAic<1>(left32, right16, 1);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeGroupedStagePersistentAic<1>(left32, right16, 1);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-                ComputeGroupedStagePersistentAic<2>(left32, right16, 0);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeGroupedStagePersistentAic<2>(left32, right16, 0);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
                 // The left K32 engine still executes the 48-wide reduction as
                 // K32 then K16, preserving the cancellation-sensitive order.
-                ComputeGroupedStagePersistentAic<3>(left32, right16, 1);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeGroupedStagePersistentAic<3>(left32, right16, 1);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
             }
             // Unit-flag Fixpipe completion is carried by each PIPE_FIX done
@@ -890,15 +942,29 @@ public:
             const uint64_t taskCount = batch_ * chunks_ * heads_;
             for (uint64_t task = logicalCoreIdx_; task < taskCount; task += usedCoreNum_) {
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-                ComputeDiagonalAic(left16, right16, 0);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeDiagonalAic(left16, right16, 0);
+                } else if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                                     KDA_GROUPED_AIC_DIAGNOSTIC_STAGE0_RIGHT) {
+                    ComputeDiagonalRightAic<true>(right16, 0);
+                } else {
+                    ComputeDiagonalLeftAic<true>(left16, 0);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-                ComputeGroupedStageAic<1>(left16, right16, left16, 1);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeGroupedStageAic<1>(left16, right16, left16, 1);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-                ComputeGroupedStageAic<2>(left32, right16, left16, 0);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeGroupedStageAic<2>(left32, right16, left16, 0);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
 
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
@@ -906,7 +972,10 @@ public:
                 // 16-wide tail.  Besides reusing the stage-2 BlockMmad, this
                 // preserves the upstream pair order for cancellation-sensitive
                 // inputs: early blocks 0/1 reduce before early block 2 is added.
-                ComputeGroupedStageAic<3>(left32, right16, left16, 1);
+                if constexpr (KDA_GROUPED_AIC_DIAGNOSTIC_MODE ==
+                              KDA_GROUPED_AIC_DIAGNOSTIC_FULL) {
+                    ComputeGroupedStageAic<3>(left32, right16, left16, 1);
+                }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
             }
         }
@@ -2602,23 +2671,41 @@ private:
         }
     }
 
+    template <bool MANAGE_FLAGS, typename RightMmad>
+    __aicore__ inline void ComputeDiagonalRightAic(RightMmad &rightMmad,
+                                                    uint32_t slot)
+    {
+        const uint64_t slotBase = SlotBase(slot);
+        if constexpr (KDA_GROUPED_PACK_STAGE_A) {
+            RunPackedDiagRightAic<0, MANAGE_FLAGS>(rightMmad, slotBase);
+        } else {
+            RunColumnMajorAic<16, 32, MANAGE_FLAGS>(
+                rightMmad, slotBase, KDA_GROUPED_A_DIAG,
+                KDA_GROUPED_B_DIAG_RIGHT, KDA_GROUPED_C_DIAG_RIGHT);
+        }
+    }
+
+    template <bool MANAGE_FLAGS, typename LeftMmad>
+    __aicore__ inline void ComputeDiagonalLeftAic(LeftMmad &leftMmad,
+                                                   uint32_t slot)
+    {
+        const uint64_t slotBase = SlotBase(slot);
+        if constexpr (KDA_GROUPED_PACK_STAGE_A) {
+            RunPackedDiagLeftAic<0, MANAGE_FLAGS>(leftMmad, slotBase);
+        } else {
+            RunRowMajorAic<32, 16, MANAGE_FLAGS>(
+                leftMmad, slotBase, KDA_GROUPED_A_DIAG,
+                KDA_GROUPED_B_DIAG_LEFT, KDA_GROUPED_C_DIAG_LEFT);
+        }
+    }
+
     template <typename LeftMmad, typename RightMmad>
     __aicore__ inline void ComputeDiagonalAic(LeftMmad &leftMmad,
                                                RightMmad &rightMmad,
                                                uint32_t slot)
     {
-        const uint64_t slotBase = SlotBase(slot);
-        if constexpr (KDA_GROUPED_PACK_STAGE_A) {
-            RunPackedDiagRightAic<0>(rightMmad, slotBase);
-            RunPackedDiagLeftAic<0>(leftMmad, slotBase);
-        } else {
-            RunColumnMajorAic<16, 32>(rightMmad, slotBase, KDA_GROUPED_A_DIAG,
-                                      KDA_GROUPED_B_DIAG_RIGHT,
-                                      KDA_GROUPED_C_DIAG_RIGHT);
-            RunRowMajorAic<32, 16>(leftMmad, slotBase, KDA_GROUPED_A_DIAG,
-                                   KDA_GROUPED_B_DIAG_LEFT,
-                                   KDA_GROUPED_C_DIAG_LEFT);
-        }
+        ComputeDiagonalRightAic<true>(rightMmad, slot);
+        ComputeDiagonalLeftAic<true>(leftMmad, slot);
     }
 
     template <uint32_t STAGE, typename OffLeftMmad, typename RightMmad,
@@ -2676,18 +2763,8 @@ private:
     __aicore__ inline void ComputeDiagonalPersistentAic(
         LeftMmad &leftMmad, RightMmad &rightMmad, uint32_t slot)
     {
-        const uint64_t slotBase = SlotBase(slot);
-        if constexpr (KDA_GROUPED_PACK_STAGE_A) {
-            RunPackedDiagRightAic<0, false>(rightMmad, slotBase);
-            RunPackedDiagLeftAic<0, false>(leftMmad, slotBase);
-        } else {
-            RunColumnMajorAic<16, 32, false>(
-                rightMmad, slotBase, KDA_GROUPED_A_DIAG,
-                KDA_GROUPED_B_DIAG_RIGHT, KDA_GROUPED_C_DIAG_RIGHT);
-            RunRowMajorAic<32, 16, false>(
-                leftMmad, slotBase, KDA_GROUPED_A_DIAG,
-                KDA_GROUPED_B_DIAG_LEFT, KDA_GROUPED_C_DIAG_LEFT);
-        }
+        ComputeDiagonalRightAic<false>(rightMmad, slot);
+        ComputeDiagonalLeftAic<false>(leftMmad, slot);
     }
 
     template <uint32_t STAGE, typename LeftMmad, typename RightMmad>

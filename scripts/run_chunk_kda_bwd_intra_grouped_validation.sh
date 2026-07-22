@@ -28,6 +28,7 @@ DB_REDUCE_MODE="source"
 STAGE_A_MODE="source"
 CUBE_MODE="source"
 STAGE_IO_MODE="source"
+AIC_DIAGNOSTIC_MODE="source"
 EXPECTED_CATLASS_COMMIT="41bf90da655bba3c66d0acd7e00abe33960ecfd6"
 VALIDATION_SOURCES=(
     fla/ops/ascendc/common/kernel_utils/block/block_mmad_pingpong_tla_multi.hpp
@@ -71,6 +72,9 @@ Options:
   --stage-a MODE                 source|packed|split; build/all only
   --cube-mode MODE               source|ieee|hf32; build/all only
   --stage-io MODE                source|tscm|gm; build/all only. tscm is rejected on ascend910b
+  --aic-diagnostic MODE          source|full|handshake|stage0-right|stage0-left;
+                                 build only. Partial modes are timeout diagnostics,
+                                 never precision/performance candidates
   --full-metrics                 Collect all seven msprof metric groups + sample mode
   --final-gate                   Make profile fail unless median kernel time is <= 4 ms
   -h, --help
@@ -122,6 +126,7 @@ while [[ $# -gt 0 ]]; do
         --stage-a) require_option_value "$@"; STAGE_A_MODE="$2"; shift 2 ;;
         --cube-mode) require_option_value "$@"; CUBE_MODE="$2"; shift 2 ;;
         --stage-io) require_option_value "$@"; STAGE_IO_MODE="$2"; shift 2 ;;
+        --aic-diagnostic) require_option_value "$@"; AIC_DIAGNOSTIC_MODE="$2"; shift 2 ;;
         --full-metrics) FULL_METRICS=true; shift ;;
         --final-gate) FINAL_GATE=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -186,6 +191,10 @@ case "$STAGE_IO_MODE" in
     source|tscm|gm) ;;
     *) echo "[FAIL] --stage-io must be source, tscm or gm" >&2; exit 2 ;;
 esac
+case "$AIC_DIAGNOSTIC_MODE" in
+    source|full|handshake|stage0-right|stage0-left) ;;
+    *) echo "[FAIL] --aic-diagnostic must be source, full, handshake, stage0-right or stage0-left" >&2; exit 2 ;;
+esac
 if [[ "$MODE" == test || "$MODE" == profile ]]; then
     [[ "$PAIR_GATES_MODE" == source && "$SHARED_SETUP_MODE" == source && \
        "$STAGE_EPILOGUE_MODE" == source && "$PAIR_SCRATCH_MODE" == source && \
@@ -193,10 +202,15 @@ if [[ "$MODE" == test || "$MODE" == profile ]]; then
        "$MMAD_ENGINES_MODE" == source && \
        "$VECTOR_MASK_MODE" == source && "$DB_REDUCE_MODE" == source && \
        "$STAGE_A_MODE" == source && "$CUBE_MODE" == source && \
-       "$STAGE_IO_MODE" == source ]] || {
+       "$STAGE_IO_MODE" == source && "$AIC_DIAGNOSTIC_MODE" == source ]] || {
         echo "[FAIL] test/profile variants come from --state; do not override them" >&2
         exit 2
     }
+fi
+if [[ "$AIC_DIAGNOSTIC_MODE" != source && "$AIC_DIAGNOSTIC_MODE" != full && \
+      "$MODE" != build ]]; then
+    echo "[FAIL] partial --aic-diagnostic modes are build-only" >&2
+    exit 2
 fi
 if $FINAL_GATE; then
     [[ "$MODE" == profile || "$MODE" == all ]] || {
@@ -291,7 +305,7 @@ write_state() {
         BUILD_RUNNER_SHA256 BUILD_PAIR_GATES BUILD_SHARED_SETUP \
         BUILD_STAGE_EPILOGUE BUILD_PAIR_SCRATCH BUILD_TAIL_BLOCKS BUILD_TASK_STORE \
         BUILD_MMAD_ENGINES BUILD_VECTOR_MASK BUILD_DB_REDUCE BUILD_STAGE_A BUILD_CUBE_MODE \
-        BUILD_STAGE_IO \
+        BUILD_STAGE_IO BUILD_AIC_DIAGNOSTIC \
         BUILD_VARIANT_ID; do
         printf 'export %s=%q\n' "$name" "${!name}" >>"$state"
     done
@@ -314,7 +328,7 @@ load_state() {
         BUILD_RUNNER_SHA256 BUILD_PAIR_GATES BUILD_SHARED_SETUP \
         BUILD_STAGE_EPILOGUE BUILD_PAIR_SCRATCH BUILD_TAIL_BLOCKS BUILD_TASK_STORE \
         BUILD_MMAD_ENGINES BUILD_VECTOR_MASK BUILD_DB_REDUCE BUILD_STAGE_A BUILD_CUBE_MODE \
-        BUILD_STAGE_IO \
+        BUILD_STAGE_IO BUILD_AIC_DIAGNOSTIC \
         BUILD_VARIANT_ID; do
         [[ -n "${!required:-}" ]] || { echo "[FAIL] state misses $required" >&2; exit 2; }
     done
@@ -372,6 +386,10 @@ load_state() {
         echo "[FAIL] invalid stage-I/O value in state: $BUILD_STAGE_IO" >&2
         exit 2
     esac
+    case "$BUILD_AIC_DIAGNOSTIC" in full|handshake|stage0-right|stage0-left) ;; *)
+        echo "[FAIL] invalid AIC diagnostic value in state: $BUILD_AIC_DIAGNOSTIC" >&2
+        exit 2
+    esac
     if [[ "$BUILD_STAGE_IO" == tscm && "$BUILD_SOC" == ascend910b ]]; then
         echo "[FAIL] refusing unsupported A2 TSCM stage-I/O artifact from state" >&2
         echo "       rebuild with --stage-io gm" >&2
@@ -383,11 +401,19 @@ load_state() {
             exit 2
         }
     fi
-    [[ "$BUILD_VARIANT_ID" == \
-       "pair-${BUILD_PAIR_GATES}_setup-${BUILD_SHARED_SETUP}_epilogue-${BUILD_STAGE_EPILOGUE}_scratch-${BUILD_PAIR_SCRATCH}_tail-${BUILD_TAIL_BLOCKS}_mmad-${BUILD_MMAD_ENGINES}_vmask-${BUILD_VECTOR_MASK}_dbr-${BUILD_DB_REDUCE}_store-${BUILD_TASK_STORE}_stagea-${BUILD_STAGE_A}_cube-${BUILD_CUBE_MODE}_io-${BUILD_STAGE_IO}" ]] || {
+    local expected_variant_id
+    expected_variant_id="pair-${BUILD_PAIR_GATES}_setup-${BUILD_SHARED_SETUP}_epilogue-${BUILD_STAGE_EPILOGUE}_scratch-${BUILD_PAIR_SCRATCH}_tail-${BUILD_TAIL_BLOCKS}_mmad-${BUILD_MMAD_ENGINES}_vmask-${BUILD_VECTOR_MASK}_dbr-${BUILD_DB_REDUCE}_store-${BUILD_TASK_STORE}_stagea-${BUILD_STAGE_A}_cube-${BUILD_CUBE_MODE}_io-${BUILD_STAGE_IO}"
+    if [[ "$BUILD_AIC_DIAGNOSTIC" != full ]]; then
+        expected_variant_id+="_aicdiag-${BUILD_AIC_DIAGNOSTIC}"
+    fi
+    [[ "$BUILD_VARIANT_ID" == "$expected_variant_id" ]] || {
         echo "[FAIL] build variant id is inconsistent with state" >&2
         exit 2
     }
+    if [[ "$MODE" != build && "$BUILD_AIC_DIAGNOSTIC" != full ]]; then
+        echo "[FAIL] partial AIC diagnostic artifacts are build-only" >&2
+        exit 2
+    fi
 }
 
 verify_clean_catlass() {
@@ -705,10 +731,57 @@ path.write_text(updated, encoding="utf-8")
 PY
 }
 
+read_uint_constant() {
+    local file=$1 symbol=$2
+    python3 - "$file" "$symbol" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+symbol = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+pattern = re.compile(
+    rf"^\s*constexpr\s+uint32_t\s+{re.escape(symbol)}\s*=\s*([0-9]+)\s*;\s*$",
+    re.MULTILINE,
+)
+matches = pattern.findall(text)
+if len(matches) != 1:
+    raise SystemExit(f"expected one {symbol} definition in {path}, found {len(matches)}")
+print(matches[0])
+PY
+}
+
+rewrite_uint_constant() {
+    local file=$1 symbol=$2 value=$3
+    [[ "$value" =~ ^[0-9]+$ ]] || {
+        echo "[FAIL] invalid uint literal for $symbol: $value" >&2
+        exit 2
+    }
+    python3 - "$file" "$symbol" "$value" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+symbol = sys.argv[2]
+value = sys.argv[3]
+text = path.read_text(encoding="utf-8")
+pattern = re.compile(
+    rf"^(\s*constexpr\s+uint32_t\s+{re.escape(symbol)}\s*=\s*)([0-9]+)(\s*;\s*)$",
+    re.MULTILINE,
+)
+updated, count = pattern.subn(rf"\g<1>{value}\g<3>", text)
+if count != 1:
+    raise SystemExit(f"expected one {symbol} definition in {path}, found {count}")
+path.write_text(updated, encoding="utf-8")
+PY
+}
+
 resolve_build_variant() {
     local header="$SOURCE_ROOT/fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/chunk_kda_bwd_intra_grouped.hpp"
     local factor_value overlap_value epilogue_value scratch_value
-    local tail_blocks_value task_store_value persistent_mmad_value vector_mask_value db_reduce_value stage_a_value cube_mode_value stage_io_value
+    local tail_blocks_value task_store_value persistent_mmad_value vector_mask_value db_reduce_value stage_a_value cube_mode_value stage_io_value aic_diagnostic_value
     factor_value="$(read_bool_constant "$header" KDA_GROUPED_FACTOR_PAIR_GATES)"
     overlap_value="$(read_bool_constant "$header" KDA_GROUPED_OVERLAP_SHARED_SETUP)"
     epilogue_value="$(read_bool_constant "$header" KDA_GROUPED_OVERLAP_STAGE_EPILOGUE)"
@@ -721,6 +794,7 @@ resolve_build_variant() {
     stage_a_value="$(read_bool_constant "$header" KDA_GROUPED_PACK_STAGE_A)"
     cube_mode_value="$(read_bool_constant "$header" KDA_GROUPED_USE_HF32_CUBE)"
     stage_io_value="$(read_bool_constant "$header" KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER)"
+    aic_diagnostic_value="$(read_uint_constant "$header" KDA_GROUPED_AIC_DIAGNOSTIC_MODE)"
     case "$PAIR_GATES_MODE" in
         source) ;;
         factor) factor_value=true ;;
@@ -781,6 +855,13 @@ resolve_build_variant() {
         tscm) stage_io_value=true ;;
         gm) stage_io_value=false ;;
     esac
+    case "$AIC_DIAGNOSTIC_MODE" in
+        source) ;;
+        full) aic_diagnostic_value=0 ;;
+        handshake) aic_diagnostic_value=1 ;;
+        stage0-right) aic_diagnostic_value=2 ;;
+        stage0-left) aic_diagnostic_value=3 ;;
+    esac
     [[ "$factor_value" == true ]] && BUILD_PAIR_GATES=factor || BUILD_PAIR_GATES=direct
     [[ "$overlap_value" == true ]] && BUILD_SHARED_SETUP=overlap || BUILD_SHARED_SETUP=prologue
     [[ "$epilogue_value" == true ]] && BUILD_STAGE_EPILOGUE=overlap || BUILD_STAGE_EPILOGUE=tail
@@ -793,6 +874,13 @@ resolve_build_variant() {
     [[ "$stage_a_value" == true ]] && BUILD_STAGE_A=packed || BUILD_STAGE_A=split
     [[ "$cube_mode_value" == true ]] && BUILD_CUBE_MODE=hf32 || BUILD_CUBE_MODE=ieee
     [[ "$stage_io_value" == true ]] && BUILD_STAGE_IO=tscm || BUILD_STAGE_IO=gm
+    case "$aic_diagnostic_value" in
+        0) BUILD_AIC_DIAGNOSTIC=full ;;
+        1) BUILD_AIC_DIAGNOSTIC=handshake ;;
+        2) BUILD_AIC_DIAGNOSTIC=stage0-right ;;
+        3) BUILD_AIC_DIAGNOSTIC=stage0-left ;;
+        *) echo "[FAIL] invalid KDA_GROUPED_AIC_DIAGNOSTIC_MODE=$aic_diagnostic_value" >&2; exit 2 ;;
+    esac
     if [[ "$BUILD_STAGE_IO" == tscm && "$SOC" == ascend910b ]]; then
         echo "[FAIL] A2/ascend910b UB->TSCM is software-emulated through GM/Matmul KFC;" >&2
         echo "       this direct CATLASS kernel must use --stage-io gm" >&2
@@ -805,6 +893,9 @@ resolve_build_variant() {
         }
     fi
     BUILD_VARIANT_ID="pair-${BUILD_PAIR_GATES}_setup-${BUILD_SHARED_SETUP}_epilogue-${BUILD_STAGE_EPILOGUE}_scratch-${BUILD_PAIR_SCRATCH}_tail-${BUILD_TAIL_BLOCKS}_mmad-${BUILD_MMAD_ENGINES}_vmask-${BUILD_VECTOR_MASK}_dbr-${BUILD_DB_REDUCE}_store-${BUILD_TASK_STORE}_stagea-${BUILD_STAGE_A}_cube-${BUILD_CUBE_MODE}_io-${BUILD_STAGE_IO}"
+    if [[ "$BUILD_AIC_DIAGNOSTIC" != full ]]; then
+        BUILD_VARIANT_ID+="_aicdiag-${BUILD_AIC_DIAGNOSTIC}"
+    fi
 }
 
 apply_build_variant() {
@@ -813,6 +904,7 @@ apply_build_variant() {
     local factor_value=false overlap_value=false epilogue_value=false
     local scratch_value=false tail_blocks_value=false task_store_value=false persistent_mmad_value=false
     local vector_mask_value=false db_reduce_value=false stage_a_value=false cube_mode_value=false stage_io_value=false
+    local aic_diagnostic_value=0
     [[ "$BUILD_PAIR_GATES" == factor ]] && factor_value=true
     [[ "$BUILD_SHARED_SETUP" == overlap ]] && overlap_value=true
     [[ "$BUILD_STAGE_EPILOGUE" == overlap ]] && epilogue_value=true
@@ -825,6 +917,13 @@ apply_build_variant() {
     [[ "$BUILD_STAGE_A" == packed ]] && stage_a_value=true
     [[ "$BUILD_CUBE_MODE" == hf32 ]] && cube_mode_value=true
     [[ "$BUILD_STAGE_IO" == tscm ]] && stage_io_value=true
+    case "$BUILD_AIC_DIAGNOSTIC" in
+        full) aic_diagnostic_value=0 ;;
+        handshake) aic_diagnostic_value=1 ;;
+        stage0-right) aic_diagnostic_value=2 ;;
+        stage0-left) aic_diagnostic_value=3 ;;
+        *) echo "[FAIL] invalid build AIC diagnostic mode: $BUILD_AIC_DIAGNOSTIC" >&2; exit 2 ;;
+    esac
     rewrite_bool_constant "$header" KDA_GROUPED_FACTOR_PAIR_GATES "$factor_value"
     rewrite_bool_constant "$header" KDA_GROUPED_OVERLAP_SHARED_SETUP "$overlap_value"
     rewrite_bool_constant "$header" KDA_GROUPED_OVERLAP_STAGE_EPILOGUE "$epilogue_value"
@@ -837,6 +936,7 @@ apply_build_variant() {
     rewrite_bool_constant "$header" KDA_GROUPED_PACK_STAGE_A "$stage_a_value"
     rewrite_bool_constant "$header" KDA_GROUPED_USE_HF32_CUBE "$cube_mode_value"
     rewrite_bool_constant "$header" KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER "$stage_io_value"
+    rewrite_uint_constant "$header" KDA_GROUPED_AIC_DIAGNOSTIC_MODE "$aic_diagnostic_value"
     [[ "$(read_bool_constant "$header" KDA_GROUPED_FACTOR_PAIR_GATES)" == "$factor_value" ]]
     [[ "$(read_bool_constant "$header" KDA_GROUPED_OVERLAP_SHARED_SETUP)" == "$overlap_value" ]]
     [[ "$(read_bool_constant "$header" KDA_GROUPED_OVERLAP_STAGE_EPILOGUE)" == "$epilogue_value" ]]
@@ -849,6 +949,7 @@ apply_build_variant() {
     [[ "$(read_bool_constant "$header" KDA_GROUPED_PACK_STAGE_A)" == "$stage_a_value" ]]
     [[ "$(read_bool_constant "$header" KDA_GROUPED_USE_HF32_CUBE)" == "$cube_mode_value" ]]
     [[ "$(read_bool_constant "$header" KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER)" == "$stage_io_value" ]]
+    [[ "$(read_uint_constant "$header" KDA_GROUPED_AIC_DIAGNOSTIC_MODE)" == "$aic_diagnostic_value" ]]
 }
 
 run_build() {
@@ -1078,12 +1179,12 @@ assert tscm["physical_layout"]["same_physical_image_for_transpose"] is True
 assert tscm["physical_layout"]["local_nd2nz_required"] is False
 print("[PASS] grouped physical GM traffic model")
 PY
-    printf 'commit=%s\nsource=%s\ncann_env=%s\nvariant=%s\npair_gates=%s\nshared_setup=%s\nstage_epilogue=%s\npair_scratch=%s\ntail_blocks=%s\ntask_store=%s\nmmad_engines=%s\nvector_mask=%s\ndb_reduce=%s\nstage_a=%s\ncube_mode=%s\nstage_io=%s\ngrouped_header_sha256=%s\n' \
+    printf 'commit=%s\nsource=%s\ncann_env=%s\nvariant=%s\npair_gates=%s\nshared_setup=%s\nstage_epilogue=%s\npair_scratch=%s\ntail_blocks=%s\ntask_store=%s\nmmad_engines=%s\nvector_mask=%s\ndb_reduce=%s\nstage_a=%s\ncube_mode=%s\nstage_io=%s\naic_diagnostic=%s\ngrouped_header_sha256=%s\n' \
         "$COMMIT" "$SOURCE_ROOT" "$CANN_ENV" "$BUILD_VARIANT_ID" \
         "$BUILD_PAIR_GATES" "$BUILD_SHARED_SETUP" "$BUILD_STAGE_EPILOGUE" \
         "$BUILD_PAIR_SCRATCH" "$BUILD_TAIL_BLOCKS" "$BUILD_TASK_STORE" "$BUILD_MMAD_ENGINES" \
         "$BUILD_VECTOR_MASK" "$BUILD_DB_REDUCE" "$BUILD_STAGE_A" "$BUILD_CUBE_MODE" \
-        "$BUILD_STAGE_IO" \
+        "$BUILD_STAGE_IO" "$BUILD_AIC_DIAGNOSTIC" \
         "$wheel_header_sha" | \
         tee "$RUN_ROOT/build_identity.txt"
     python3 "$WHEEL_SRC/scripts/check_npu_env.py" --build-only
@@ -1211,6 +1312,7 @@ run_test() {
         KDA_EXPECT_STAGE_A="$BUILD_STAGE_A" \
         KDA_EXPECT_CUBE_MODE="$BUILD_CUBE_MODE" \
         KDA_EXPECT_STAGE_IO="$BUILD_STAGE_IO" \
+        KDA_EXPECT_AIC_DIAGNOSTIC="$BUILD_AIC_DIAGNOSTIC" \
         PYTHONPATH="$RUNTIME_PYTHONPATH" \
         python3 -m pytest --collect-only -q -p no:cacheprovider "$test_file" \
         2>&1 | tee "$RUN_ROOT/logs/kda_collect.log"
@@ -1232,6 +1334,7 @@ run_test() {
         KDA_EXPECT_STAGE_A="$BUILD_STAGE_A" \
         KDA_EXPECT_CUBE_MODE="$BUILD_CUBE_MODE" \
         KDA_EXPECT_STAGE_IO="$BUILD_STAGE_IO" \
+        KDA_EXPECT_AIC_DIAGNOSTIC="$BUILD_AIC_DIAGNOSTIC" \
         PYTHONPATH="$RUNTIME_PYTHONPATH" \
         python3 -m pytest -q -vv -p no:cacheprovider "$test_file" \
         -k 'grouped_fastpath or grouped_dispatch_source_contract or unsafe_target_shape or reference_right_diag_ftz_guard or reference_left_diag_overflow_guard or reference_off_right_cross_block_ftz_guard or reference_grouped_cancellation_guard' \
@@ -1252,6 +1355,7 @@ run_test() {
         KDA_EXPECT_STAGE_A="$BUILD_STAGE_A" \
         KDA_EXPECT_CUBE_MODE="$BUILD_CUBE_MODE" \
         KDA_EXPECT_STAGE_IO="$BUILD_STAGE_IO" \
+        KDA_EXPECT_AIC_DIAGNOSTIC="$BUILD_AIC_DIAGNOSTIC" \
         PYTHONPATH="$RUNTIME_PYTHONPATH" \
         python3 -m pytest -q -vv -p no:cacheprovider "$test_file" -s \
         --junitxml="$RUN_ROOT/logs/kda_full37.xml" \
@@ -1306,6 +1410,7 @@ db_reduce=$BUILD_DB_REDUCE
 stage_a=$BUILD_STAGE_A
 cube_mode=$BUILD_CUBE_MODE
 stage_io=$BUILD_STAGE_IO
+aic_diagnostic=$BUILD_AIC_DIAGNOSTIC
 tests=37
 failures=0
 errors=0
@@ -1430,6 +1535,7 @@ run_profile() {
     grep -Fxq "stage_a=$BUILD_STAGE_A" "$RUN_ROOT/full37.pass"
     grep -Fxq "cube_mode=$BUILD_CUBE_MODE" "$RUN_ROOT/full37.pass"
     grep -Fxq "stage_io=$BUILD_STAGE_IO" "$RUN_ROOT/full37.pass"
+    grep -Fxq "aic_diagnostic=$BUILD_AIC_DIAGNOSTIC" "$RUN_ROOT/full37.pass"
     runtime_env
     sha256sum -c "$RUN_ROOT/full37_wheel.sha256"
     create_runtime_install profile
@@ -1665,6 +1771,7 @@ db_reduce=$BUILD_DB_REDUCE
 stage_a=$BUILD_STAGE_A
 cube_mode=$BUILD_CUBE_MODE
 stage_io=$BUILD_STAGE_IO
+aic_diagnostic=$BUILD_AIC_DIAGNOSTIC
 full37_sha256=$full37_digest
 pipe_csv=$op_csv
 pipe_csv_sha256=$pipe_csv_digest

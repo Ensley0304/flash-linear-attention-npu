@@ -546,6 +546,7 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     expected_stage_a = os.environ.get("KDA_EXPECT_STAGE_A", "split")
     expected_cube_mode = os.environ.get("KDA_EXPECT_CUBE_MODE", "ieee")
     expected_stage_io = os.environ.get("KDA_EXPECT_STAGE_IO", "gm")
+    expected_aic_diagnostic = os.environ.get("KDA_EXPECT_AIC_DIAGNOSTIC", "full")
     assert expected_pair_gates in {"factor", "direct"}
     assert expected_shared_setup in {"overlap", "prologue"}
     assert expected_stage_epilogue in {"overlap", "tail"}
@@ -558,6 +559,9 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert expected_stage_a in {"packed", "split"}
     assert expected_cube_mode in {"ieee", "hf32"}
     assert expected_stage_io in {"tscm", "gm"}
+    assert expected_aic_diagnostic in {
+        "full", "handshake", "stage0-right", "stage0-left"
+    }
     factor_literal = "true" if expected_pair_gates == "factor" else "false"
     overlap_literal = "true" if expected_shared_setup == "overlap" else "false"
     epilogue_literal = "true" if expected_stage_epilogue == "overlap" else "false"
@@ -570,6 +574,12 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     stage_a_literal = "true" if expected_stage_a == "packed" else "false"
     cube_mode_literal = "true" if expected_cube_mode == "hf32" else "false"
     stage_io_literal = "true" if expected_stage_io == "tscm" else "false"
+    aic_diagnostic_literal = {
+        "full": "0",
+        "handshake": "1",
+        "stage0-right": "2",
+        "stage0-left": "3",
+    }[expected_aic_diagnostic]
     assert (
         f"constexpr bool KDA_GROUPED_FACTOR_PAIR_GATES = {factor_literal};"
         in grouped
@@ -633,6 +643,13 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         f"{stage_io_literal};"
         in grouped
     )
+    assert (
+        "constexpr uint32_t KDA_GROUPED_AIC_DIAGNOSTIC_MODE = "
+        f"{aic_diagnostic_literal};"
+        in grouped
+    )
+    assert "--aic-diagnostic MODE" in validation_runner
+    assert "partial AIC diagnostic artifacts are build-only" in validation_runner
     assert "CopyStageAbNzRows(" in grouped
     assert "Catlass::layout::zN" in grouped
     assert "Catlass::layout::nZ" in grouped
