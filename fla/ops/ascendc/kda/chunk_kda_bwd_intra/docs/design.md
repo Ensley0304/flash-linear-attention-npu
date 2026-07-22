@@ -230,12 +230,14 @@ repeated-launch 与同卡 msprof，`scalar` wheel 用于结果和性能回退对
 
 ### 4.6 AIC 持久双引擎候选
 
-每个 CATLASS `MmadPingpongTlaMulti` 内部已经对 L1A/L1B/L0A/L0B 使用两级 ping-pong。回退用的
+每个 CATLASS `MmadPingpongTlaMulti` 内部已经对 L1A/L1B/L0A/L0B 使用两级 ping-pong。源码默认的
 `scoped` 调度把 left16、left32 和 right16 实例映射到相同的 L0 地址与 local event 0..3，
-因此必须用每次 `preSetFlags/finalWaitFlags` 串行复用。源码默认启用
-`KDA_GROUPED_PERSISTENT_MMAD_ENGINES`：它通过算子私有派生 wrapper 重绑 protected
-L1/L0 tensor 和 event 数组，不修改公共 CATLASS；left32 同时处理实际 K16/K32 以及 stage 3
-的 K32+K16 tail，right16 保持原 M16/K32 路径。
+因此每次 `operator()` 都必须用独立的 `preSetFlags/finalWaitFlags` 串行复用。此前把同一 stage 的
+2--4 个 right MMAD 放进一个 event envelope；它从 stage 1 首次出现，与 A2 上 stage 0 通过而完整
+路径超时的边界完全吻合，是当前高概率死锁根因，因此该批处理已从交付路径删除。
+`KDA_GROUPED_PERSISTENT_MMAD_ENGINES=true` 仍保留为编译期实验：它通过算子私有派生 wrapper 重绑
+protected L1/L0 tensor 和 event 数组，不修改公共 CATLASS；left32 同时处理实际 K16/K32 以及
+stage 3 的 K32+K16 tail，right16 保持原 M16/K32 路径。
 
 同一 dispatch policy 还保留正交的 `KDA_GROUPED_USE_HF32_CUBE` 开关。源码默认 `false`，
 即所有 17 个 GEMM 使用 IEEE-FP32 Cube 输入；候选 `true` 只让 MMAD 前的两个 FP32 输入按
@@ -258,14 +260,14 @@ workspace slot 会被 AIV 反复覆写，即使 GM 地址与 tile 坐标相同�
 K32 一轮完成，K48 严格分成 K32+K16 两轮；每轮末尾归还当前 L1/L0 free token，索引只在两槽间
 轮换，不要求跨调用重置。
 
-候选在整个 `ProcessAic` 外只为 left/right 各建立和排空一次 event envelope，task/stage 内继续
+持久化候选在整个 `ProcessAic` 外只为 left/right 各建立和排空一次 event envelope，task/stage 内继续
 按 `off-left -> off-right -> diag-right -> diag-left` 调用，不改变 workspace 覆盖、17 个逻辑
 GEMM、约 18 次物理 MMAD 或 K48 cancellation 次序。AIC 的 done flag 仍在 `PIPE_FIX` 上，AIV
 仍先等待 done 再读 slot；unit-flag 模式下 `finalWaitFlags` 只排空 MTE1/M free token，不承担
-Fixpipe 输出可见性。目标模型的 4,096 个 task、69,632 次逻辑 GEMM 保持不变，envelope 从
-45,056 个降为 20 个 AIC Process 各两个、合计 40 个；但是否减少
-AIC Scalar/event stall，必须用 `scoped`/`persistent` 两个 clean wheel 完成编译、37 项、
-repeated-launch、slot canary 与同卡 msprof 后判断。
+Fixpipe 输出可见性。目标模型的 4,096 个 task、69,632 次逻辑 GEMM 保持不变；可靠 scoped 路径
+使用 69,632 个完整 envelope，理论持久化路径为 20 个 AIC Process 各两个、合计 40 个。当前
+持久化协议已经有 A2 timeout 反证，不能进入精度或性能 A/B；必须先重新设计逐调用 UnitFlag/Fixpipe
+完成关系，再用 clean wheel、37 项、repeated-launch、slot canary 与同卡 msprof 独立验收。
 
 ### 4.7 FP32 Vector mask 复用候选
 
@@ -366,7 +368,7 @@ AIV n+1:                                              wait MTE3 -> zero -> consu
 
 ## 7. 性能路线
 
-已验证的 AIV phase1 在目标 shape 上从 legacy 477.94 ms 降到 48.66 ms，但 profiling 显示 MTE2 仅约 2.9%，Vector/Scalar 计算与发射已成为主瓶颈。因此第二阶段引入上述 grouped 深融合和 AIC/AIV 双槽流水。key 23 已写入 host/kernel 并完成本地结构检查，但尚不能声明 CANN 编译、NPU 精度或 4 ms 性能达标；上板顺序为 key23-only 编译探针、clean wheel、完整 37 项、目标 shape msprof，再在相同 commit 上先将默认 persistent MMAD 与 scoped 回退做最小 A/B，随后按 AIC/AIV stall 数据选择跨 task store、stage epilogue 或局部 scratch 候选继续迭代。
+已验证的 AIV phase1 在目标 shape 上从 legacy 477.94 ms 降到 48.66 ms，但 profiling 显示 MTE2 仅约 2.9%，Vector/Scalar 计算与发射已成为主瓶颈。因此第二阶段引入上述 grouped 深融合和 AIC/AIV 双槽流水。key 23 已写入 host/kernel 并完成本地结构检查，但尚不能声明 NPU 精度或 4 ms 性能达标；上板顺序为默认 scoped 路径 clean wheel、单次 grouped 定向、完整 37 项、目标 shape msprof。只有默认路径稳定后，才按 AIC/AIV stall 数据选择跨 task store、stage epilogue 或局部 scratch 候选；persistent MMAD 必须先重建设备事件协议，不能直接参加性能 A/B。
 
 ## 8. 接口约束
 

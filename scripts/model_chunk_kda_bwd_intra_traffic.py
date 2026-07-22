@@ -40,7 +40,10 @@ GROUPED_SINGLE_UB_BYTES = 179_936
 GROUPED_PAIR_PINGPONG_UB_BYTES = 192_256
 PAIR_SCRATCH_BANKS = 3
 PERSISTENT_MMAD_L1_BYTES = (40 + 36) * 1024
-SCOPED_MMAD_ENVELOPES_PER_TASK = 11
+# The delivery path gives each of the 17 logical GEMMs its own complete local
+# event transaction.  Stage-level batching of 2--4 right MMAD calls under one
+# flag envelope deadlocks on A2 and is intentionally not counted as scoped.
+SCOPED_MMAD_ENVELOPES_PER_TASK = 17
 PERSISTENT_MMAD_ENGINES_PER_AIC = 2
 FP32_C0_ELEMENTS = 32 // FP32_BYTES
 FP32_CUBE_ROWS = 16
@@ -621,7 +624,7 @@ def build_report(
         },
         "persistent_mmad_scheduling": {
             "source_level_model": True,
-            "source_default_enabled": True,
+            "source_default_enabled": False,
             "changes_fp32_arithmetic": False,
             "changes_logical_gemm_order": False,
             "changes_gm_bytes": False,
@@ -634,7 +637,8 @@ def build_report(
                 scoped_mmad_envelopes_target
                 / persistent_mmad_envelopes_target
             ),
-            "scoped_compile_time_rollback_retained": True,
+            "scoped_one_envelope_per_logical_gemm": True,
+            "persistent_compile_time_experiment_retained": True,
         },
         "pair_scratch_pingpong": {
             "source_default_enabled": False,
@@ -802,7 +806,7 @@ def build_report(
         assert tail_mte3_calls_after == 32_768
         assert task_aiv_pairs == 8_192
         assert logical_gemm_calls_target == 69_632
-        assert scoped_mmad_envelopes_target == 45_056
+        assert scoped_mmad_envelopes_target == 69_632
         assert persistent_mmad_envelopes_target == 40
         assert pair_scratch_pairs_per_task == 6
         assert pair_scratch_mte3_bytes_per_task == 147_456
@@ -914,7 +918,7 @@ def print_text(report: dict[str, object]) -> None:
         f"{scalar_hot['persistent_gate_loop_iterations_target_before']:,}->0"
     )
     print(
-        "persistent MMAD scheduling (source-level): "
+        "persistent MMAD scheduling (source-level experiment): "
         f"logical GEMMs={persistent_mmad['logical_gemm_calls_target']:,} unchanged, "
         f"flag envelopes={persistent_mmad['scoped_envelopes_target']:,}->"
         f"{persistent_mmad['persistent_envelopes_target']:,} "

@@ -92,7 +92,7 @@ Examples:
   bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
     --mode all --cann-env /path/to/ascend-toolkit/set_env.sh \
     --pair-gates direct --shared-setup overlap --stage-epilogue tail \
-    --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines persistent \
+    --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines scoped \
     --vector-mask reuse --db-reduce coalesced --stage-a split --cube-mode ieee \
     --stage-io gm
 EOF
@@ -1140,14 +1140,15 @@ assert scalar_hot["persistent_gate_loop_iterations_target_before"] == 24_576
 assert scalar_hot["persistent_gate_loop_iterations_target_after"] == 0
 assert scalar_hot["kernel_entry_get_subblock_reads_unchanged"] is True
 persistent_mmad = report["persistent_mmad_scheduling"]
-assert persistent_mmad["source_default_enabled"] is True
+assert persistent_mmad["source_default_enabled"] is False
 assert persistent_mmad["changes_fp32_arithmetic"] is False
 assert persistent_mmad["changes_logical_gemm_order"] is False
 assert persistent_mmad["changes_gm_bytes"] is False
 assert persistent_mmad["logical_gemm_calls_target"] == 69_632
-assert persistent_mmad["scoped_envelopes_target"] == 45_056
+assert persistent_mmad["scoped_envelopes_target"] == 69_632
 assert persistent_mmad["persistent_envelopes_target"] == 40
-assert persistent_mmad["scoped_compile_time_rollback_retained"] is True
+assert persistent_mmad["scoped_one_envelope_per_logical_gemm"] is True
+assert persistent_mmad["persistent_compile_time_experiment_retained"] is True
 pair_scratch = report["pair_scratch_pingpong"]
 assert pair_scratch["source_default_enabled"] is False
 assert pair_scratch["active"] is (expected_pair_scratch == "pingpong")

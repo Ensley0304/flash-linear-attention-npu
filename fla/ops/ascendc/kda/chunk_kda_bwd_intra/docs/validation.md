@@ -2,7 +2,7 @@
 
 > 2026-07-22 correction: DAV_2201 validation accepts only the GM stage bridge. The retained `--stage-io tscm` source experiment is rejected for `ascend910b`, because A2 emulates AIV `UB -> TSCM` through GM/Matmul KFC and this direct CATLASS kernel has no KFC client. Stage I/O remains part of the wheel identity so an unsupported artifact cannot be mistaken for the GM baseline. The required gate is still a clean CANN 9.1 build, complete 37-case NPU suite, repeated launches, and same-card msprof.
 
-> 2026-07-22 runtime diagnosis: key 23 clean compilation and wheel packaging pass, but the first grouped BF16 runtime case remains blocked for persistent MMAD, scoped MMAD, and the fully conservative grouped variant; the latter was killed after the timeout with status 137. Therefore grouped precision and profiling are not accepted. The build-only `--aic-diagnostic` modes isolate the four-stage cross-core handshake, the first right/left Cube calls, their stage-0 sequence, and cumulative execution through stages 1 and 2. Partial-mode numerical output is intentionally invalid: only return-vs-timeout is evidence, and the runner refuses to use such state for normal test/profile modes. Handshake, stage0-right, and stage0-left each returned successfully on physical device 2, so the outer AIV/AIC synchronization and both isolated diagonal MMAD calls are excluded from the deadlock.
+> 2026-07-22 runtime diagnosis: key 23 clean compilation and wheel packaging pass, while the former persistent and nominally scoped variants both blocked in the first grouped BF16 case. Handshake, stage0-right, stage0-left, and stage0-both all returned on physical device 2, excluding the outer C/V handshake and either diagonal MMAD shape. Source audit then found that the old scoped path still wrapped 2--4 right-side `operator()` calls in one flag envelope starting at stage 1; this usage was unique in the repository and matched the exact pass/hang boundary. The source now defaults to one complete event envelope per logical GEMM and retains persistent mode only as an unvalidated compile-time experiment. Grouped precision and profiling remain unaccepted until this corrected default completes a clean device run.
 
 ## 当前状态
 
@@ -30,9 +30,9 @@ BT=64/128、K=16/48/96/256、重复 launch、零 dA 和 one-hot dA 路径。
 19.272 ms；AIV phase1 kernel 为 48.660 ms，端到端中位数为 51.107 ms。当前 grouped 修改使用
 新 tiling key 23，必须重新完成 key23-only 编译探针、clean wheel、9 个 grouped NPU 定向、
 1 个目标域 unsafe fallback、4 个 CPU 数值 guard、1 个 source-dispatch contract、完整 37 项与 repeated launch 后才能
-评价性能；新的默认四尾块 batch、persistent MMAD、Vector-mask 复用与 db 合并归约路径，以及
+评价性能；新的默认四尾块 batch、scoped MMAD、Vector-mask 复用与 db 合并归约路径，以及
 stage-epilogue、pair-scratch ping-pong、跨 task 输出重叠、packed stage-A 和 HF32 Cube 候选还必须各自单独完成
-同样的 clean build、37 项和 profile。phase1、key 15 与 key 23 `tail/single/batch/persistent` 的结论都不能
+同样的 clean build、37 项和 profile。phase1、key 15 与 key 23 `tail/single/batch/scoped` 的结论都不能
 自动外推到其他候选。
 
 ## 构建与安装
@@ -81,11 +81,11 @@ persistent MMAD 调度、Vector mask 复用、db 跨行归约、跨 task 输出�
 `source|coalesced|per-row`；`--task-store` 接受 `source|overlap|serial`；`--stage-a` 接受
 `source|packed|split`；`--cube-mode` 接受 `source|ieee|hf32`；`--stage-io` 接受
 `source|gm|tscm`，但 A2/`ascend910b` 会拒绝 `tscm`；`source` 表示沿用提交中的常量。
-当前默认源码对应 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-persistent_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`，
-pair-scratch 候选为 `pair-factor_setup-overlap_epilogue-tail_scratch-pingpong_tail-batch_mmad-persistent_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`，
-尾块 scalar 回退为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-scalar_mmad-persistent_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`，
-跨 task 候选为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-persistent_vmask-reuse_dbr-coalesced_store-overlap_stagea-split_cube-ieee_io-gm`，
-scoped-MMAD 回退为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-scoped_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`；
+当前默认源码对应 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-scoped_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`，
+pair-scratch 候选为 `pair-factor_setup-overlap_epilogue-tail_scratch-pingpong_tail-batch_mmad-scoped_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`，
+尾块 scalar 回退为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-scalar_mmad-scoped_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`，
+跨 task 候选为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-scoped_vmask-reuse_dbr-coalesced_store-overlap_stagea-split_cube-ieee_io-gm`，
+persistent-MMAD 实验为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-persistent_vmask-reuse_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`；
 逐调用 mask 回退为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-persistent_vmask-per-call_dbr-coalesced_store-serial_stagea-split_cube-ieee_io-gm`；
 逐行 db 回退为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-persistent_vmask-reuse_dbr-per-row_store-serial_stagea-split_cube-ieee_io-gm`；
 packed-A 候选为 `pair-factor_setup-overlap_epilogue-tail_scratch-single_tail-batch_mmad-persistent_vmask-reuse_dbr-coalesced_store-serial_stagea-packed_cube-ieee_io-gm`；
@@ -102,7 +102,7 @@ CANN、CATLASS、37/37、变体身份、主 CSV/manifest 哈希和当前 4 ms �
 SRC=/data/wys/gdn/kda_single/flash-linear-attention-npu
 CANN_ENV=/data/wys/Ascend/cann_9.1.0_910b_0605/ascend-toolkit/set_env.sh
 
-# 源码默认基线：pair bridge 因式分解 + shared-setup overlap + whole-tail epilogue + single scratch + batch tail + serial store + persistent MMAD + mask 复用 + db 合并归约。
+# 源码默认基线：pair bridge 因式分解 + shared-setup overlap + whole-tail epilogue + single scratch + batch tail + serial store + scoped MMAD + mask 复用 + db 合并归约。
 bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates source --shared-setup source \
@@ -115,7 +115,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a packed --cube-mode ieee --stage-io gm
 
 # 只切换 Cube 输入模式；HF32 必须先通过完整精度门禁，不能放宽阈值。
@@ -123,15 +123,15 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode hf32 --stage-io gm
 
-# 只回退 scoped MMAD 引擎生命周期，其余十一维固定为源码默认基线。
+# 仅构建 persistent MMAD 实验；当前协议已知 timeout，不用于精度或性能验收。
 bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines scoped --vector-mask reuse \
+  --task-store serial --mmad-engines persistent --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只打开局部 pair scratch ping-pong，其余十一维固定为源码默认基线。
@@ -139,7 +139,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch pingpong --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只回退为逐块 scalar tail，其余十一维固定为源码默认基线。
@@ -147,7 +147,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks scalar \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 跨 task 写回最小 A/B 基线：固定 batch tail，只保留串行输出写回。
@@ -155,7 +155,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 跨 task 写回候选：唯一变化是 store-overlap；它与 scalar tail/stage-local epilogue 不兼容。
@@ -163,7 +163,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store overlap --mmad-engines persistent --vector-mask reuse \
+  --task-store overlap --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只前移 stage epilogue，其余十一维固定：每个 8-row block 在 ConsumeStage 后完成 db reduce 和 dkLeft*beta。
@@ -171,7 +171,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue overlap --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只关闭 pair bridge 因式分解，其余十一维固定为默认基线。
@@ -179,7 +179,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates direct --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只把共享初始化移回串行 prologue，其余十一维固定为默认基线。
@@ -187,7 +187,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup prologue \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只关闭外部 Vector mask 复用，其余十一维固定；回退到每个 Level-2 API 自行配置 mask/counter。
@@ -195,7 +195,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask per-call \
+  --task-store serial --mmad-engines scoped --vector-mask per-call \
   --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm
 
 # 只关闭 db 跨行归约，其余十一维固定；回退到每行一次第一层 WholeReduceSum。
@@ -203,7 +203,7 @@ bash scripts/run_chunk_kda_bwd_intra_grouped_validation.sh \
   --mode all --source "$SRC" --cann-env "$CANN_ENV" \
   --physical-device 2 --pair-gates factor --shared-setup overlap \
   --stage-epilogue tail --pair-scratch single --tail-blocks batch \
-  --task-store serial --mmad-engines persistent --vector-mask reuse \
+  --task-store serial --mmad-engines scoped --vector-mask reuse \
   --db-reduce per-row --stage-a split --cube-mode ieee --stage-io gm
 ```
 
@@ -350,7 +350,7 @@ PIPE_DIR="$PROF_GROUP/PROF_PipeUtilization"
 OP_CSV=$(find "$PIPE_DIR" -type f -name 'op_summary_*.csv' -print | sort | tail -1)
 LAUNCH_MANIFEST="$PIPE_DIR/launch_manifest.json"  # 由实际 benchmark 参数生成
 
-# 以下示例校验源码默认 tail/single/batch/serial/persistent 变体；候选只改对应期望值。
+# 以下示例校验源码默认 tail/single/batch/serial/scoped 变体；候选只改对应期望值。
 # 首轮性能诊断：精确签名与 mixed AIC/AIV 必须成立，但允许性能暂未达标。
 python3 scripts/analyze_chunk_kda_bwd_intra_profile.py "$OP_CSV" \
   --target-ms 4.0 --baseline-ms 48.660472 \
@@ -359,7 +359,7 @@ python3 scripts/analyze_chunk_kda_bwd_intra_profile.py "$OP_CSV" \
   --expected-pair-gates factor --expected-shared-setup overlap \
   --expected-stage-epilogue tail --expected-pair-scratch single \
   --expected-tail-blocks batch --expected-task-store serial \
-  --expected-mmad-engines persistent \
+  --expected-mmad-engines scoped \
   --expected-vector-mask reuse --expected-db-reduce coalesced \
   --expected-cube-mode ieee \
   --require-target-shape --require-mixed
@@ -372,7 +372,7 @@ python3 scripts/analyze_chunk_kda_bwd_intra_profile.py "$OP_CSV" \
   --expected-pair-gates factor --expected-shared-setup overlap \
   --expected-stage-epilogue tail --expected-pair-scratch single \
   --expected-tail-blocks batch --expected-task-store serial \
-  --expected-mmad-engines persistent \
+  --expected-mmad-engines scoped \
   --expected-vector-mask reuse --expected-db-reduce coalesced \
   --expected-cube-mode ieee \
   --require-target-shape --require-mixed \

@@ -39,11 +39,12 @@ constexpr bool KDA_GROUPED_BATCH_TAIL_BLOCKS = true;
 // and the whole-task db epilogue; both rollback paths remain compiled.
 constexpr bool KDA_GROUPED_OVERLAP_TASK_STORE = false;
 constexpr bool KDA_GROUPED_DOUBLE_BUFFER_PAIR_SCRATCH = false;
-// Keep the left32/right16 CATLASS engines and their disjoint L1/L0/event
-// partitions live for the whole AIC Process.  The scoped branch remains a
-// compile-time rollback, but is no longer the target-domain default: it would
-// recreate and drain eleven MMAD flag envelopes for every 64-token task.
-constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = true;
+// Keep the validated CATLASS event contract as the source default: every
+// BlockMmad invocation owns one preSetFlags/operator/finalWaitFlags envelope.
+// The persistent branch is retained only as a compile-time experiment.  It
+// must not become the delivery default until its multi-invocation UnitFlag /
+// Fixpipe protocol has independent device evidence.
+constexpr bool KDA_GROUPED_PERSISTENT_MMAD_ENGINES = false;
 // Experimental non-A2 path: Vector builds every stage's A/B operands directly
 // in two ping-pong TSCM slots and Cube consumes them from L1.  Keep this off on
 // Atlas A2/910B.  On __NPU_ARCH__ == 2201 the AscendC UB->TSCM API is
@@ -2738,37 +2739,35 @@ private:
         const uint64_t slotBase = SlotBase(slot);
         if constexpr (KDA_GROUPED_PACK_STAGE_A) {
             RunPackedOffLeftAic<STAGE>(offLeftMmad, slotBase);
-            rightMmad.preSetFlags();
-            RunOffRightPairAic<STAGE, 0, false>(rightMmad, slotBase);
+            RunOffRightPairAic<STAGE, 0>(rightMmad, slotBase);
             if constexpr (STAGE > 1) {
-                RunOffRightPairAic<STAGE, 1, false>(rightMmad, slotBase);
+                RunOffRightPairAic<STAGE, 1>(rightMmad, slotBase);
             }
             if constexpr (STAGE > 2) {
-                RunOffRightPairAic<STAGE, 2, false>(rightMmad, slotBase);
+                RunOffRightPairAic<STAGE, 2>(rightMmad, slotBase);
             }
-            RunPackedDiagRightAic<STAGE, false>(rightMmad, slotBase);
-            rightMmad.finalWaitFlags();
+            RunPackedDiagRightAic<STAGE>(rightMmad, slotBase);
             RunPackedDiagLeftAic<STAGE>(diagLeftMmad, slotBase);
         } else {
             RunRowMajorAic<32, offPrefix>(offLeftMmad, slotBase,
                                           KDA_GROUPED_A_OFF,
                                           KDA_GROUPED_B_OFF_LEFT,
                                           KDA_GROUPED_C_OFF_LEFT);
-            // Off-right pairs and diagonal-right all use the same M16/K32
-            // BlockMmad instance.  Keep its L1/L0 event envelope alive across
-            // consecutive calls instead of draining it 2--4 times.
-            rightMmad.preSetFlags();
-            RunOffRightPairAic<STAGE, 0, false>(rightMmad, slotBase);
+            // A UnitFlag/Fixpipe invocation is a complete event transaction.
+            // Reusing one pre-set envelope across multiple operator() calls
+            // can consume the next call's local free token and deadlock from
+            // stage 1 onward.  Keep each logical GEMM independently scoped,
+            // matching every other MmadPingpongTlaMulti user in this tree.
+            RunOffRightPairAic<STAGE, 0>(rightMmad, slotBase);
             if constexpr (STAGE > 1) {
-                RunOffRightPairAic<STAGE, 1, false>(rightMmad, slotBase);
+                RunOffRightPairAic<STAGE, 1>(rightMmad, slotBase);
             }
             if constexpr (STAGE > 2) {
-                RunOffRightPairAic<STAGE, 2, false>(rightMmad, slotBase);
+                RunOffRightPairAic<STAGE, 2>(rightMmad, slotBase);
             }
-            RunColumnMajorAic<16, 32, false>(
+            RunColumnMajorAic<16, 32>(
                 rightMmad, slotBase, KDA_GROUPED_A_DIAG,
                 KDA_GROUPED_B_DIAG_RIGHT, KDA_GROUPED_C_DIAG_RIGHT);
-            rightMmad.finalWaitFlags();
             RunRowMajorAic<32, 16>(diagLeftMmad, slotBase,
                                    KDA_GROUPED_A_DIAG,
                                    KDA_GROUPED_B_DIAG_LEFT,

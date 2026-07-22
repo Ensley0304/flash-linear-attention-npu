@@ -45,12 +45,12 @@ whole-tail；`true` 是尚待设备 A/B 的 8-row stage-local overlap 候选。
   8-row block 的 `db` K-reduce 和 `dk_left_pre*beta`，使 stage 0--2 的 epilogue 有机会与
   后续 AIC stage 重叠；源码默认 `false` 继续在 `StoreTaskOutputs` 执行原 32-row whole-tail，
   两条实现都保留，候选收益尚未上板证明；
-- M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti` 管理共享 L1/L0；
-  同一 stage 的 off-right 与 diagonal-right 共用一个 pre-set/final-wait 包络，使 17 个 GEMM 只需
-  11 个 MMAD 事件包络；结果完成性由随后同一 `PIPE_FIX` 上的 done flag 保证；
-- 源码默认 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=true`，把 left32/right16 分别映射到互斥的
-  L1/L0/event 分区，并把 11 个每-task 包络变为每个 AIC `Process` 的两个常驻包络；`false`
-  保留 scoped 回退，两条路径的 GEMM、workspace、slot 和 `PIPE_FIX` done 顺序一致；
+- M16/M32 与 K16/K32 的 FP32 BlockMmad 使用 `MmadPingpongTlaMulti` 管理共享 L1/L0；源码默认
+  每个逻辑 GEMM 独占一次 `preSetFlags/operator/finalWaitFlags`，每 task 共 17 个完整事件包络；
+- 源码默认 `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=false`。此前同一 stage 的 off-right 与
+  diagonal-right 共用一个包络，并进一步尝试跨 task 常驻；它从 stage 1 首次出现，与当前
+  stage-0-pass/full-path-timeout 证据吻合，是高概率设备死锁根因。
+  `true` 分支只作为待重建设备事件协议的编译期实验，不得作为交付或性能基线；
 - stage 3 off-left 使用静态 K32 加 K16 tail，保留 `2^24 + (-2^24) + 1` 的 FP32
   cancellation 顺序；三个 off-right 使用独立 M16 与 stride-48 ColumnMajor 子视图，避免
   公共 reference 导致 FTZ，也避免 FIX 跨 pair 写入；
@@ -178,12 +178,11 @@ API 数。完成的 `dq/dk/dg` 原位留在三个 accumulator bank，`db` 留在
 因此可以在旧输出写回期间计算下一 task 的前两个 Cube stage，AIV 在清零 accumulator 前通过
 `MTE3_V` 收口。候选不增加 179,936-B UB 上限；收益只可能来自缩短 task-boundary AIC 空洞，
 必须比较相同 batch-tail 实现的 `store-serial`/`store-overlap`，不能与 scalar-tail 基线混比。
-`KDA_GROUPED_PERSISTENT_MMAD_ENGINES` 则只改变 AIC 本地资源生命周期。left32/right16 分别占用
+`KDA_GROUPED_PERSISTENT_MMAD_ENGINES` 只改变 AIC 本地资源生命周期。left32/right16 分别占用
 40/36 KiB L1、8/4 KiB L0A、32/32 KiB L0B、16/8 KiB L0C，并使用 event 0..3/4..7；
-L0B 恰好使用 64 KiB。源码用容量、512 B 对齐和 event 区间断言约束该布局。目标 shape 静态上
-69,632 次逻辑 GEMM 不变，MMAD envelope 从 45,056 个降为 20 个 AIC `Process` 各两个、合计
-40 个，但实际 AIC Scalar/event stall 收益必须
-通过 clean build 和 msprof 证明。
+L0B 恰好使用 64 KiB。源码用容量、512 B 对齐和 event 区间断言约束该布局。目标 shape 的可靠
+scoped 路径为 69,632 次逻辑 GEMM/完整 envelope；持久化模型理论上降为 20 个 AIC `Process`
+各两个、合计 40 个，但现有协议已有设备 timeout，不能把这一静态降幅写成可测收益。
 
 `KDA_GROUPED_REUSE_VECTOR_MASK=true` 是不改变数值语义的 Scalar 发射候选。key 23 的 gate、
 pair、stage 累加和输出尾部均为连续 FP32，优化包络内的元素数都是 64 的整数倍且 repeat 不超过
@@ -216,19 +215,19 @@ stage-local 候选，`tail` 强制原 whole-tail；`--pair-scratch` 接受 `sour
 
 | 对比 | pair gates | shared setup | stage epilogue | pair scratch | tail blocks | MMAD engines | Vector mask | db reduce | task store | stage A | Cube mode | 拟隔离变量 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 源码默认基线 | factor | overlap | tail | single | batch | persistent | reuse | coalesced | serial | split | ieee | 当前源码默认方案 |
-| scoped MMAD 回退 | factor | overlap | tail | single | batch | scoped | reuse | coalesced | serial | split | ieee | AIC 每-use 事件包络对照 |
-| packed-A 候选 | factor | overlap | tail | single | batch | persistent | reuse | coalesced | serial | packed | ieee | 两次冗余 stage-A MTE3 row-copy 提交的影响 |
-| HF32 候选 | factor | overlap | tail | single | batch | persistent | reuse | coalesced | serial | split | hf32 | Cube 输入舍入的精度与吞吐影响 |
-| tail-scalar 回退 | factor | overlap | tail | single | scalar | persistent | reuse | coalesced | serial | split | ieee | 尾部逐块 API、DMA 启动与同步对照 |
-| task-store 基线 | factor | overlap | tail | single | batch | persistent | reuse | coalesced | serial | split | ieee | 与 overlap 使用相同 batch-tail 指令 |
-| task-store 候选 | factor | overlap | tail | single | batch | persistent | reuse | coalesced | overlap | split | ieee | 跨 task 输出 MTE3 与下一 task Cube 重叠 |
-| scratch 候选 | factor | overlap | tail | pingpong | batch | persistent | reuse | coalesced | serial | split | ieee | 局部 3-bank MTE3/Vector 重叠的影响 |
-| epilogue 候选 | factor | overlap | overlap | single | batch | persistent | reuse | coalesced | serial | split | ieee | 8-row 前移与后续 AIC 重叠的影响 |
-| bridge 对照版 | direct | overlap | tail | single | batch | persistent | reuse | coalesced | serial | split | ieee | pair bridge 减少 Exp 与新增 Mul 的影响 |
-| setup 对照版 | factor | prologue | tail | single | batch | persistent | reuse | coalesced | serial | split | ieee | stage-0 与共享初始化重叠的影响 |
-| mask 对照版 | factor | overlap | tail | single | batch | persistent | per-call | coalesced | serial | split | ieee | 外部 mask 复用减少 Scalar 控制的影响 |
-| db 归约对照版 | factor | overlap | tail | single | batch | persistent | reuse | per-row | serial | split | ieee | 跨行合并减少 Reduce API/Scalar 发射的影响 |
+| 源码默认基线 | factor | overlap | tail | single | batch | scoped | reuse | coalesced | serial | split | ieee | 当前源码默认方案 |
+| persistent MMAD 实验 | factor | overlap | tail | single | batch | persistent | reuse | coalesced | serial | split | ieee | 已知 timeout；重建设备事件协议前不运行性能 A/B |
+| packed-A 候选 | factor | overlap | tail | single | batch | scoped | reuse | coalesced | serial | packed | ieee | 两次冗余 stage-A MTE3 row-copy 提交的影响 |
+| HF32 候选 | factor | overlap | tail | single | batch | scoped | reuse | coalesced | serial | split | hf32 | Cube 输入舍入的精度与吞吐影响 |
+| tail-scalar 回退 | factor | overlap | tail | single | scalar | scoped | reuse | coalesced | serial | split | ieee | 尾部逐块 API、DMA 启动与同步对照 |
+| task-store 基线 | factor | overlap | tail | single | batch | scoped | reuse | coalesced | serial | split | ieee | 与 overlap 使用相同 batch-tail 指令 |
+| task-store 候选 | factor | overlap | tail | single | batch | scoped | reuse | coalesced | overlap | split | ieee | 跨 task 输出 MTE3 与下一 task Cube 重叠 |
+| scratch 候选 | factor | overlap | tail | pingpong | batch | scoped | reuse | coalesced | serial | split | ieee | 局部 3-bank MTE3/Vector 重叠的影响 |
+| epilogue 候选 | factor | overlap | overlap | single | batch | scoped | reuse | coalesced | serial | split | ieee | 8-row 前移与后续 AIC 重叠的影响 |
+| bridge 对照版 | direct | overlap | tail | single | batch | scoped | reuse | coalesced | serial | split | ieee | pair bridge 减少 Exp 与新增 Mul 的影响 |
+| setup 对照版 | factor | prologue | tail | single | batch | scoped | reuse | coalesced | serial | split | ieee | stage-0 与共享初始化重叠的影响 |
+| mask 对照版 | factor | overlap | tail | single | batch | scoped | per-call | coalesced | serial | split | ieee | 外部 mask 复用减少 Scalar 控制的影响 |
+| db 归约对照版 | factor | overlap | tail | single | batch | scoped | reuse | per-row | serial | split | ieee | 跨行合并减少 Reduce API/Scalar 发射的影响 |
 
 比较时必须固定 commit、物理卡、CANN、目标 shape、warmup/repeat 和 profiler 指标，并要求每个
 变体自己的 clean wheel 完整通过 37/37。性能数字取同一 msprof 进程内丢弃 3 次 warmup 后的
@@ -246,10 +245,10 @@ CATLASS、shape、其余十一维变体身份完全一致，仅允许 `pair_scra
 Cube/Vector/Scalar、MTE1/2/3 与 Fixpipe 中位时间，避免把无关环境差异误判为局部双缓冲收益。
 
 最小 epilogue A/B 应只改变第三维：默认基线使用
-`--pair-gates factor --shared-setup overlap --stage-epilogue tail --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines persistent --vector-mask reuse --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm`，候选使用
-`--pair-gates factor --shared-setup overlap --stage-epilogue overlap --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines persistent --vector-mask reuse --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm`。最小 scratch
+`--pair-gates factor --shared-setup overlap --stage-epilogue tail --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines scoped --vector-mask reuse --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm`，候选使用
+`--pair-gates factor --shared-setup overlap --stage-epilogue overlap --pair-scratch single --tail-blocks batch --task-store serial --mmad-engines scoped --vector-mask reuse --db-reduce coalesced --stage-a split --cube-mode ieee --stage-io gm`。最小 scratch
 A/B 只把 `pair-scratch` 由 `single` 改为 `pingpong`；最小 tail 回退 A/B 只把 `tail-blocks` 从
-`batch` 改为 `scalar`；最小 MMAD A/B 只把 `mmad-engines` 从 `persistent` 回退为 `scoped`；最小 mask
+`batch` 改为 `scalar`；persistent MMAD 在事件协议重建前不进入 A/B；最小 mask
 A/B 只把 `vector-mask` 从 `reuse` 改为 `per-call`；最小 db 归约 A/B 只把
 `db-reduce` 从 `coalesced` 改为 `per-row`。最小 task-store A/B 必须把其他八维固定为
 `factor + overlap + tail + single + batch + persistent + reuse + coalesced`，只把 `task-store` 从 `serial` 改为
@@ -258,8 +257,8 @@ A/B 只把 `vector-mask` 从 `reuse` 改为 `per-call`；最小 db 归约 A/B �
 并保持其余十一维不变。也可用十二个 `source` 复现
 当前提交默认值；不得把 `source` 标签直接写入变体身份，identity 记录的必须是解析后的具体值。
 
-先运行默认 persistent 版取得 grouped key 23 的真实 AIC/AIV bound，并用 scoped clean wheel
-确认 45,056→40 个源码级 MMAD 包络是否转化为实测收益。随后固定 batch tail 对
+先运行默认 scoped 版确认 grouped key 23 可以退出并取得真实 AIC/AIV bound。persistent 分支在
+重建并独立验证 UnitFlag/Fixpipe 协议前不进入性能 A/B。随后固定 batch tail 对
 `store-serial`/`store-overlap` 做最小 A/B，再分别测试局部 scratch ping-pong 与 packed stage-A；
 前者只延后三个立即 MTE3 wait，后者只减少每个非零 stage 的两次 AIV MTE3 row-copy 提交，均不能预设为 4 ms
 的主收益。当前 phase1 的 MTE3
@@ -390,8 +389,8 @@ task 的四次 strided MTE3；AIC 可先消费两个 ready，AIV 仅在清零 ac
 
 stage 3 off-left 使用静态 K32 BlockMmad 加 K16 tail，保留 K48 的归约/抵消次序；off-right
 使用三个独立 M16，不再把三个 early block 拼成一次大 M 调用。不同 BlockMmad 串行共享一个
-CATLASS Resource；off-left/diagonal-left 独立闭环，同一 stage 的 off-right 与 diagonal-right
-共享一个 MMAD 事件包络。这些约束已经写入源码，但仍需 clean build、stride-48
+CATLASS Resource；off-left、每个 off-right、diagonal-right 与 diagonal-left 都独立闭环。
+这些约束已经写入源码，但仍需 clean build、stride-48
 M16/slot canary 和重复 launch 在设备上证明。
 
 当前 key 23 每槽固定为 26,624 个 FP32（104 KiB），以下区间均以 FP32 元素计，右边界不包含：

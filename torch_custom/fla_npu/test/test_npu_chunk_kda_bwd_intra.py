@@ -540,7 +540,7 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     expected_pair_scratch = os.environ.get("KDA_EXPECT_PAIR_SCRATCH", "single")
     expected_tail_blocks = os.environ.get("KDA_EXPECT_TAIL_BLOCKS", "batch")
     expected_task_store = os.environ.get("KDA_EXPECT_TASK_STORE", "serial")
-    expected_mmad_engines = os.environ.get("KDA_EXPECT_MMAD_ENGINES", "persistent")
+    expected_mmad_engines = os.environ.get("KDA_EXPECT_MMAD_ENGINES", "scoped")
     expected_vector_mask = os.environ.get("KDA_EXPECT_VECTOR_MASK", "reuse")
     expected_db_reduce = os.environ.get("KDA_EXPECT_DB_REDUCE", "coalesced")
     expected_stage_a = os.environ.get("KDA_EXPECT_STAGE_A", "split")
@@ -716,7 +716,7 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert grouped.index("KDA_GROUPED_ROW_BLOCK_ELEMENTS =") < grouped.index(
         "KDA_GROUPED_RIGHT_OUTER_ELEMENTS ="
     )
-    assert "RunOffRightPairAic<STAGE, 0, false>" in grouped
+    assert "RunOffRightPairAic<STAGE, 0>" in grouped
     assert "BuildPairInnerGates<STAGE, EARLY, SCRATCH_SET>();" in grouped
     assert "BuildPairBridgeGates();" in grouped
     assert "RunPackedOffLeftAic" in grouped
@@ -1020,8 +1020,6 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
         for row in range(32)
     ]
     assert sorted(coalesced_layout) == sorted(per_row_layout)
-    assert "rightMmad.preSetFlags();" in grouped
-    assert "RunColumnMajorAic<16, 32, false>" in grouped
     assert "BuildAndWritePairB<STAGE, 0, 0, true>" in grouped
     assert "BuildAndWritePairB<STAGE, 1, 1, true>" in grouped
     assert "WaitPairScratchDone<0>();" in grouped
@@ -1212,22 +1210,24 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     packed_aic = grouped_aic[packed_begin:split_begin]
     split_aic = grouped_aic[split_begin:]
     packed_off_left = packed_aic.index("RunPackedOffLeftAic<STAGE>")
-    packed_off_right = packed_aic.index("RunOffRightPairAic<STAGE, 0, false>")
-    packed_diag_right = packed_aic.index("RunPackedDiagRightAic<STAGE, false>")
-    packed_right_drain = packed_aic.index(
-        "rightMmad.finalWaitFlags();", packed_diag_right
-    )
-    packed_diag_left = packed_aic.index(
-        "RunPackedDiagLeftAic<STAGE>", packed_right_drain
-    )
+    packed_off_right = packed_aic.index("RunOffRightPairAic<STAGE, 0>")
+    packed_diag_right = packed_aic.index("RunPackedDiagRightAic<STAGE>")
+    packed_diag_left = packed_aic.index("RunPackedDiagLeftAic<STAGE>")
     assert packed_off_left < packed_off_right < packed_diag_right
-    assert packed_diag_right < packed_right_drain < packed_diag_left
+    assert packed_diag_right < packed_diag_left
+    assert "rightMmad.preSetFlags();" not in packed_aic
+    assert "rightMmad.finalWaitFlags();" not in packed_aic
+    assert "RunOffRightPairAic<STAGE, 0, false>" not in packed_aic
+    assert "RunPackedDiagRightAic<STAGE, false>" not in packed_aic
     off_left = split_aic.index("RunRowMajorAic<32, offPrefix>")
-    off_right = split_aic.index("RunOffRightPairAic<STAGE, 0, false>")
-    diag_right = split_aic.index("RunColumnMajorAic<16, 32, false>")
-    right_drain = split_aic.index("rightMmad.finalWaitFlags();", diag_right)
-    diag_left = split_aic.index("RunRowMajorAic<32, 16>", right_drain)
-    assert off_left < off_right < diag_right < right_drain < diag_left
+    off_right = split_aic.index("RunOffRightPairAic<STAGE, 0>")
+    diag_right = split_aic.index("RunColumnMajorAic<16, 32>")
+    diag_left = split_aic.index("RunRowMajorAic<32, 16>", diag_right)
+    assert off_left < off_right < diag_right < diag_left
+    assert "rightMmad.preSetFlags();" not in split_aic
+    assert "rightMmad.finalWaitFlags();" not in split_aic
+    assert "RunOffRightPairAic<STAGE, 0, false>" not in split_aic
+    assert "RunColumnMajorAic<16, 32, false>" not in split_aic
 
     # Prove the alternate packed-A address mapping independently of CATLASS
     # execution.  A RowMajor [32,prefix] buffer reinterpreted as ColumnMajor
