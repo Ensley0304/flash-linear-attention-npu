@@ -358,6 +358,8 @@ def test_chunk_kda_bwd_intra_grouped_dispatch_source_contract():
     assert "MANIFEST_INVARIANTS" in profile_comparator
     assert "def _verify_hash_manifest(" in profile_comparator
     assert "verify_unfiltered_wheel_build()" in validation_runner
+    assert "cmake_value_is_false()" in validation_runner
+    assert '""|0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|*-NOTFOUND)' in validation_runner
     assert "custom_compile_options.ini" in validation_runner
     assert "custom_tiling_keys.ini" in validation_runner
     assert "CMakeCache.txt" in validation_runner

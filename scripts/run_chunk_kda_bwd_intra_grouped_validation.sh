@@ -407,12 +407,27 @@ verify_clean_catlass() {
     }
 }
 
+cmake_value_is_false() {
+    local normalized=${1^^}
+    case "$normalized" in
+        ""|0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|*-NOTFOUND)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 verify_unfiltered_wheel_build() {
     local build_dir=$1
     local audit_log=$2
     local generated_file
     local found_filter=false
     local audited_files=0
+    local cache_line
+    local cache_entry
+    local cache_value
 
     : >"$audit_log"
     while IFS= read -r -d '' generated_file; do
@@ -431,10 +446,18 @@ verify_unfiltered_wheel_build() {
                 fi
                 ;;
             CMakeCache.txt)
-                if grep -nE -- '^TILING_KEY(:[^=]*)?=[^[:space:]].*$' \
-                    "$generated_file" >>"$audit_log"; then
-                    found_filter=true
-                fi
+                while IFS= read -r cache_line; do
+                    cache_entry=${cache_line#*:}
+                    cache_value=${cache_entry#*=}
+                    if cmake_value_is_false "$cache_value"; then
+                        printf 'tiling_key_cache_value=%s classification=disabled\n' \
+                            "$cache_value" >>"$audit_log"
+                    else
+                        printf '%s\n' "$cache_line" >>"$audit_log"
+                        found_filter=true
+                    fi
+                done < <(grep -nE -- '^TILING_KEY(:[^=]*)?=' \
+                    "$generated_file" || true)
                 ;;
         esac
     done < <(find "$build_dir" -type f \
