@@ -284,6 +284,7 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert len(set(key_values)) == len(key_values), "rowBlock3 prep/Cube/consume keys must be distinct"
 
     assert "KERNEL_TYPE_MIX_AIC_1_2" in source
+    assert '#include "lib/matmul_intf.h"' in source
     assert "if ASCEND_IS_AIC" in source
     assert "BlockMmadTla" in source
     for element in ("ElementA", "ElementB", "ElementC"):

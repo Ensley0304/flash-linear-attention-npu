@@ -10,6 +10,10 @@
 
 #include "kernel_operator.h"
 
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
 #include "catlass/arch/arch.hpp"
