@@ -21,8 +21,6 @@ when supplied it must contain every `(sequence, local_chunk)` pair in canonical 
 
 For BSND, shapes are `q/k=[B,T,H,K]`, `g/dq/dk/dg=[B,T,HV,K]`, `beta/db=[B,T,HV]`, and `dAqk/dAkk=[B,T,HV,BT]`. Other layouts permute the token/head axes consistently. `HV` must be divisible by `H`.
 
-`g` must be the finite chunk-local cumulative base-2-log gate produced by KDA preprocessing. Its per-token increments are non-positive, so each feature is non-increasing within a chunk. The optimized `safe_gate=True` factorization relies on this contract; the standalone operator does not inspect or repair an arbitrary non-monotonic `g` tensor.
-
 Variable-length input uses a flattened token axis and `cu_seqlens`. `chunk_indices`, when supplied, must contain canonical sequence-major `(sequence_id, local_chunk_id)` pairs. The wrapper creates them when omitted.
 
 ## aclnn

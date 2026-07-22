@@ -2,27 +2,9 @@
 
 AscendC implementation of the KDA chunk-local backward kernel. The operator consumes the gradients of the two intra-chunk matrices and updates `dq`, `dk`, `dbeta`, and per-feature `dg` in FP32.
 
-**Validation status (2026-07-22):** the scoped-event, non-aliasing grouped key 23 artifact also timed out in the first BF16 target-shape launch. Delivery dispatch is therefore rolled back to block-wise AIV key 7; both mixed key 15 and grouped key 23 remain compiled but are unreachable from normal tiling. A clean key-7-only wheel reconfirmed the formerly hanging BF16 target shape on physical device 3 (`1 passed in 10.01s`), but the subsequent stable-key (`0,2,5,7`) suite exposed a key-7 diagonal gate-reassociation NaN in the new pair-bridge extreme-value guard (`14 passed, 1 failed`). The source now uses directional endpoint references for key-7 diagonal blocks, and quick validation runs both the target launch and that exact guard before another full37 attempt. Device validation of this fix is pending; `<10 ms` Cube work remains paused until it passes.
+**Rollback baseline (2026-07-22):** the implementation has been restored to the clean AIV block-wise snapshot from commit `75535cd`. That exact snapshot passed all 22 then-existing NPU tests and measured 48.660 ms kernel time (51.107 ms end-to-end) for `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`. The later key-15/key-23 mixed-Cube experiments and their diagnostic infrastructure have been removed. One instruction-count-neutral correction is retained on top: diagonal safe-gate factorization uses directional endpoints to prevent a legal large BF16 value from producing `0 * Inf = NaN`. This corrected baseline must pass the original 22 cases plus the new endpoint-reassociation guard before its performance number is reconfirmed.
 
-Grouped key 23 defaults `KDA_GROUPED_TSCM_AB_DOUBLE_BUFFER=false`. Its producer/consumer pipeline uses two GM workspace slots: while AIC consumes one slot, the two AIVs prepare the other. The main 179,936-byte UB slab is single-buffered, while CATLASS still uses its internal L1/L0 ping-pong. A source-level TSCM experiment is retained for non-A2 investigation, but it must not be enabled for DAV_2201: the AscendC A2 `UB -> TSCM` implementation is software-emulated through GM and requires a registered Matmul KFC client, which this direct CATLASS kernel does not own. Consequently it neither provides a physical on-chip AIV-to-AIC path nor removes the A/B GM round trip on A2.
-
-The grouped source also coalesces each stage's equally spaced off-right C row tiles into one strided MTE2 request and one contiguous FP32 `MulAddDst`. On the producer side, adjacent `q*gate` and `beta*k*gate` scratch tiles are written into one right-B matrix by one strided MTE3 request; the two physical-AIV row windows of each left C are likewise gathered by one MTE2 request. These changes reduce independent API submissions without changing transferred bytes, gate references, operands, destinations, or per-element arithmetic. Each physical AIV now computes its invariant eight-row `rowStart` once at kernel entry and carries it through every task/stage; the three persistent right-outer blocks are explicitly unrolled so their UB offsets remain compile-time constants.
-
-The primary implementation mode is `safe_gate=true`; `safe_gate=false` remains a separate compiled branch for compatibility. All safe shapes, including the exact DAV_2201 target domain (`BF16`, `BT=64`, `K=128`, dense full chunks, `H=HV`), currently select the 16-token AIV block-wise key 5/7 implementation. Grouped key 23 is retained only as an experimental four-stage, 17-GEMM AIC/AIV design.
-
-The source default keeps `db` reduction and `dk_left*beta` in the final whole-task tail; the compile-time `KDA_GROUPED_OVERLAP_STAGE_EPILOGUE=true` candidate instead finalizes each 8-row block after its `ConsumeStage` so stages 0--2 may overlap that AIV work with the following AIC stage. The old whole-tail path remains the rollback.
-
-`KDA_GROUPED_DOUBLE_BUFFER_PAIR_SCRATCH=true` is an independent candidate that adds only a second three-bank pair scratch set: its 192,256-byte UB slab remains below the 192-KiB DAV_2201 limit and overlaps a previous pair's MTE3 drain with the next pair's Vector work. The source default is `false`, retaining the 179,936-byte single-scratch path; its final 96 bytes keep the fixed per-AIV causal mask and zero vector resident across all tasks. This is local scratch ping-pong, not a full copy of the UB data path, and it does not change any gate formula or GEMM order.
-
-The source now defaults `KDA_GROUPED_BATCH_TAIL_BLOCKS=true`. It gathers the four disjoint 8x128 output blocks with four strided MTE2 submissions, applies the same six Vector expressions once over 4096 FP32 elements, and scatters them with four MTE3 submissions. This reuses retired UB banks, preserves every element's FP32 operation order, and does not enlarge the UB slab. Setting it to `false` restores the per-block scalar rollback for clean-wheel bisection.
-
-The grouped source defaults `KDA_GROUPED_ENABLE_UNIT_FLAG=false` and `KDA_GROUPED_PERSISTENT_MMAD_ENGINES=false`, but host constants `ENABLE_MIXED_SAFE=false` and `ENABLE_GROUPED_SAFE=false` prevent both mixed kernels from being dispatched. The dedicated C tail and all grouped experiments remain available for later controlled builds. A2 is the current validation target; A3 requires an independent device run. Normal `safe_gate=true` and `safe_gate=false` execution currently stays on keys 0--7.
-
-`KDA_GROUPED_OVERLAP_TASK_STORE=true` is an additional, default-off deep-pipeline candidate. With the batched whole-task tail enabled, it retains completed `dq/dk/dg` in the three accumulator banks, prepares and publishes the next task's first two Cube stages, and then drains the previous task's four output DMAs. It adds no UB allocation and preserves each output's FP32 operation order; `store-serial` and `store-overlap` still require separate clean-wheel precision and same-card profiling evidence.
-
-`KDA_GROUPED_PACK_STAGE_A=true` is a precision-neutral, default-off transfer-fusion candidate. It writes the already-masked off-diagonal prefix and diagonal from the same raw dA slab into one `32 x prefix` RowMajor workspace matrix. The original per-path safe-gate references, all 17 logical GEMMs, FP32 accumulation order, two-slot workspace size, and UB budget remain unchanged; only two redundant AIV MTE3 row-copy submissions per nonzero stage are removed. The runner exposes the clean-wheel A/B as `--stage-a split|packed`.
-
-`KDA_GROUPED_USE_HF32_CUBE` is a separate, default-off throughput experiment. `false` keeps the delivery baseline's IEEE-FP32 MMAD inputs; `true` lets A2 round both FP32 Cube operands to HF32 before MMAD. The runner exposes this as `--cube-mode ieee|hf32`. Because the mode changes numerical precision, an HF32 wheel is accepted only if the full 37-case suite, including the sparse cancellation and extreme safe-gate guards, passes before same-card profiling.
+The primary delivery path is `safe_gate=true`; `safe_gate=false` remains a separate compiled branch for compatibility. The safe path uses one AIV launch, 16-token block-wise accumulation, resident `[chunk, 32]` q/k/g feature tiles, FP32 accumulation, dense/GVA/varlen support, and no sequence-sized workspace. The proven row-wise safe implementation remains compiled under legacy tiling keys for rollback. Only tiling keys 0/1/2/3/5/7 exist in this baseline.
 
 Public Python API:
 
@@ -40,16 +22,6 @@ dq, dk, db, dg = ascendc.chunk_kda_bwd_intra(
 ```
 
 Supported layouts are uppercase `BSND`, `BNSD`, `TND`, and `NTD`. `q/k` must share FP16 or BF16 dtype. Public `g/beta` may be FP32 or BF16 and are normalized to FP32 before L0; matrix gradients, accumulated gradients, and outputs are FP32. `K` must be a multiple of 16 in `[16, 256]`; the kernel uses 32-feature tiles and a 16-feature tail when needed. Chunk size is 64 or 128.
-
-`g` is already the finite chunk-local cumulative gate in base-2 log space: upstream applies `RCP_LN2=log2(e)` once before the cumulative sum. Its per-token increments are non-positive, so every feature is non-increasing inside a chunk. This operator must not apply `log2(e)` again; AscendC evaluates `exp2(g_i-g_j)` as `Exp((g_i-g_j)*ln(2))`. The grouped pair-bridge factorization relies on this cumulative-gate contract; `safe_gate=True` does not sanitize arbitrary non-monotonic tensors supplied to the standalone API.
-
-Reproduce the primary `B=1, T=8192, H=HV=32, K=128, BT=64, BF16,
-safe_gate=true` performance case with:
-
-```bash
-python3 torch_custom/fla_npu/test/benchmark_npu_chunk_kda_bwd_intra.py \
-    --device 0 --warmup 3 --repeat 10
-```
 
 See [design.md](docs/design.md), [api.md](docs/api.md), [performance.md](docs/performance.md), and
 [validation.md](docs/validation.md) for formulas, interfaces, optimization notes, and the verification matrix.

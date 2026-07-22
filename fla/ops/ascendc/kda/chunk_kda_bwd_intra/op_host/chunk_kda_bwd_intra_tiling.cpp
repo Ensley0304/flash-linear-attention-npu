@@ -25,26 +25,6 @@ constexpr size_t ATTR_SAFE_GATE = 1;
 constexpr size_t ATTR_TOTAL_CHUNKS = 2;
 constexpr int64_t BC = 16;
 constexpr bool ENABLE_BLOCKWISE_SAFE = true;
-// Delivery-stability rollback: the original block-wise AIV key 7 is the last
-// implementation with clean-wheel 22/22 and repeated-launch device evidence.
-// Both mixed AIC/AIV candidates remain compiled for controlled experiments,
-// but neither may be selected by normal tiling until it independently passes
-// the single-launch exit gate.  This keeps the target BF16/safe domain runnable
-// while key 15/23 event lifecycles are repaired offline.
-constexpr bool ENABLE_MIXED_SAFE = false;
-constexpr bool ENABLE_GROUPED_SAFE = false;
-constexpr uint64_t MIXED_TILING_KEY = 15;
-constexpr uint64_t GROUPED_TILING_KEY = 23;
-constexpr int64_t MIXED_CHUNK_SIZE = 64;
-constexpr int64_t MIXED_HEAD_DIM = 128;
-constexpr uint64_t MIXED_SLOT_ELEMENTS = 15360;
-constexpr uint64_t GROUPED_SLOT_ELEMENTS = 49152;
-constexpr uint64_t MIXED_SLOT_COUNT = 2;
-constexpr uint64_t MIXED_FP32_BYTES = sizeof(float);
-static_assert(MIXED_SLOT_ELEMENTS * MIXED_FP32_BYTES % 512 == 0,
-              "Each mixed-path workspace slot must remain 512-byte aligned");
-static_assert(GROUPED_SLOT_ELEMENTS * MIXED_FP32_BYTES % 512 == 0,
-              "Each grouped-path workspace slot must remain 512-byte aligned");
 } // namespace
 
 ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
@@ -102,28 +82,14 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const int64_t chunks = isVarLen ? totalChunks : batch * totalChunks;
-    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    const bool useFastDomain = safeGate && qDesc->GetDataType() == ge::DT_BF16 &&
-                               chunkSize == MIXED_CHUNK_SIZE && k == MIXED_HEAD_DIM && !isVarLen &&
-                               (t % MIXED_CHUNK_SIZE) == 0 && h == hv &&
-                               platform.GetCurNpuArch() == NpuArch::DAV_2201;
-    const bool useGroupedFast = ENABLE_GROUPED_SAFE && useFastDomain;
-    const bool useMixedFast = !useGroupedFast && ENABLE_MIXED_SAFE && useFastDomain;
-    const bool useAicFast = useGroupedFast || useMixedFast;
     const int64_t blockCount = (chunkSize + BC - 1) / BC;
-    const int64_t taskCount = chunks * hv * (useAicFast ? 1 : blockCount);
-    const uint32_t physicalCoreNum = useAicFast ? platform.GetCoreNumAic() : platform.GetCoreNumAiv();
-    const uint32_t blockDim = static_cast<uint32_t>(std::min<int64_t>(taskCount, physicalCoreNum));
+    const int64_t chunks = isVarLen ? totalChunks : batch * totalChunks;
+    const int64_t taskCount = chunks * hv * blockCount;
+    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const uint32_t aivNum = platform.GetCoreNumAiv();
+    const uint32_t blockDim = static_cast<uint32_t>(std::min<int64_t>(taskCount, aivNum));
     context->SetBlockDim(blockDim == 0 ? 1 : blockDim);
-    const uint64_t slotElements = useGroupedFast ? GROUPED_SLOT_ELEMENTS : MIXED_SLOT_ELEMENTS;
-    const uint64_t userWorkspace = useAicFast ?
-        static_cast<uint64_t>(blockDim == 0 ? 1 : blockDim) * MIXED_SLOT_COUNT *
-            slotElements * MIXED_FP32_BYTES : 0;
-    context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize() + userWorkspace;
-    if (useAicFast) {
-        context->SetScheduleMode(1);
-    }
+    context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize();
 
     ChunkKdaBwdIntraTilingData tiling;
     tiling.set_batch(batch);
@@ -138,14 +104,10 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     tiling.set_dataType(qDesc->GetDataType() == ge::DT_BF16 ? 1 : 0);
     tiling.set_safeGate(safeGate ? 1 : 0);
     const uint64_t baseTilingKey = (qDesc->GetDataType() == ge::DT_BF16 ? 2 : 0) + (safeGate ? 1 : 0);
-    // Keys 0..3 retain the row-wise implementation and keys 5/7 retain the
-    // AIV block-wise safe path. Key 15 is the pair-wise AIC/AIV fallback and
-    // key 23 is the target-domain grouped Cube path. Unsupported shapes still
-    // fall back immediately; A2 clean-wheel exit/precision/performance remains
-    // mandatory before treating the grouped implementation as delivered.
-    context->SetTilingKey(useGroupedFast ? GROUPED_TILING_KEY :
-        (useMixedFast ? MIXED_TILING_KEY :
-         baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0)));
+    // Keys 0..3 retain the proven row-wise implementation.  The optimized
+    // safe-gate implementation uses keys 5/7 so the legacy instances remain
+    // available as an immediate compile-time rollback while profiling.
+    context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;
