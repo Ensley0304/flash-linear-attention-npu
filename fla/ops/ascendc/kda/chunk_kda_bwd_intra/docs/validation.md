@@ -10,7 +10,7 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| rowBlock3 Cube 源码契约 | 本地已通过 | key12 单次 L0 登记、MIX 1:2、user workspace、FP32 MMAD/HF32 off、对称反转 flag |
+| rowBlock3 Cube 源码契约 | 本地已通过 | key12 单次 L0 登记、MIX 1:2、受保护的 MIX wrapper 声明、user workspace、FP32 MMAD/HF32 off、对称反转 flag |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
 | CANN host/kernel 编译 | key12 待重跑 | 三 launch canary 已 clean build；单 kernel MIX 分支需单算子快速编译 |
 | AscendC NPU 精度 | 三 launch 已通过 | 三 launch canary 为 28 passed；key12 必须重新完整通过 28 项，不能沿用旧 wheel 结论 |

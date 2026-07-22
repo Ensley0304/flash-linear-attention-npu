@@ -36,6 +36,13 @@
 #include "tla/tensor.hpp"
 #endif
 
+// CANN's MIX wrapper injects matmul::clearWorkspace before entering the
+// user kernel.  The declaration is required even though the contraction
+// itself uses CATLASS direct BlockMmad rather than the Matmul API server.
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+
 using namespace AscendC;
 
 namespace {

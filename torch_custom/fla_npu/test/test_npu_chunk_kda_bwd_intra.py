@@ -311,7 +311,11 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert "AllocTensor" not in fastpath_body
     assert re.search(r"nullptr, nullptr, nullptr, 4,", fastpath_body)
 
-    assert '#include "lib/matmul_intf.h"' not in kernel_source
+    assert '#include "lib/matmul_intf.h"' in kernel_source
+    assert re.search(
+        r"#ifndef TORCH_MODE\s*#include \"lib/matmul_intf\.h\"\s*#endif",
+        kernel_source,
+    ), "the CANN MIX wrapper needs a guarded matmul::clearWorkspace declaration"
     assert "CalcTschBlockDim" not in source
     assert "BlockMmadTla" in source
     for element in ("ElementA", "ElementB", "ElementC"):
