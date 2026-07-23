@@ -10,11 +10,11 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| rowBlock3 Cube 源码契约 | 本地已通过 | key12 单次 L0 登记、MIX 1:2、受保护的 MIX wrapper 声明、user workspace、FP32 MMAD/HF32 off、对称反转 flag |
+| rowBlock3 Cube 源码契约 | 本地已通过 | key12 单次 L0、MIX 1:2、BK64/BT64 专用 AIV、BK32 `db` 分段归约、FP32 MMAD/HF32 off、对称反转 flag |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | key12 待重跑 | 三 launch canary 已 clean build；单 kernel MIX 分支需单算子快速编译 |
-| AscendC NPU 精度 | 三 launch 已通过 | 三 launch canary 为 28 passed；key12 必须重新完整通过 28 项，不能沿用旧 wheel 结论 |
-| Profiling/性能优化 | 基线已采集 | key7 为 48.660 ms；三 launch canary 合计约 46.011 ms；key12 待采集且必须只有一条 KDA 记录 |
+| CANN host/kernel 编译 | BK64 待重跑 | BK32 key12 已 clean build；当前 tile 专用化需重新单算子快速编译 |
+| AscendC NPU 精度 | BK32 key12 已通过 | 单 kernel 为 28 passed；BK64 必须重新完整通过，不能沿用旧 wheel 结论 |
+| Profiling/性能优化 | BK32 已采集 | key7 48.660 ms、BK32 key12 49.168 ms且只有一条 KDA；BK64 待采集 |
 
 ## A2 精度与性能基线（2026-07-21）
 
@@ -104,7 +104,7 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 映射；两个 AIV 子核每 slot 各 set 一次 ready、各 wait 一次 done，AIC 各 wait/set 一次。
 
 稳定 key7 仍是 fallback。目标 shape workspace 为 `4096 * 46 KiB = 184 MiB`，第一版没有
-double buffer 或 slot 复用。建议按以下顺序放行：
+double buffer 或 slot 复用。BK64 不修改该 workspace 或同步协议。建议按以下顺序放行：
 
 1. 源码契约和 Python collect 通过；
 2. 单算子快速 build，确认 key12 MIX 实例进入 wheel；
@@ -113,8 +113,8 @@ double buffer 或 slot 复用。建议按以下顺序放行：
 5. 完整 28 项通过，原容差不删除、不放宽；
 6. msprof 只出现一条 `ChunkKdaBwdIntra`，该行同时具有 AIC/AIV 时间，再与 key7 比较。
 
-上述 key12 NPU 项当前均待验证。未满足第 3～6 项前，不扩大实验 fastpath eligibility，不移除
-key7，也不引入 double buffer、persistent MMAD 或 workspace ring。
+BK32 key12 已完成上述门禁；当前 BK64 改动必须重新执行第 2～6 项。未满足第 3～6 项前，不扩大
+实验 fastpath eligibility，不移除 key7，也不引入 double buffer、persistent MMAD 或 workspace ring。
 
 板端通过门槛：四个输出均 finite，且逐输出通过测试中的 CPU FP64 golden 容差。若 safe case 失败，应先分别对比 `dq_local`、`dk_left_pre`、`dk_right`，重点检查 16-token 首/中/尾参考点的内外指数方向。
 

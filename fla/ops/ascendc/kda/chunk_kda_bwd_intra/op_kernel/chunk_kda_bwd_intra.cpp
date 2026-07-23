@@ -50,6 +50,9 @@ constexpr uint32_t BC = 16;
 constexpr uint32_t BK = 32;
 constexpr uint32_t MAX_BT = 128;
 constexpr uint32_t MAX_K = 256;
+constexpr uint32_t KDA_MIX_FEATURE_TILE = 64;
+constexpr uint32_t KDA_MIX_CHUNK_CAPACITY = 64;
+constexpr uint32_t KDA_DB_REDUCTION_TILE = 32;
 constexpr float LN2 = 0.69314718055994530942f;
 constexpr uint64_t KDA_ROW3_PREP_TILING_KEY = 9;
 constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
@@ -322,7 +325,8 @@ private:
     uint64_t taskCount_ = 0, usedCoreNum_ = 1;
 };
 
-template <typename T, bool SAFE_GATE, bool BLOCKWISE = false, bool CUBE_ROW3 = false>
+template <typename T, bool SAFE_GATE, bool BLOCKWISE = false, bool CUBE_ROW3 = false,
+          uint32_t FEATURE_TILE = BK, uint32_t CHUNK_CAPACITY = MAX_BT>
 class ChunkKdaBwdIntraKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
@@ -363,56 +367,63 @@ public:
         }
         pipe_ = pipe;
 
-        pipe_->InitBuffer(dARowQBuf_, BC * MAX_BT * sizeof(float));
-        pipe_->InitBuffer(dARowKBuf_, BC * MAX_BT * sizeof(float));
-        pipe_->InitBuffer(dAColQBuf_, MAX_BT * BC * sizeof(float));
-        pipe_->InitBuffer(dAColKBuf_, MAX_BT * BC * sizeof(float));
-        pipe_->InitBuffer(betaBuf_, MAX_BT * sizeof(float));
+        static_assert(FEATURE_TILE == 32 || FEATURE_TILE == 64,
+                      "ChunkKdaBwdIntra feature tile must fit one FP32 vector mask");
+        static_assert(CHUNK_CAPACITY == 64 || CHUNK_CAPACITY == 128,
+                      "ChunkKdaBwdIntra chunk capacity must match a public chunk size");
+        static_assert((FEATURE_TILE * sizeof(float) / 32) <= 255,
+                      "ChunkKdaBwdIntra vector repeat stride must fit uint8_t");
+        pipe_->InitBuffer(dARowQBuf_, BC * CHUNK_CAPACITY * sizeof(float));
+        pipe_->InitBuffer(dARowKBuf_, BC * CHUNK_CAPACITY * sizeof(float));
+        pipe_->InitBuffer(dAColQBuf_, CHUNK_CAPACITY * BC * sizeof(float));
+        pipe_->InitBuffer(dAColKBuf_, CHUNK_CAPACITY * BC * sizeof(float));
+        pipe_->InitBuffer(betaBuf_, CHUNK_CAPACITY * sizeof(float));
         if constexpr (BLOCKWISE) {
-            // The optimized safe-gate path keeps one complete [curT, BK]
+            // The optimized safe-gate path keeps one complete
+            // [curT, FEATURE_TILE]
             // source feature tile in UB.  q/k stay typed only for the GM
             // transfer and are cast once into the FP32 resident cache.
-            pipe_->InitBuffer(dARowQTransBuf_, MAX_BT * BC * sizeof(float));
-            pipe_->InitBuffer(dARowKTransBuf_, MAX_BT * BC * sizeof(float));
-            pipe_->InitBuffer(qTypedBuf_, MAX_BT * BK * sizeof(T));
-            pipe_->InitBuffer(kTypedBuf_, MAX_BT * BK * sizeof(T));
-            pipe_->InitBuffer(qSrcBuf_, MAX_BT * BK * sizeof(float));
-            pipe_->InitBuffer(kSrcBuf_, MAX_BT * BK * sizeof(float));
-            pipe_->InitBuffer(gSrcBuf_, MAX_BT * BK * sizeof(float));
-            pipe_->InitBuffer(gateBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(tmp0Buf_, BK * sizeof(float));
+            pipe_->InitBuffer(dARowQTransBuf_, CHUNK_CAPACITY * BC * sizeof(float));
+            pipe_->InitBuffer(dARowKTransBuf_, CHUNK_CAPACITY * BC * sizeof(float));
+            pipe_->InitBuffer(qTypedBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(T));
+            pipe_->InitBuffer(kTypedBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(T));
+            pipe_->InitBuffer(qSrcBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(kSrcBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(gSrcBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(gateBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(tmp0Buf_, FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(tmp1Buf_, BC * 8 * sizeof(float));
-            pipe_->InitBuffer(dqAccBuf_, BC * BK * sizeof(float));
-            pipe_->InitBuffer(dkLeftBuf_, BC * BK * sizeof(float));
-            pipe_->InitBuffer(dkRightBuf_, BC * BK * sizeof(float));
-            pipe_->InitBuffer(out0Buf_, BC * BK * sizeof(float));
-            pipe_->InitBuffer(out1Buf_, BC * BK * sizeof(float));
-            pipe_->InitBuffer(out2Buf_, BC * BK * sizeof(float));
-            pipe_->InitBuffer(blockTmpBuf_, BC * BK * sizeof(float));
+            pipe_->InitBuffer(dqAccBuf_, BC * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(dkLeftBuf_, BC * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(dkRightBuf_, BC * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(out0Buf_, BC * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(out1Buf_, BC * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(out2Buf_, BC * FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(blockTmpBuf_, BC * FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(dbCompactBuf_, BC * sizeof(float));
         } else {
-            pipe_->InitBuffer(qTypedBuf_, BK * sizeof(T));
-            pipe_->InitBuffer(kTypedBuf_, BK * sizeof(T));
-            pipe_->InitBuffer(qSrcBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(kSrcBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(gSrcBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(qSelfBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(kSelfBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(gSelfBuf_, BK * sizeof(float));
+            pipe_->InitBuffer(qTypedBuf_, FEATURE_TILE * sizeof(T));
+            pipe_->InitBuffer(kTypedBuf_, FEATURE_TILE * sizeof(T));
+            pipe_->InitBuffer(qSrcBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(kSrcBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(gSrcBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(qSelfBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(kSelfBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(gSelfBuf_, FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(gLeftRefBuf_, MAX_K * sizeof(float));
             pipe_->InitBuffer(gRightRefBuf_, MAX_K * sizeof(float));
             if constexpr (SAFE_GATE) {
                 pipe_->InitBuffer(gDiagRefBuf_, MAX_K * sizeof(float));
             }
-            pipe_->InitBuffer(gateBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(tmp0Buf_, BK * sizeof(float));
-            pipe_->InitBuffer(tmp1Buf_, BK * sizeof(float));
-            pipe_->InitBuffer(dqAccBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(dkLeftBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(dkRightBuf_, BK * sizeof(float));
-            pipe_->InitBuffer(out0Buf_, BK * sizeof(float));
-            pipe_->InitBuffer(out1Buf_, BK * sizeof(float));
-            pipe_->InitBuffer(out2Buf_, BK * sizeof(float));
+            pipe_->InitBuffer(gateBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(tmp0Buf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(tmp1Buf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(dqAccBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(dkLeftBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(dkRightBuf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(out0Buf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(out1Buf_, FEATURE_TILE * sizeof(float));
+            pipe_->InitBuffer(out2Buf_, FEATURE_TILE * sizeof(float));
         }
         pipe_->InitBuffer(reduceBuf_, 256 * sizeof(float));
         pipe_->InitBuffer(scalarBuf_, 32);
@@ -735,8 +746,9 @@ private:
         Duplicate(dbAcc, 0.0f, 1);
         PipeBarrier<PIPE_V>();
 
-        for (uint64_t d = 0; d < kDim_; d += BK) {
-            const uint32_t curK = static_cast<uint32_t>((kDim_ - d < BK) ? kDim_ - d : BK);
+        for (uint64_t d = 0; d < kDim_; d += FEATURE_TILE) {
+            const uint32_t curK = static_cast<uint32_t>(
+                (kDim_ - d < FEATURE_TILE) ? kDim_ - d : FEATURE_TILE);
             LocalTensor<float> qSelf = qSelfBuf_.Get<float>();
             LocalTensor<float> kSelf = kSelfBuf_.Get<float>();
             LocalTensor<float> gSelf = gSelfBuf_.Get<float>();
@@ -1062,13 +1074,13 @@ private:
         LocalTensor<float> kCache = kSrcBuf_.Get<float>();
         LocalTensor<float> gCache = gSrcBuf_.Get<float>();
         // DataCopyPad padding can only complete the current 32-byte data
-        // block.  It must not be used to create the fixed BK row pitch (for
+        // block.  It must not be used to create the fixed FEATURE_TILE row pitch (for
         // example, K=16 would request 16 FP32 padding elements).  Keep the
         // source rows compact and express the UB gap with dstStride instead.
         const uint32_t qkDstStride =
-            static_cast<uint32_t>((BK - curK) * sizeof(T) / 32);
+            static_cast<uint32_t>((FEATURE_TILE - curK) * sizeof(T) / 32);
         const uint32_t gDstStride =
-            static_cast<uint32_t>((BK - curK) * sizeof(float) / 32);
+            static_cast<uint32_t>((FEATURE_TILE - curK) * sizeof(float) / 32);
         DataCopyExtParams qkParams{static_cast<uint16_t>(curT),
                                    static_cast<uint32_t>(curK * sizeof(T)),
                                    static_cast<uint32_t>((kDim_ - curK) * sizeof(T)),
@@ -1084,7 +1096,7 @@ private:
         DataCopyPad(kTyped, k_[QOffset(b, h, chunkStart, d)], qkParams, typedPad);
         DataCopyPad(gCache, g_[VOffset(b, hv, chunkStart, d)], gParams, floatPad);
         SyncMte2ToV();
-        const uint32_t cacheCount = static_cast<uint32_t>(curT * BK);
+        const uint32_t cacheCount = static_cast<uint32_t>(curT * FEATURE_TILE);
         Cast(qCache, qTyped, RoundMode::CAST_NONE, cacheCount);
         Cast(kCache, kTyped, RoundMode::CAST_NONE, cacheCount);
         PipeBarrier<PIPE_V>();
@@ -1097,13 +1109,14 @@ private:
         LocalTensor<float> product = blockTmpBuf_.Get<float>();
         Brcb(coefficientBrcb, coefficients, static_cast<uint8_t>(BC / 8), {1, 8});
         PipeBarrier<PIPE_V>();
-        BinaryRepeatParams mulParams{1, 1, 0, static_cast<uint8_t>(BK * sizeof(float) / 32), 0, 1};
+        BinaryRepeatParams mulParams{
+            1, 1, 0, static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32), 0, 1};
         Mul(product, common, coefficientBrcb, curK, static_cast<uint8_t>(BC), mulParams);
         PipeBarrier<PIPE_V>();
         BinaryRepeatParams addParams{1, 1, 1,
-                                    static_cast<uint8_t>(BK * sizeof(float) / 32),
-                                    static_cast<uint8_t>(BK * sizeof(float) / 32),
-                                    static_cast<uint8_t>(BK * sizeof(float) / 32)};
+                                    static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32),
+                                    static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32),
+                                    static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32)};
         Add(acc, acc, product, curK, static_cast<uint8_t>(BC), addParams);
         PipeBarrier<PIPE_V>();
     }
@@ -1142,7 +1155,7 @@ private:
         LocalTensor<float> outK = out1Buf_.Get<float>();
         LocalTensor<float> outG = out2Buf_.Get<float>();
         const uint32_t dstStride =
-            static_cast<uint32_t>((BK - curK) * sizeof(float) / 32);
+            static_cast<uint32_t>((FEATURE_TILE - curK) * sizeof(float) / 32);
         DataCopyExtParams params{static_cast<uint16_t>(rowCount),
                                  static_cast<uint32_t>(curK * sizeof(float)),
                                  static_cast<uint32_t>((kDim_ - curK) * sizeof(float)),
@@ -1164,7 +1177,7 @@ private:
         LocalTensor<float> outG = out2Buf_.Get<float>();
         DataCopyExtParams params{static_cast<uint16_t>(rowCount),
                                  static_cast<uint32_t>(curK * sizeof(float)),
-                                 static_cast<uint32_t>((BK - curK) * sizeof(float) / 32),
+                                 static_cast<uint32_t>((FEATURE_TILE - curK) * sizeof(float) / 32),
                                  static_cast<uint32_t>((kDim_ - curK) * sizeof(float)), 0};
         SyncVToMte3();
         DataCopyPad(dqOut_[VOffset(b, hv, chunkStart + rowBegin, d)], outQ, params);
@@ -1177,7 +1190,8 @@ private:
     __aicore__ inline void LoadCubeRow3Prefix(uint64_t cubeTask, uint64_t d, uint32_t curK,
                                                LocalTensor<float> dqAcc, LocalTensor<float> dkLeft)
     {
-        const uint32_t dstStride = static_cast<uint32_t>((BK - curK) * sizeof(float) / 32);
+        const uint32_t dstStride = static_cast<uint32_t>(
+            (FEATURE_TILE - curK) * sizeof(float) / 32);
         DataCopyExtParams params{static_cast<uint16_t>(BC), static_cast<uint32_t>(curK * sizeof(float)),
                                  static_cast<uint32_t>((KDA_ROW3_HEAD_DIM - curK) * sizeof(float)),
                                  dstStride, 0};
@@ -1207,7 +1221,7 @@ private:
         LocalTensor<float> dkLeftDiag = out1Buf_.Get<float>();
         LocalTensor<float> dkRightFuture = out2Buf_.Get<float>();
         LocalTensor<float> gate = gateBuf_.Get<float>();
-        const uint32_t blockElements = BC * BK;
+        const uint32_t blockElements = BC * FEATURE_TILE;
         bool useCubeRow3 = false;
         if constexpr (CUBE_ROW3) {
             useCubeRow3 = curT == 64 && rowBegin == KDA_ROW3_SOURCE_COUNT &&
@@ -1231,30 +1245,30 @@ private:
         PipeBarrier<PIPE_V>();
 
         const uint64_t rowEnd = rowBegin + rowCount;
-        LocalTensor<float> gLeftRef = gCache[rowBegin * BK];
-        LocalTensor<float> gRightRef = gCache[(rowEnd - 1) * BK];
+        LocalTensor<float> gLeftRef = gCache[rowBegin * FEATURE_TILE];
+        LocalTensor<float> gRightRef = gCache[(rowEnd - 1) * FEATURE_TILE];
 
         if constexpr (CUBE_ROW3) {
             if (!useCubeRow3) {
                 for (uint64_t source = 0; source < rowBegin; ++source) {
-                    LocalTensor<float> kSource = kCache[source * BK];
-                    BuildGate(gate, gLeftRef, gCache[source * BK], curK);
+                    LocalTensor<float> kSource = kCache[source * FEATURE_TILE];
+                    BuildGate(gate, gLeftRef, gCache[source * FEATURE_TILE], curK);
                     AccumulateLeftSource(dqAcc, dkLeft, kSource, gate,
                                          rowQ[source * BC], rowK[source * BC], curK);
                 }
             }
         } else {
             for (uint64_t source = 0; source < rowBegin; ++source) {
-                LocalTensor<float> kSource = kCache[source * BK];
-                BuildGate(gate, gLeftRef, gCache[source * BK], curK);
+                LocalTensor<float> kSource = kCache[source * FEATURE_TILE];
+                BuildGate(gate, gLeftRef, gCache[source * FEATURE_TILE], curK);
                 AccumulateLeftSource(dqAcc, dkLeft, kSource, gate,
                                      rowQ[source * BC], rowK[source * BC], curK);
             }
         }
         for (uint64_t source = rowBegin; source < rowEnd; ++source) {
-            LocalTensor<float> qSource = qCache[source * BK];
-            LocalTensor<float> kSource = kCache[source * BK];
-            LocalTensor<float> gSource = gCache[source * BK];
+            LocalTensor<float> qSource = qCache[source * FEATURE_TILE];
+            LocalTensor<float> kSource = kCache[source * FEATURE_TILE];
+            LocalTensor<float> gSource = gCache[source * FEATURE_TILE];
             // Keep the feature-side gate <= 1.  A midpoint reference can form
             // Inf from a large, legal BF16 feature before a zero dA coefficient
             // is applied, turning an otherwise finite contribution into NaN.
@@ -1266,17 +1280,17 @@ private:
                                   colQ[source * BC], colK[source * BC], curK);
         }
         for (uint64_t source = rowEnd; source < curT; ++source) {
-            LocalTensor<float> qSource = qCache[source * BK];
-            LocalTensor<float> kSource = kCache[source * BK];
-            LocalTensor<float> gSource = gCache[source * BK];
+            LocalTensor<float> qSource = qCache[source * FEATURE_TILE];
+            LocalTensor<float> kSource = kCache[source * FEATURE_TILE];
+            LocalTensor<float> gSource = gCache[source * FEATURE_TILE];
             BuildGate(gate, gSource, gRightRef, curK);
             AccumulateRightSource(dkRightFuture, qSource, kSource, gate,
                                   colQ[source * BC], colK[source * BC], curK);
         }
 
         for (uint64_t row = 0; row < rowCount; ++row) {
-            const uint64_t rowOffset = row * BK;
-            LocalTensor<float> gSelf = gCache[(rowBegin + row) * BK];
+            const uint64_t rowOffset = row * FEATURE_TILE;
+            LocalTensor<float> gSelf = gCache[(rowBegin + row) * FEATURE_TILE];
             if (rowBegin > 0) {
                 BuildGate(gate, gSelf, gLeftRef, curK);
                 Mul(dqAcc[rowOffset], dqAcc[rowOffset], gate, curK);
@@ -1306,16 +1320,25 @@ private:
         // order.  Each row reduction remains independent and FP32.
         LocalTensor<float> blockTmp = blockTmpBuf_.Get<float>();
         LocalTensor<float> dbAcc = dbAccBuf_.Get<float>();
-        const uint32_t validBlockElements = static_cast<uint32_t>(rowCount * BK);
-        Mul(blockTmp, dkLeft, kCache[rowBegin * BK], validBlockElements);
+        const uint32_t validBlockElements = static_cast<uint32_t>(rowCount * FEATURE_TILE);
+        Mul(blockTmp, dkLeft, kCache[rowBegin * FEATURE_TILE], validBlockElements);
         PipeBarrier<PIPE_V>();
         LocalTensor<float> scalar = scalarBuf_.Get<float>();
         LocalTensor<float> reduceTmp = reduceBuf_.Get<float>();
-        for (uint64_t row = 0; row < rowCount; ++row) {
-            ReduceSum<float, true>(scalar, blockTmp[row * BK], reduceTmp, static_cast<int32_t>(curK));
-            PipeBarrier<PIPE_V>();
-            Add(dbAcc[row * 8], dbAcc[row * 8], scalar, 1);
-            PipeBarrier<PIPE_V>();
+        for (uint64_t reduceOffset = 0; reduceOffset < curK;
+             reduceOffset += KDA_DB_REDUCTION_TILE) {
+            const uint32_t reduceCount = static_cast<uint32_t>(
+                (curK - reduceOffset < KDA_DB_REDUCTION_TILE)
+                    ? curK - reduceOffset
+                    : KDA_DB_REDUCTION_TILE);
+            for (uint64_t row = 0; row < rowCount; ++row) {
+                ReduceSum<float, true>(scalar,
+                                       blockTmp[row * FEATURE_TILE + reduceOffset],
+                                       reduceTmp, static_cast<int32_t>(reduceCount));
+                PipeBarrier<PIPE_V>();
+                Add(dbAcc[row * 8], dbAcc[row * 8], scalar, 1);
+                PipeBarrier<PIPE_V>();
+            }
         }
 
         LocalTensor<float> betaBrcb = tmp1Buf_.Get<float>();
@@ -1323,8 +1346,8 @@ private:
         Brcb(betaBrcb, betaLocal[rowBegin], static_cast<uint8_t>((rowCount + 7) / 8), {1, 8});
         PipeBarrier<PIPE_V>();
         BinaryRepeatParams betaParams{1, 1, 0,
-                                     static_cast<uint8_t>(BK * sizeof(float) / 32),
-                                     static_cast<uint8_t>(BK * sizeof(float) / 32), 1};
+                                     static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32),
+                                     static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32), 1};
         Mul(dkLeft, dkLeft, betaBrcb, curK, static_cast<uint8_t>(rowCount), betaParams);
         PipeBarrier<PIPE_V>();
 
@@ -1336,10 +1359,10 @@ private:
         Add(outK, outK, dkLeft, validBlockElements);
         PipeBarrier<PIPE_V>();
         Add(outK, outK, dkRight, validBlockElements);
-        Mul(blockTmp, qCache[rowBegin * BK], dqAcc, validBlockElements);
+        Mul(blockTmp, qCache[rowBegin * FEATURE_TILE], dqAcc, validBlockElements);
         Sub(dkRight, dkLeft, dkRight, validBlockElements);
         PipeBarrier<PIPE_V>();
-        Mul(dkRight, dkRight, kCache[rowBegin * BK], validBlockElements);
+        Mul(dkRight, dkRight, kCache[rowBegin * FEATURE_TILE], validBlockElements);
         PipeBarrier<PIPE_V>();
         Add(outG, outG, blockTmp, validBlockElements);
         PipeBarrier<PIPE_V>();
@@ -1394,8 +1417,9 @@ private:
         LocalTensor<float> dbAcc = dbAccBuf_.Get<float>();
         Duplicate(dbAcc, 0.0f, BC * 8);
         PipeBarrier<PIPE_V>();
-        for (uint64_t d = 0; d < kDim_; d += BK) {
-            const uint32_t curK = static_cast<uint32_t>((kDim_ - d < BK) ? kDim_ - d : BK);
+        for (uint64_t d = 0; d < kDim_; d += FEATURE_TILE) {
+            const uint32_t curK = static_cast<uint32_t>(
+                (kDim_ - d < FEATURE_TILE) ? kDim_ - d : FEATURE_TILE);
             LoadSourceFeatureTile(b, h, hv, start, curT, d, curK);
             ProcessSafeFeatureBlock(b, hv, start, curT, rowBegin, rowCount, d, curK, cubeTask);
         }
@@ -1506,7 +1530,12 @@ public:
         const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
         const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
 
-        ChunkKdaBwdIntraKernel<bfloat16_t, true, true, true> vector;
+        // key12 is restricted to BT=64/K=128, so a 64-feature AIV tile stays
+        // within one FP32 vector mask while halving the hot feature loop.  The
+        // stable key7 and the three-stage diagnostic keep their 32-feature
+        // defaults and 128-token buffer capacity.
+        ChunkKdaBwdIntraKernel<bfloat16_t, true, true, true,
+                               KDA_MIX_FEATURE_TILE, KDA_MIX_CHUNK_CAPACITY> vector;
         vector.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
                     dqOut, dkOut, dbOut, dgOut, chunkIndices, stageC_, tiling, pipe);
 

@@ -4,7 +4,7 @@
 
 本算子迁移 `flash-linear-attention` 中的 `chunk_kda_bwd_kernel_intra`，计算 KDA 单个 chunk 内部对 `q`、`k`、`beta` 和逐特征 gate 的梯度贡献。主交付路径为 `safe_gate=true`，同时保留独立的 `safe_gate=false` 编译分支。
 
-首版支持 Ascend A2/A3/A5、`float16`/`bfloat16` 的 `q/k`、FP32 的 L0 gate/其余输入和四个输出，`K` 为 16 的倍数且位于 `[16, 256]`，`chunk_size` 为 64 或 128。kernel 以 `BK=32` 分块，并用实际 `curK=16` 处理尾块。公开 Python 接口允许 BF16 `g/beta` 并在进入 L0 前提升到 FP32。L0 内部布局统一为 BNSD；Python 接口负责 BSND/BNSD/TND/NTD 的无歧义转换。
+首版支持 Ascend A2/A3/A5、`float16`/`bfloat16` 的 `q/k`、FP32 的 L0 gate/其余输入和四个输出，`K` 为 16 的倍数且位于 `[16, 256]`，`chunk_size` 为 64 或 128。通用 kernel 以 `BK=32` 分块，并用实际 `curK=16` 处理尾块；严格限定的 key12 目标 shape 使用 `BK=64`。公开 Python 接口允许 BF16 `g/beta` 并在进入 L0 前提升到 FP32。L0 内部布局统一为 BNSD；Python 接口负责 BSND/BNSD/TND/NTD 的无歧义转换。
 
 ## 2. 数学语义
 
@@ -72,6 +72,11 @@ legacy 固定 buffer 约 38.6 KiB。block-wise safe 路径额外使用两份转�
 按 `BT=128/BK=32` 估算约 128.9 KiB，低于 A2/A3 的 192 KiB UB，并保留约 63 KiB 余量。
 第一阶段使用单 buffer，避免在未 profiling 前为 double buffer 再增加约 64 KiB。
 
+key12 的 AIV consume 编译为 `BT_CAPACITY=64/BK=64`。其 block-wise buffer 约 118.9 KiB；
+AIV0 再加现有 rowBlock3 prep 约 21.3 KiB 后合计约 140.1 KiB，仍低于 192 KiB。BK64
+是 FP32 Vector 单次 64-element mask 的上限，16-row repeat 和 8-block stride 均在 `uint8_t`
+范围内；不为该实验引入 double buffer 或 UB alias。
+
 ### 4.4 rowBlock3 off-left Cube 实验路径
 
 第一次引入 Cube 只替换 `BT=64` 中最后一个 16-token 块的跨块 left 累加，即
@@ -110,6 +115,10 @@ Matmul API server。
 目标 shape 的 4096 个 slot 共约 184 MiB。当前版本使用唯一 slot，不做复用或双 buffer，先保证
 无覆盖、无死锁；通过 NPU 门禁后再评估 ring workspace 和更深的 contraction 覆盖。
 
+单 kernel key12 在 BK32 下完成编译、28 项精度和单行 profiling 后，下一步只放大 AIV feature
+tile：目标 `K=128` 的 `for d` 从 4 轮减为 2 轮，Cube、workspace、slot 映射和 ready/done
+协议不变。`db` 仍按连续四个 32-feature FP32 子段归约并依次累加，避免 BK64 改变归约树。
+
 ## 5. safe_gate 分支
 
 - `safe_gate=true` 是主验证和主优化分支，并复现兄弟仓 Triton kernel 的 16-token 参考点分解。对当前子块之前的 left 项使用子块首 token 的 gate；子块内 left 项使用末 token、right 项使用首 token；后续 right 项使用子块末 token。内层累加完成后再乘参考点到目标 token 的外层因子。方向端点使 feature-side gate 在累计 gate 单调不增的输入约束下不大于 1，避免大 BF16 feature 在零 dA 乘法前先溢出为 Inf；内外因子乘积仍严格对应 `exp2(g_i-g_j)`。
@@ -134,16 +143,17 @@ Matmul API server。
 
 第一阶段使用无中间大张量、单 launch、全 AIV block-wise safe 路径。已上板的 `75535cd`
 基线在目标 shape 上为 48.660 ms kernel、51.107 ms end-to-end；在此之前的 legacy 路径约
-477.94 ms。后续只从该稳定 AIV 基线小步演进：
+477.94 ms。BK32 的单 kernel key12 已通过 28 项回归并测得 49.168 ms；其 AIV Vector/Scalar
+分别为 26.121/18.561 ms，表明最小 Cube 切片尚未形成净收益。后续只从该稳定 fallback 小步演进：
 
 1. 上板验证方向端点修正后的原 22 项加 1 项极值回归，并重新确认目标 shape profiling；
 2. 若 MTE2 仍高，再评估 source cache double buffer 或多个 rowBlock 合并；
 3. 若 Vector/Exp 仍主导，将跨 16-token 子块的 dA×gated-vector 搬到 Cube；
 4. 根据实际 `K/BT/HV` 决定 task 是否沿 K 二次切核。
 
-rowBlock3 off-left 是第 3 步的最小实验切片。稳定 key7 始终保留为非实验形状的默认路径和即时回退；
-在独立 Cube canary、完整精度回归、重复 launch 与单 kernel profiling 均完成上板验证前，不把
-key12 MIX 路径描述为已验证，也不扩大当前 eligibility。
+rowBlock3 off-left 是第 3 步的最小实验切片。稳定 key7 始终保留为非实验形状的默认路径和即时回退。
+当前 BK64 仅减少 key12 AIV 的 feature-loop/API 发射次数，不扩大 Cube contraction、eligibility
+或 workspace 生命周期；其性能结论仍须重新完成编译、完整精度和单行 profiling 后给出。
 
 ## 8. 接口约束
 

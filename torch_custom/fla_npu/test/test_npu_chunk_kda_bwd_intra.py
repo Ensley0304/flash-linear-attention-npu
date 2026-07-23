@@ -318,6 +318,22 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     ), "the CANN MIX wrapper needs a guarded matmul::clearWorkspace declaration"
     assert "CalcTschBlockDim" not in source
     assert "BlockMmadTla" in source
+    assert re.search(r"\bKDA_MIX_FEATURE_TILE\b\s*=\s*64\s*;", kernel_source)
+    assert re.search(r"\bKDA_MIX_CHUNK_CAPACITY\b\s*=\s*64\s*;", kernel_source)
+    assert re.search(r"\bKDA_DB_REDUCTION_TILE\b\s*=\s*32\s*;", kernel_source)
+    assert re.search(
+        r"ChunkKdaBwdIntraKernel\s*<\s*bfloat16_t\s*,\s*true\s*,\s*true\s*,\s*true\s*,"
+        r"\s*KDA_MIX_FEATURE_TILE\s*,\s*KDA_MIX_CHUNK_CAPACITY\s*>\s+vector\s*;",
+        kernel_source,
+    ), "key12 AIV must use the BT64/BK64 specialization"
+    assert "ChunkKdaBwdIntraKernel<bfloat16_t, true, true> op;" in kernel_source, (
+        "the stable key7 fallback must keep its default BT128/BK32 specialization"
+    )
+    assert re.search(
+        r"for \(uint64_t reduceOffset = 0; reduceOffset < curK;\s*"
+        r"reduceOffset \+= KDA_DB_REDUCTION_TILE\)",
+        kernel_source,
+    ), "BK64 must preserve db's four 32-feature FP32 reductions"
     for element in ("ElementA", "ElementB", "ElementC"):
         assert re.search(rf"\busing\s+{element}\s*=\s*float\s*;", source), (
             f"rowBlock3 Cube {element} must remain FP32"
