@@ -42,6 +42,7 @@ constexpr uint64_t KDA_LEFT_PREP_TILING_KEY = 16;
 constexpr uint64_t KDA_LEFT_CUBE_TILING_KEY = 17;
 constexpr uint64_t KDA_LEFT_CONSUME_TILING_KEY = 18;
 constexpr uint64_t KDA_PR190_MIX_CUBE_TILING_KEY = 19;
+constexpr uint64_t KDA_PR190_DIAGNOSTIC_TILING_KEY = 20;
 // Keep the proven key13 path as the public stage-4 dispatch while key15 is
 // rebuilt around a validated Cube completion protocol. Key15 remains
 // compiled as an isolated experiment and can be re-enabled with this single
@@ -105,7 +106,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t stage = *attrs->GetAttrPointer<int64_t>(ATTR_STAGE);
     if ((chunkSize != 64 && chunkSize != 128) || k < 16 || k > 256 || (k % 16) != 0 ||
         h <= 0 || hv < h || (hv % h) != 0 || h > 128 || hv > 128 || totalChunks <= 0 ||
-        stage < 0 || stage > 5) {
+        stage < 0 || stage > 12) {
         return ge::GRAPH_FAILED;
     }
 
@@ -140,7 +141,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t scratchSlots = chunks * hv;
     if (stage != 0) {
         const bool scratchFits =
-            stage == 5
+            stage >= 5
                 ? true
                 : stage == 4
                 ? (KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY ||
@@ -192,7 +193,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         taskCount = scratchSlots;
     } else if (stage == 4) {
         taskCount = scratchSlots;
-    } else if (stage == 5) {
+    } else if (stage >= 5) {
         // Match PR190: distribute chunks across AICs and keep HV windows
         // serial within the paired AIC/AIV logical core.
         taskCount = chunks;
@@ -202,7 +203,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const uint32_t aicNum = platform.GetCoreNumAic();
     uint32_t usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aivNum));
     uint32_t blockDim = usedCoreNum;
-    if (stage == 2 || stage == 4 || stage == 5) {
+    if (stage == 2 || stage == 4 || stage >= 5) {
         usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aicNum));
         if (usedCoreNum == 0) {
             return ge::GRAPH_FAILED;
@@ -213,7 +214,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     context->SetBlockDim(blockDim);
-    if (stage == 4 || stage == 5) {
+    if (stage == 4 || stage >= 5) {
         context->SetScheduleMode(1);
     }
     const bool useFullCube = stage == 4 && KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY;
@@ -225,7 +226,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
                      static_cast<uint64_t>(KDA_ROW3_BYTES_PER_SLOT))
         : 0;
     const uint64_t pr190WorkspaceBytes =
-        stage == 5
+        stage >= 5
             ? static_cast<uint64_t>(usedCoreNum) *
                   KDA_PR190_WORKSPACE_BYTES_PER_CORE
             : 0;
@@ -264,6 +265,8 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         context->SetTilingKey(KDA_STAGE4_TILING_KEY);
     } else if (stage == 5) {
         context->SetTilingKey(KDA_PR190_MIX_CUBE_TILING_KEY);
+    } else if (stage >= 6) {
+        context->SetTilingKey(KDA_PR190_DIAGNOSTIC_TILING_KEY);
     } else {
         context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     }

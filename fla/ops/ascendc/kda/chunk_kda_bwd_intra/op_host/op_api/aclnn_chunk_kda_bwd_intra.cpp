@@ -11,6 +11,7 @@
 #include "aclnn_chunk_kda_bwd_intra.h"
 #include "chunk_kda_bwd_intra.h"
 
+#include <cstdlib>
 #include <initializer_list>
 
 #include "aclnn_kernels/common/op_error_check.h"
@@ -141,6 +142,33 @@ bool UsePr190MixCubeFastPath(const Params &p)
     return KDA_ENABLE_PR190_MIX_CUBE && MatchTargetSafeFastPath(p);
 }
 
+int64_t GetPr190DiagnosticStage(const Params &p)
+{
+    const auto qs = p.q->GetViewShape();
+    const auto gs = p.g->GetViewShape();
+    const bool isEndpointShape =
+        p.safeGate && p.cu == nullptr &&
+        p.q->GetDataType() == DataType::DT_BF16 &&
+        p.chunkSize == 64 && p.totalChunks == 1 &&
+        qs.GetDim(0) == 1 && qs.GetDim(1) == 1 &&
+        qs.GetDim(2) == 64 && qs.GetDim(3) == 128 &&
+        gs.GetDim(1) == 1;
+    if (!isEndpointShape) {
+        return 5;
+    }
+    const char *raw = std::getenv("FLA_NPU_KDA_DIAG_MATMULS");
+    if (raw == nullptr || raw[0] == '\0') {
+        return 5;
+    }
+    char *end = nullptr;
+    const long contractionCount = std::strtol(raw, &end, 10);
+    if (end == raw || end == nullptr || end[0] != '\0' ||
+        contractionCount < 0 || contractionCount > 6) {
+        return 5;
+    }
+    return 6 + static_cast<int64_t>(contractionCount);
+}
+
 bool UseRow3MixedRollback(const Params &p)
 {
     return !KDA_ENABLE_PR190_MIX_CUBE && MatchTargetSafeFastPath(p);
@@ -172,9 +200,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
         // One MIX launch, matching PR190's paired AIC/AIV execution contract.
         // The device kernel owns four bounded workspace slots per logical core;
         // no task-sized executor tensors or inter-launch dependencies remain.
+        const int64_t stage = GetPr190DiagnosticStage(p);
         result = l0op::ChunkKdaBwdIntra(
             p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 5,
+            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, stage,
             p.dqOut, p.dkOut, p.dbOut, p.dgOut, executorPtr);
     } else if (UseRow3MixedRollback(p)) {
         result = l0op::ChunkKdaBwdIntra(

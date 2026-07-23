@@ -72,6 +72,7 @@ constexpr uint64_t KDA_LEFT_PREP_TILING_KEY = 16;
 constexpr uint64_t KDA_LEFT_CUBE_TILING_KEY = 17;
 constexpr uint64_t KDA_LEFT_CONSUME_TILING_KEY = 18;
 constexpr uint64_t KDA_PR190_MIX_CUBE_TILING_KEY = 19;
+constexpr uint64_t KDA_PR190_DIAGNOSTIC_TILING_KEY = 20;
 static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
               KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY &&
               KDA_ROW3_CONSUME_TILING_KEY != KDA_ROW3_MIXED_TILING_KEY &&
@@ -81,7 +82,8 @@ static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
               KDA_FULL_CUBE_TILING_KEY != KDA_LEFT_PREP_TILING_KEY &&
               KDA_LEFT_PREP_TILING_KEY != KDA_LEFT_CUBE_TILING_KEY &&
               KDA_LEFT_CUBE_TILING_KEY != KDA_LEFT_CONSUME_TILING_KEY &&
-              KDA_LEFT_CONSUME_TILING_KEY != KDA_PR190_MIX_CUBE_TILING_KEY,
+              KDA_LEFT_CONSUME_TILING_KEY != KDA_PR190_MIX_CUBE_TILING_KEY &&
+              KDA_PR190_MIX_CUBE_TILING_KEY != KDA_PR190_DIAGNOSTIC_TILING_KEY,
               "ChunkKdaBwdIntra row3 stages require distinct tiling keys");
 constexpr uint32_t KDA_ROW3_READY_FLAG0 = 0;
 constexpr uint32_t KDA_ROW3_READY_FLAG1 = 1;
@@ -2038,6 +2040,24 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
         if ASCEND_IS_AIV {
             op.ProcessAiv(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
                           dqOut, dkOut, dbOut, dgOut, tilingData, &pipe);
+        }
+    } else if (TILING_KEY_IS(20)) {
+        KERNEL_TASK_TYPE(20, KERNEL_TYPE_MIX_AIC_1_2);
+        GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
+        if (userWS == nullptr) {
+            return;
+        }
+        KdaFullCube::MixedKernel op;
+        op.Init(userWS, tilingData);
+        const uint32_t contractionCount =
+            static_cast<uint32_t>(tilingData.stage - 6);
+        if ASCEND_IS_AIC {
+            op.ProcessDiagnosticAic(contractionCount);
+        }
+        if ASCEND_IS_AIV {
+            op.ProcessDiagnosticAiv(
+                q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                dqOut, dkOut, dbOut, dgOut, tilingData, &pipe);
         }
     }
 }

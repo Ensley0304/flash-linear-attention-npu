@@ -232,6 +232,21 @@ def test_chunk_kda_bwd_intra_safe_gate_endpoint_reassociation_guard():
         )
 
 
+def test_chunk_kda_bwd_intra_pr190_cube_prefix_diagnostic():
+    """Complete after the requested key19 Cube prefix without consuming C."""
+    raw_level = os.environ.get("FLA_NPU_KDA_DIAG_MATMULS")
+    if raw_level is None:
+        pytest.skip("set FLA_NPU_KDA_DIAG_MATMULS=0..6 to run the prefix probe")
+    level = int(raw_level)
+    assert 0 <= level <= 6
+    inputs, _ = _safe_gate_endpoint_reassociation_case()
+    device = _device()
+    fla_ascendc.chunk_kda_bwd_intra(
+        *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=True
+    )
+    torch.npu.synchronize()
+
+
 def test_chunk_kda_bwd_intra_default_keeps_upstream_unsafe_contract():
     signature = inspect.signature(_aclnn_ctypes.npu_chunk_kda_bwd_intra)
     assert signature.parameters["safe_gate"].default is False
@@ -419,7 +434,8 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     fastpath_body = fastpath.group("body")
     assert fastpath_body.count("l0op::ChunkKdaBwdIntra(") == 1
     assert "AllocTensor" not in fastpath_body
-    assert re.search(r"nullptr, nullptr, nullptr, 5,", fastpath_body)
+    assert "const int64_t stage = GetPr190DiagnosticStage(p);" in fastpath_body
+    assert re.search(r"nullptr, nullptr, nullptr, stage,", fastpath_body)
     assert "CrossCoreSetFlag" not in fastpath_body
     assert "CrossCoreWaitFlag" not in fastpath_body
 
@@ -614,6 +630,7 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
         17: "KERNEL_TYPE_AIC_ONLY",
         18: "KERNEL_TYPE_AIV_ONLY",
         19: "KERNEL_TYPE_MIX_AIC_1_2",
+        20: "KERNEL_TYPE_MIX_AIC_1_2",
     }
     for key, task_type in expected.items():
         match = re.search(
@@ -625,7 +642,7 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
         assert match is not None, f"missing split left-Cube key{key}"
         body = match.group("body")
         assert f"KERNEL_TASK_TYPE({key}, {task_type})" in body
-        if key != 19:
+        if key not in (19, 20):
             assert "KERNEL_TYPE_MIX" not in body
             assert "CrossCoreSetFlag" not in body
             assert "CrossCoreWaitFlag" not in body
@@ -669,9 +686,26 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
     assert "USE_HF32_MODE" in aic_body
     assert "MmadPingpong<KdaArchTag, true, false>" in kda_forward_source
     assert "KdaSolveL1TileShape = tla::Shape<_64, _64, _64>" in kda_forward_source
+    assert "ProcessSlotPrefix(slotBase, 6)" in aic_body
+    for contraction_count in range(1, 7):
+        assert f"contractionCount >= {contraction_count}" in aic_body
+    assert "ProcessDiagnosticAic" in mixed_body
+    assert "ProcessDiagnosticAiv" in mixed_body
+    assert "ProcessSlotPrefix(SlotBase(0, 0), contractionCount)" in mixed_body
+    assert "CrossCoreWaitFlag(readyFlag_)" in mixed_body
+    diagnostic_aiv = re.search(
+        r"ProcessDiagnosticAiv\((?P<body>.*?)\n    \}",
+        mixed_body,
+        re.DOTALL,
+    ).group("body")
+    assert "PackTask(0, SlotBase(0, 0), lane)" in diagnostic_aiv
+    assert "CrossCoreSetFlag<0x2, PIPE_MTE3>(readyFlag_)" in diagnostic_aiv
+    assert "CrossCoreWaitFlag(doneFlag_)" not in diagnostic_aiv
 
     assert "UsePr190MixCubeFastPath" in aclnn_source
     assert "constexpr bool KDA_ENABLE_PR190_MIX_CUBE = true;" in aclnn_source
+    assert 'std::getenv("FLA_NPU_KDA_DIAG_MATMULS")' in aclnn_source
+    assert "contractionCount < 0 || contractionCount > 6" in aclnn_source
     assert "UseRow3MixedRollback" in aclnn_source
     assert re.search(
         r"UseRow3MixedRollback\(p\).*?nullptr, nullptr, nullptr, 4,",
@@ -679,10 +713,17 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
         re.DOTALL,
     ), "one constant must restore the proven key13 stage-4 launch"
     assert re.search(
-        r"UsePr190MixCubeFastPath\(p\).*?nullptr, nullptr, nullptr, 5,",
+        r"UsePr190MixCubeFastPath\(p\).*?"
+        r"const int64_t stage = GetPr190DiagnosticStage\(p\);.*?"
+        r"nullptr, nullptr, nullptr, stage,",
         aclnn_source,
         re.DOTALL,
-    ), "the target shape must use one stage-5 MIX launch"
+    ), "the target shape must use one production/diagnostic MIX launch"
+    assert re.search(
+        r"GetPr190DiagnosticStage\(.*?return 5;",
+        aclnn_source,
+        re.DOTALL,
+    ), "unset/unsupported diagnostics must preserve production stage 5"
     assert "KDA_PR190_WORKSPACE_BUFFER_COUNT = 4" in tiling_source
     assert "KDA_PR190_WORKSPACE_BYTES_PER_CORE" in tiling_source
     assert "KDA_STAGE4_TILING_KEY = KDA_ROW3_BATCHED_GATE_TILING_KEY" in tiling_source

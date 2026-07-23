@@ -1138,22 +1138,43 @@ public:
 
     __aicore__ inline void ProcessSlot(uint64_t slotBase)
     {
-        Run(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
-            C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K);
-        Run(slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
-            C_LEFT_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K);
-        Run(slotBase, A_RIGHT_FUTURE_Q_OFFSET,
-            B_RIGHT_FUTURE_Q_OFFSET, C_RIGHT_FUTURE_Q_OFFSET,
-            A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
-        Run(slotBase, A_RIGHT_FUTURE_K_OFFSET,
-            B_RIGHT_FUTURE_K_OFFSET, C_RIGHT_FUTURE_K_OFFSET,
-            A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
-        Run(slotBase, A_RIGHT_DIAG_Q_OFFSET,
-            B_RIGHT_DIAG_Q_OFFSET, C_RIGHT_DIAG_Q_OFFSET,
-            A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
-        Run(slotBase, A_RIGHT_DIAG_K_OFFSET,
-            B_RIGHT_DIAG_K_OFFSET, C_RIGHT_DIAG_K_OFFSET,
-            A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
+        ProcessSlotPrefix(slotBase, 6);
+    }
+
+    // Diagnostic entry point for the one-chunk/one-head endpoint case.
+    // A prefix returns normally after the selected number of contractions, so
+    // a device timeout identifies the first BlockMmad that did not complete.
+    __aicore__ inline void ProcessSlotPrefix(
+        uint64_t slotBase, uint32_t contractionCount)
+    {
+        if (contractionCount >= 1) {
+            Run(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K);
+        }
+        if (contractionCount >= 2) {
+            Run(slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
+                C_LEFT_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K);
+        }
+        if (contractionCount >= 3) {
+            Run(slotBase, A_RIGHT_FUTURE_Q_OFFSET,
+                B_RIGHT_FUTURE_Q_OFFSET, C_RIGHT_FUTURE_Q_OFFSET,
+                A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
+        }
+        if (contractionCount >= 4) {
+            Run(slotBase, A_RIGHT_FUTURE_K_OFFSET,
+                B_RIGHT_FUTURE_K_OFFSET, C_RIGHT_FUTURE_K_OFFSET,
+                A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
+        }
+        if (contractionCount >= 5) {
+            Run(slotBase, A_RIGHT_DIAG_Q_OFFSET,
+                B_RIGHT_DIAG_Q_OFFSET, C_RIGHT_DIAG_Q_OFFSET,
+                A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
+        }
+        if (contractionCount >= 6) {
+            Run(slotBase, A_RIGHT_DIAG_K_OFFSET,
+                B_RIGHT_DIAG_K_OFFSET, C_RIGHT_DIAG_K_OFFSET,
+                A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
+        }
     }
 
 private:
@@ -1463,6 +1484,17 @@ public:
         }
     }
 
+    __aicore__ inline void ProcessDiagnosticAic(uint32_t contractionCount)
+    {
+        // The diagnostic host gate admits only B=1, T=64, H=HV=1, so one AIC
+        // owns exactly one slot.  Deliberately omit the done handshake: this
+        // launch is a completion probe for pack/ready plus a Cube prefix.
+        AicKernel cube;
+        cube.Init(workspace_);
+        Catlass::Arch::CrossCoreWaitFlag(readyFlag_);
+        cube.ProcessSlotPrefix(SlotBase(0, 0), contractionCount);
+    }
+
     __aicore__ inline void ProcessAiv(
         GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
         GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg, GM_ADDR dqOut, GM_ADDR dkOut,
@@ -1508,6 +1540,24 @@ public:
                 ++windowIdx;
             }
         }
+    }
+
+    __aicore__ inline void ProcessDiagnosticAiv(
+        GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
+        GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg, GM_ADDR dqOut, GM_ADDR dkOut,
+        GM_ADDR dbOut, GM_ADDR dgOut, const ChunkKdaBwdIntraTilingData &tiling,
+        TPipe *pipe)
+    {
+        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
+        if (subBlockNum == 0) {
+            return;
+        }
+        const uint64_t lane = static_cast<uint64_t>(GetSubBlockIdx());
+        AivKernel vector;
+        vector.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                    dqOut, dkOut, dbOut, dgOut, workspace_, tiling, pipe);
+        vector.PackTask(0, SlotBase(0, 0), lane);
+        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(readyFlag_);
     }
 
 private:
