@@ -10,7 +10,7 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| Cube 源码隔离契约 | 本地已通过 | key15 仍隔离；key16/17/18 分别为 AIV/AIC/AIV，public 路径为三次独立 launch，无 CrossCore flag；一处 host 常量可恢复 key13 |
+| Cube 源码隔离契约 | 本地已通过 | key15 仍隔离；key16/17/18 分别为 AIV/AIC/AIV，public 路径为三次独立 launch，无 CrossCore flag；key17 只发 `64x64xK` 单 tile 并显式闭合 L1/L0 事件；一处 host 常量可恢复 key13 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
 | CANN host/kernel 编译 | key15 已通过 | clean isolated wheel 已包含两个目标设备对象；运行时 endpoint 门禁仍阻断 key15 |
 | AscendC NPU 精度 | key15 阻断 | clean wheel 的 endpoint guard 超时；key15 重构并通过 endpoint/repeated-launch 前不得重新分派 |
@@ -104,7 +104,9 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 和满 chunk。源码契约要求 key15 仍是独立 MIX 分支；public split left-Cube 路径调用三次 L0，且
-key16/17/18 不允许出现 MIX task type 或 CrossCore flag。key15 为
+key16/17/18 不允许出现 MIX task type 或 CrossCore flag；key17 不允许进入
+`BlockMmadTla` 的多 tile 循环，必须保持 K 不拆，并按 PR190 的
+`MTE2_MTE1/MTE1_M/M_FIX/FIX_M` 顺序闭合每个单 tile。key15 为
 `KERNEL_TYPE_MIX_AIC_1_2`，六组 A/B/C 为 FP32，使用单 tile `TileMmadTla`，HF32 显式关闭，
 且 key15 必须保留独立实验 key。当前手写 `TileMmadTla` 完成协议未通过 endpoint
 运行时门禁，不能把源码级 event/unitFlag 断言视为协议正确性的证明。AIC/AIV 使用相同

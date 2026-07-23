@@ -99,9 +99,11 @@ key15 将 previous-left、diagonal-left、diagonal-right 和 future-right 四类
 统一使用一个 `128x128x128` 容量的 L1/L0 buffer，不进入 BlockMmad 多层循环。MMAD 与
 Fixpipe copyout 均显式使用 `unitFlag=0b11`，并以 `M_FIX/FIX_M` 闭合每次 L0C 生命周期。
 
-key17 的首版复用 key15 `DirectMmad` 后在 A2 触发 L0B 同址读写冲突。当前
-key17 改用与已验证 key10 相同的 `BlockMmadTla<MmadPingpong>` 生命周期管理；
-计算映射、FP32 输入输出与 key13 回退路径不变。
+key17 的首版复用 key15 `DirectMmad` 后在 A2 触发 L0B 同址读写冲突；改为
+`BlockMmadTla<MmadPingpong>` 后，96/128 行的大矩阵又进入了 key10 未覆盖的
+多 M/N/K tile 事件循环并在 endpoint 门禁超时。当前 key17 按 PR190 的显式
+TileMmad 完成协议，将 M/N 分解为 `64x64` 单 tile，K=96/64 保持完整。
+计算映射、FP32 输入输出、点积归约顺序与 key13 回退路径不变。
 AIV 只负责 A/B 打包、safe gate 内外因子、`db/dg` 和输出累加。
 每个逻辑 AIC 复用一份 600 KiB workspace，20 核约 12 MiB；两个 AIV lane 按 `{0,3}` 与 `{1,2}`
 分配 row block，并继续使用一代 ready/done 反转 flag。该版本不启用 double buffer。
@@ -115,8 +117,9 @@ shape kernel duration 低于 22 ms；未取得干净 wheel 的同卡 msprof 前�
 ## key16/17/18 split left-Cube
 
 当前实现不直接修复 key15 的 MIX 握手，而是先按已验证的 staged orchestration 拆成三个 runtime
-launch：key16 AIV 打包 previous-left 与 diagonal-left 的紧凑 FP32 A/B，key17 AIC 执行
-`96x96 @ 96x128` 和 `128x64 @ 64x128` 两次 IEEE-FP32 `TileMmadTla`，key18 AIV 读取 C，
+launch：key16 AIV 打包 previous-left 与 diagonal-left 的紧凑 FP32 A/B，key17 AIC 将
+`96x96 @ 96x128` 和 `128x64 @ 64x128` 分解为八次 `64x64xK`
+IEEE-FP32 `TileMmadTla`，key18 AIV 读取 C，
 保留现有 right、`db/dg`、beta 和输出累加路径。三个 key 均不使用 CrossCore flag，stage
 依赖只由 executor launch 顺序表达。
 

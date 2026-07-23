@@ -667,16 +667,30 @@ def test_chunk_kda_bwd_intra_split_left_cube_source_contract():
 
     assert "static_assert((LEFT_A_ELEMENTS * sizeof(float)) % 512 == 0" in cube_source
     assert "class LeftAicKernel" in cube_source
-    assert "using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<" in cube_source
-    assert "Catlass::Gemm::MmadPingpong<ArchTag, false, false>" in cube_source
-    assert "split left-Cube must keep IEEE FP32 MMAD" in cube_source
-    assert "BlockMmad blockMmad(resource);" in cube_source
-    assert "blockMmad(blockA, blockB, blockC, shape);" in cube_source
-    assert "DirectMmad directMmad(resource);" not in re.search(
+    assert "class LeftSingleTileMmad" in cube_source
+    assert "using TileMmad = Catlass::Gemm::Tile::TileMmadTla<" in cube_source
+    assert "static constexpr uint32_t TILE_M = 64;" in cube_source
+    assert "static constexpr uint32_t TILE_N = 64;" in cube_source
+    assert "static constexpr uint32_t TILE_K = 128;" in cube_source
+    assert "SetHF32Mode(false);" in cube_source
+    assert "WaitFlag<HardEvent::MTE2_MTE1>(EVENT_L1A);" in cube_source
+    assert "SetFlag<HardEvent::MTE1_M>(EVENT_L0_READY);" in cube_source
+    assert "WaitFlag<HardEvent::MTE1_M>(EVENT_L0_READY);" in cube_source
+    assert "SetFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
+    assert "WaitFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
+    assert "SetFlag<HardEvent::FIX_M>(EVENT_L0C);" in cube_source
+    left_body = re.search(
         r"class LeftAicKernel \{(?P<body>.*?)\n\};",
         cube_source,
         re.DOTALL,
     ).group("body")
+    assert "BlockMmadTla" not in left_body
+    assert "MmadPingpong" not in left_body
+    assert "mOffset += LeftSingleTileMmad::TILE_M" in left_body
+    assert "nOffset += LeftSingleTileMmad::TILE_N" in left_body
+    assert "Catlass::GemmCoord shape{" in left_body
+    assert "curM, LeftSingleTileMmad::TILE_N, k" in left_body
+    assert "kOffset" not in left_body, "K must remain whole to preserve FP32 reduction order"
     assert "A_LEFT_PREV_M, A_LEFT_PREV_K" in cube_source
     assert "A_LEFT_DIAG_M, A_LEFT_DIAG_K" in cube_source
     assert "SetHF32Mode(false);" in cube_source

@@ -1188,6 +1188,163 @@ private:
     GlobalTensor<float> workspace_;
 };
 
+class LeftSingleTileMmad {
+public:
+    using Element = float;
+    using Layout = Catlass::layout::RowMajor;
+    using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+        ArchTag, Element, Layout, Element, Layout, Element, Layout>;
+    using ElementAccumulator = typename TileCopy::ElementAccumulator;
+    using LayoutTagL1A = typename TileCopy::LayoutTagL1A;
+    using LayoutTagL1B = typename TileCopy::LayoutTagL1B;
+    using LayoutTagL0A = typename TileCopy::LayoutTagL0A;
+    using LayoutTagL0B = typename TileCopy::LayoutTagL0B;
+    using CopyL1ToL0A = typename TileCopy::CopyL1ToL0A;
+    using CopyL1ToL0B = typename TileCopy::CopyL1ToL0B;
+    using TileMmad = Catlass::Gemm::Tile::TileMmadTla<
+        ArchTag, Element, LayoutTagL1A>;
+
+    static constexpr uint32_t TILE_M = 64;
+    static constexpr uint32_t TILE_N = 64;
+    static constexpr uint32_t TILE_K = 128;
+    static constexpr uint32_t L1A_BYTES =
+        TILE_M * TILE_K * sizeof(Element);
+    static constexpr uint32_t L1B_BYTES =
+        TILE_K * TILE_N * sizeof(Element);
+    static constexpr auto L1A_LAYOUT =
+        tla::MakeLayout<Element, LayoutTagL1A>(
+            tla::Int<TILE_M>{}, tla::Int<TILE_K>{});
+    static constexpr auto L1B_LAYOUT =
+        tla::MakeLayout<Element, LayoutTagL1B>(
+            tla::Int<TILE_K>{}, tla::Int<TILE_N>{});
+    static constexpr int32_t EVENT_L1A = 0;
+    static constexpr int32_t EVENT_L1B = 1;
+    static constexpr int32_t EVENT_L0A = 0;
+    static constexpr int32_t EVENT_L0B = 1;
+    static constexpr int32_t EVENT_L0_READY = 0;
+    static constexpr int32_t EVENT_L0C = 0;
+
+    static_assert(L1A_BYTES == 32 * 1024 &&
+                  L1B_BYTES == 32 * 1024,
+                  "KDA split left-Cube expects 32 KiB per L1 operand");
+
+    __aicore__ inline explicit LeftSingleTileMmad(
+        Catlass::Arch::Resource<ArchTag> &resource)
+    {
+        SetHF32Mode(false);
+        SetMMLayoutTransform(true);
+        l1ABuf_ = resource.l1Buf.template GetBufferByByte<Element>(0);
+        l1BBuf_ =
+            resource.l1Buf.template GetBufferByByte<Element>(L1A_BYTES);
+        l0ABuf_ = resource.l0ABuf.template GetBufferByByte<Element>(0);
+        l0BBuf_ = resource.l0BBuf.template GetBufferByByte<Element>(0);
+        l0CBuf_ =
+            resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+
+        // Match the proven PR190 TileMmad protocol: seed every consumer-to-
+        // producer lifetime once, then close the same event ring per tile.
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        SetFlag<HardEvent::FIX_M>(EVENT_L0C);
+    }
+
+    __aicore__ inline ~LeftSingleTileMmad()
+    {
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        WaitFlag<HardEvent::FIX_M>(EVENT_L0C);
+        SetMMLayoutTransform(false);
+        SetHF32Mode(false);
+    }
+
+    template <typename TensorA, typename TensorB, typename TensorC>
+    __aicore__ inline void operator()(
+        TensorA &tensorA, TensorB &tensorB, TensorC &tensorC,
+        const Catlass::GemmCoord &shape)
+    {
+        using CopyGmToL1A =
+            typename TileCopy::template CopyGmToL1A<TensorA>;
+        using CopyGmToL1B =
+            typename TileCopy::template CopyGmToL1B<TensorB>;
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
+        using CopyL0CToGm =
+            typename TileCopy::template CopyL0CToDst<TensorC>;
+#else
+        using CopyL0CToGm =
+            typename TileCopy::template CopyL0CToGm<TensorC>;
+#endif
+
+        CopyGmToL1A copyGmToL1A;
+        CopyGmToL1B copyGmToL1B;
+        CopyL1ToL0A copyL1ToL0A;
+        CopyL1ToL0B copyL1ToL0B;
+        CopyL0CToGm copyL0CToGm;
+        TileMmad tileMmad;
+
+        auto tensorL1A = tla::MakeTensor(
+            l1ABuf_, L1A_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1B = tla::MakeTensor(
+            l1BBuf_, L1B_LAYOUT, Catlass::Arch::PositionL1{});
+
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        copyGmToL1A(tensorL1A, tensorA);
+        SetFlag<HardEvent::MTE2_MTE1>(EVENT_L1A);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        copyGmToL1B(tensorL1B, tensorB);
+        SetFlag<HardEvent::MTE2_MTE1>(EVENT_L1B);
+
+        auto layoutL0A = tla::MakeLayout<Element, LayoutTagL0A>(
+            shape.m(), shape.k());
+        auto layoutL0B = tla::MakeLayout<Element, LayoutTagL0B>(
+            shape.k(), shape.n());
+        auto tensorL0A = tla::MakeTensor(
+            l0ABuf_, layoutL0A, Catlass::Arch::PositionL0A{});
+        auto tensorL0B = tla::MakeTensor(
+            l0BBuf_, layoutL0B, Catlass::Arch::PositionL0B{});
+        auto tensorTileL1A = GetTile(
+            tensorL1A, tla::MakeCoord(0, 0),
+            tla::MakeShape(shape.m(), shape.k()));
+        auto tensorTileL1B = GetTile(
+            tensorL1B, tla::MakeCoord(0, 0),
+            tla::MakeShape(shape.k(), shape.n()));
+
+        WaitFlag<HardEvent::MTE2_MTE1>(EVENT_L1A);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        copyL1ToL0A(tensorL0A, tensorTileL1A);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        WaitFlag<HardEvent::MTE2_MTE1>(EVENT_L1B);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        copyL1ToL0B(tensorL0B, tensorTileL1B);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        SetFlag<HardEvent::MTE1_M>(EVENT_L0_READY);
+
+        auto layoutL0C = tla::MakeLayoutL0C(shape.m(), shape.n());
+        auto tensorL0C = tla::MakeTensor(
+            l0CBuf_, layoutL0C, Catlass::Arch::PositionL0C{});
+        WaitFlag<HardEvent::MTE1_M>(EVENT_L0_READY);
+        WaitFlag<HardEvent::FIX_M>(EVENT_L0C);
+        tileMmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        SetFlag<HardEvent::M_FIX>(EVENT_L0C);
+
+        WaitFlag<HardEvent::M_FIX>(EVENT_L0C);
+        copyL0CToGm(tensorC, tensorL0C, 0b11);
+        SetFlag<HardEvent::FIX_M>(EVENT_L0C);
+    }
+
+private:
+    LocalTensor<Element> l1ABuf_;
+    LocalTensor<Element> l1BBuf_;
+    LocalTensor<Element> l0ABuf_;
+    LocalTensor<Element> l0BBuf_;
+    LocalTensor<ElementAccumulator> l0CBuf_;
+};
+
 class LeftAicKernel {
 public:
     __aicore__ inline void Init(GM_ADDR stageA, GM_ADDR stageB, GM_ADDR stageC)
@@ -1202,34 +1359,26 @@ public:
         const uint64_t aSlotBase = task * LEFT_A_ELEMENTS;
         const uint64_t bSlotBase = task * LEFT_B_ELEMENTS;
         const uint64_t cSlotBase = task * LEFT_C_ELEMENTS;
-        Run(aSlotBase, bSlotBase, cSlotBase,
-            LEFT_A_PREV_OFFSET, LEFT_B_PREV_OFFSET, LEFT_C_PREV_OFFSET,
-            A_LEFT_PREV_M, A_LEFT_PREV_K);
-        Run(aSlotBase, bSlotBase, cSlotBase,
-            LEFT_A_DIAG_OFFSET, LEFT_B_DIAG_OFFSET, LEFT_C_DIAG_OFFSET,
-            A_LEFT_DIAG_M, A_LEFT_DIAG_K);
+        Catlass::Arch::Resource<ArchTag> resource;
+        LeftSingleTileMmad tileMmad(resource);
+        Run(tileMmad, aSlotBase, bSlotBase, cSlotBase,
+            LEFT_A_PREV_OFFSET, LEFT_B_PREV_OFFSET,
+            LEFT_C_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K);
+        Run(tileMmad, aSlotBase, bSlotBase, cSlotBase,
+            LEFT_A_DIAG_OFFSET, LEFT_B_DIAG_OFFSET,
+            LEFT_C_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K);
     }
 
 private:
+    template <typename Mmad>
     __aicore__ inline void Run(
+        Mmad &mmad,
         uint64_t aSlotBase, uint64_t bSlotBase, uint64_t cSlotBase,
         uint32_t aOffset, uint32_t bOffset, uint32_t cOffset,
         uint32_t m, uint32_t k)
     {
         using Element = float;
         using Layout = Catlass::layout::RowMajor;
-        using DispatchPolicy =
-            Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
-        static_assert(!DispatchPolicy::USE_HF32_MODE,
-                      "split left-Cube must keep IEEE FP32 MMAD");
-        using TileShape =
-            tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
-        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
-            ArchTag, Element, Layout, Element, Layout, Element, Layout>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
-            DispatchPolicy, TileShape, TileShape,
-            Element, Element, Element, void, TileCopy>;
-
         auto layoutA = tla::MakeLayout<Element, Layout>(m, k);
         auto layoutB = tla::MakeLayout<Element, Layout>(k, HEAD_DIM);
         auto layoutC = tla::MakeLayout<Element, Layout>(m, HEAD_DIM);
@@ -1239,19 +1388,30 @@ private:
                                        Catlass::Arch::PositionGM{});
         auto tensorC = tla::MakeTensor(stageC_[cSlotBase + cOffset], layoutC,
                                        Catlass::Arch::PositionGM{});
-        Catlass::GemmCoord shape{m, HEAD_DIM, k};
-        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                              tla::MakeShape(shape.m(), shape.k()));
-        auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0),
-                              tla::MakeShape(shape.k(), shape.n()));
-        auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0),
-                              tla::MakeShape(shape.m(), shape.n()));
-        Catlass::Arch::Resource<ArchTag> resource;
-        {
-            BlockMmad blockMmad(resource);
-            blockMmad(blockA, blockB, blockC, shape);
+        for (uint32_t mOffset = 0; mOffset < m;
+             mOffset += LeftSingleTileMmad::TILE_M) {
+            const uint32_t curM =
+                (m - mOffset < LeftSingleTileMmad::TILE_M)
+                    ? m - mOffset
+                    : LeftSingleTileMmad::TILE_M;
+            for (uint32_t nOffset = 0; nOffset < HEAD_DIM;
+                 nOffset += LeftSingleTileMmad::TILE_N) {
+                Catlass::GemmCoord shape{
+                    curM, LeftSingleTileMmad::TILE_N, k};
+                auto blockA = GetTile(
+                    tensorA, tla::MakeCoord(mOffset, 0),
+                    tla::MakeShape(shape.m(), shape.k()));
+                auto blockB = GetTile(
+                    tensorB, tla::MakeCoord(0, nOffset),
+                    tla::MakeShape(shape.k(), shape.n()));
+                auto blockC = GetTile(
+                    tensorC, tla::MakeCoord(mOffset, nOffset),
+                    tla::MakeShape(shape.m(), shape.n()));
+                // K remains whole (96 or 64), so tiling does not reassociate
+                // the FP32 dot product.  Each call is one hardware MMAD tile.
+                mmad(blockA, blockB, blockC, shape);
+            }
         }
-        PipeBarrier<PIPE_ALL>();
     }
 
 private:
