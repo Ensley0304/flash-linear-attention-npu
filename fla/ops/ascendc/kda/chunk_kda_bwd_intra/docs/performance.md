@@ -114,72 +114,35 @@ shape kernel duration 低于 22 ms；未取得干净 wheel 的同卡 msprof 前�
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 
-## key16/17/18 split left-Cube
+## key19 PR190-style MIX full-Cube
 
-当前实现不直接修复 key15 的 MIX 握手，而是先按已验证的 staged orchestration 拆成三个 runtime
-launch：key16 AIV 打包 previous-left 与 diagonal-left 的紧凑 FP32 A/B，key17 AIC 将
-`96x96 @ 96x128` 和 `128x64 @ 64x128` 分解为八次 `64x64xK`
-IEEE-FP32 `TileMmadTla`，key18 AIV 读取 C，
-保留现有 right、`db/dg`、beta 和输出累加路径。三个 key 均不使用 CrossCore flag，stage
-依赖只由 executor launch 顺序表达。
+key16/17/18 的三 launch split 路径未解决总体性能目标，且手写 TileMmad 状态机在 endpoint
+门禁上仍有风险，因此只保留为诊断实例。public 目标 shape 改用独立 key19，不修改已验证 key13。
 
-该切片覆盖六组 full-Cube contraction 中 50% 的 MAC。目标 shape 有 4096 个 `(chunk,head)`
-slot，紧凑 A/B/C 分别为每 slot 68/80/112 KiB；这是用于先过编译、endpoint、repeated-launch
-和完整精度门禁的保守版本，不宣称最终 workspace 方案。`KDA_ENABLE_SPLIT_LEFT_CUBE=false`
-可恢复 key13 stage-4 单 launch。上板通过后再根据三条 profiling 记录决定是缩减 task-sized
-scratch，还是按 PR190 的 slot/ring 组织逐步合并 launch。
+key19 直接采用 PR190 已运行的完整外层结构，而不是只复制事件 API：
+
+- 单次 `MIX_AIC_1_2` launch，host `blockDim=min(totalChunks,AIC count)`；
+- AIC/AIV 使用同一逻辑 core 映射并按 chunk 步进；
+- HV 两个 head 为一个窗口，四个 per-core slot 按 `0/1`、`2/3` 双窗口复用；
+- AIV 先完成窗口内两个 head 的 A/B，再按顺序等待并消费 C；
+- 使用 PR190 的普通 CrossCore flag id 2/4 和 `0x2` 双 AIV 汇合/广播；
+- Cube 采用仓内 `chunk_kda_fwd` 的 IEEE-FP32
+  `BlockMmadTla<MmadPingpong<..., true, false>>` 配置。
+
+每 slot 600 KiB，四槽、20 个逻辑 AIC 共约 46.9 MiB。该结构同时去除原 split 路径约
+184 MiB 的 task-sized scratch 和三次 launch。当前只声明源码实现完成；在 clean wheel 的
+endpoint、repeated-launch、完整精度和 msprof 通过前，不声明性能收益。
 
 ## 下一阶段候选
 
-稳定 key7 profiling 显示目标 shape 的 Cube utilization 为 0，因此先用 rowBlock3 off-left 建立最小
-Cube 路径。该切片只替换
-`row=[48,64), source=[0,48)` 的两路 left contraction：
+先验证 key19 的结构迁移，不再同时引入新的数学重排或更复杂的流水：
 
-```text
-concat(dAqk_row3_left, dAkk_row3_left) [32,48]
-    @ (K_left * exp2(g_48 - g_left))   [48,128]
-    -> (dq_row3_left, dk_row3_left)    [32,128]
-```
+1. clean 单算子编译，确认 key19 MIX 实例和设备对象进入 wheel；
+2. endpoint guard 单测必须在 45 秒内结束；
+3. 连续 launch 与完整 37 项精度回归通过，容差不放宽；
+4. msprof 确认一次 Python 调用只有一条 KDA MIX kernel，并同时具有 AIC/AIV 时间；
+5. 与 key13 的 31.034 ms kernel 基线做同卡、同 shape A/B。
 
-它覆盖满 `BT=64` chunk 约 18.5% 的 outer-contraction 工作量，但仍保留 diagonal、right 和前三个
-rowBlock 的 AIV 计算，所以第一轮目标是证明 Cube 能稳定带来净收益，不预设一次降至 10 ms。
-
-实验 eligibility 固定为 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且 workspace 不超过 256 MiB 和满 chunk；其他 case 继续使用 key7/legacy。已验证的三 launch
-canary 仅用于确认 FP32 MMAD 数值，其总 kernel duration 约 46.011 ms，净收益有限且不满足交付
-要求。当前实现改为一次 MIX launch：
-
-```text
-AIV0 pack A/B + rowBlock0  ┐
-AIV1 rowBlock1/2           ├─ 与 AIC FP32 Cube 重叠 -> AIV0 rowBlock3
-AIC  wait ready -> Cube    ┘
-```
-
-key12/key13/key14 使用 `KERNEL_TYPE_MIX_AIC_1_2`，host `blockDim=min(slot_count,AIC count)` 并设置 MIX
-schedule mode。两个 AIV 子核共同提交 ready，AIC 完成后广播 done；双方按相同的逻辑 core 和
-slot 步长推进。HF32 关闭，稳定 key7 不删除，也不改变非实验 shape 的调度。
-
-scratch 按 `(chunk,HV)` 分配 46 KiB（A 6 KiB、B 24 KiB、C 16 KiB），目标 shape
-`B=1,T=8192,H=HV=32` 共 4096 slot，约 184 MiB，另加平台 libapi workspace。第一版不启用
-双 buffer、persistent MMAD、slot ring 或 workspace alias；这些只在单 kernel NPU 精度和
-profiling 门禁通过后逐项评估。
-
-BK64 key12 已证明缩短 feature-loop 能形成净收益，key13 又证明 source-gate 批处理能稳定减少
-Vector 时间。当前唯一实验变量是 key14 的 row post-scale gate/Mul/Add 批处理：每个 gate family
-对最多 16 个输出行做 repeat，随后仍按原阶段顺序更新独立行。key7、key12、key13、独立三阶段
-诊断、Cube MMAD、scratch 和 flag 协议均不变；`db` 在每个 BK64 tile 内仍分两次 BK32
-ReduceSum，维持四段累加顺序。
-
-完整方向仍可将其余 16-token 子块重写为 FP32 Cube GEMM：
-
-```text
-dAqk_left  @ (K * exp2(g_ref_left - g))
-dAkk_left  @ (K * exp2(g_ref_left - g))
-dAqk_right^T @ (Q * exp2(g - g_ref_right))
-dAkk_right^T @ (beta*K * exp2(g - g_ref_right))
-```
-
-AIV 负责 gate 预处理和行缩放，AIC 负责 GEMM。后续必须按一个 contraction 切片逐步扩展，不能
-在 key14 编译、完整精度和 profiling 通过前引入更大的 Cube 切片、double buffer 或 workspace
-ring。profiling 必须仍只出现一条 KDA MIX kernel 记录，并与
-48.660 ms key7、49.168 ms BK32 key12、32.477 ms BK64 key12 以及 46.011 ms 三 launch canary 比较。
+只有上述门禁全部通过，才继续根据 profiling 决定下一步。如果 AIV 仍为主瓶颈，优先把
+`PackBGroup` 的重复 q/k/g 搬运改为 PR190 式 resident 输入；如果 AIC 出现明显空泡，再复用
+PR190 的 L1/L0 ping-pong，而不是另写一套事件协议。

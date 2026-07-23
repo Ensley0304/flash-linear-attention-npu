@@ -35,7 +35,9 @@ public:
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
         // Internal tensors carry the split BF16/safe left-Cube pipeline:
-        // stage 1 packs A/B, stage 2 computes C, and stage 3 consumes C.
+        // Stages 1/2/3 retain the split-launch diagnostic path, stage 4 keeps
+        // the proven key13 fallback, and stage 5 selects the PR190-style
+        // single-launch MIX fast path.
         // Keeping these as separate launches avoids AIC/AIV cross-core flags.
         this->Input("stage_a").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
         this->Input("stage_b").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);

@@ -84,11 +84,15 @@ constexpr uint32_t C_RIGHT_DIAG_K_OFFSET =
     C_RIGHT_DIAG_Q_OFFSET + C_RIGHT_DIAG_ELEMENTS;
 constexpr uint32_t SLOT_ELEMENTS = C_RIGHT_DIAG_K_OFFSET + C_RIGHT_DIAG_ELEMENTS;
 constexpr uint64_t SLOT_BYTES = static_cast<uint64_t>(SLOT_ELEMENTS) * sizeof(float);
+constexpr uint32_t WORKSPACE_BUFFER_COUNT = 4;
+constexpr uint64_t WORKSPACE_CORE_ELEMENTS =
+    static_cast<uint64_t>(WORKSPACE_BUFFER_COUNT) * SLOT_ELEMENTS;
+constexpr uint64_t VEC_TO_CUBE_FLAG_READY = 2;
+constexpr uint64_t CUBE_TO_VEC_FLAG_READY = 4;
 
-// The split-launch left-Cube path deliberately uses task-sized, compact
-// tensors.  Unlike key15 it never aliases A/B/C and never relies on an
-// AIC/AIV cross-core flag.  Runtime launch ordering is the only inter-stage
-// dependency.
+// Keys 16/17/18 keep the earlier split-launch experiment available for
+// diagnosis.  The public key19 path below instead uses PR190's bounded
+// four-slot workspace ring and one paired AIC/AIV MIX launch.
 constexpr uint32_t LEFT_A_PREV_OFFSET = 0;
 constexpr uint32_t LEFT_A_DIAG_OFFSET = LEFT_A_PREV_OFFSET + A_LEFT_PREV_ELEMENTS;
 constexpr uint32_t LEFT_A_ELEMENTS = LEFT_A_DIAG_OFFSET + A_LEFT_DIAG_ELEMENTS;
@@ -264,12 +268,11 @@ public:
         }
     }
 
-    __aicore__ inline void PackTask(uint64_t task, uint64_t logicalCore, uint64_t lane)
+    __aicore__ inline void PackTask(uint64_t task, uint64_t slotBase, uint64_t lane)
     {
         const uint64_t valueHead = task % hv_;
         const uint64_t chunk = task / hv_;
         const uint64_t chunkStart = chunk * CHUNK;
-        const uint64_t slotBase = logicalCore * SLOT_ELEMENTS;
 
         LocalTensor<float> dAQ = dAQBuf_.Get<float>();
         LocalTensor<float> dAK = dAKBuf_.Get<float>();
@@ -293,12 +296,11 @@ public:
         PackBMatrices(slotBase, valueHead, chunkStart, rowBlock1);
     }
 
-    __aicore__ inline void ConsumeTask(uint64_t task, uint64_t logicalCore, uint64_t lane)
+    __aicore__ inline void ConsumeTask(uint64_t task, uint64_t slotBase, uint64_t lane)
     {
         const uint64_t valueHead = task % hv_;
         const uint64_t chunk = task / hv_;
         const uint64_t chunkStart = chunk * CHUNK;
-        const uint64_t slotBase = logicalCore * SLOT_ELEMENTS;
         const uint32_t rowBlock0 = lane == 0 ? 0 : 1;
         const uint32_t rowBlock1 = lane == 0 ? 3 : 2;
         ConsumeRowBlock(slotBase, valueHead, chunkStart, rowBlock0);
@@ -1134,37 +1136,44 @@ public:
         workspace_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace));
     }
 
-    __aicore__ inline void ProcessSlot(uint64_t logicalCore)
+    __aicore__ inline void ProcessSlot(uint64_t slotBase)
     {
-        Catlass::Arch::Resource<ArchTag> resource;
-        DirectMmad directMmad(resource);
-        const uint64_t slotBase = logicalCore * SLOT_ELEMENTS;
-        Run(directMmad, slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+        Run(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
             C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K);
-        Run(directMmad, slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
+        Run(slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
             C_LEFT_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K);
-        Run(directMmad, slotBase, A_RIGHT_FUTURE_Q_OFFSET,
+        Run(slotBase, A_RIGHT_FUTURE_Q_OFFSET,
             B_RIGHT_FUTURE_Q_OFFSET, C_RIGHT_FUTURE_Q_OFFSET,
             A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
-        Run(directMmad, slotBase, A_RIGHT_FUTURE_K_OFFSET,
+        Run(slotBase, A_RIGHT_FUTURE_K_OFFSET,
             B_RIGHT_FUTURE_K_OFFSET, C_RIGHT_FUTURE_K_OFFSET,
             A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
-        Run(directMmad, slotBase, A_RIGHT_DIAG_Q_OFFSET,
+        Run(slotBase, A_RIGHT_DIAG_Q_OFFSET,
             B_RIGHT_DIAG_Q_OFFSET, C_RIGHT_DIAG_Q_OFFSET,
             A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
-        Run(directMmad, slotBase, A_RIGHT_DIAG_K_OFFSET,
+        Run(slotBase, A_RIGHT_DIAG_K_OFFSET,
             B_RIGHT_DIAG_K_OFFSET, C_RIGHT_DIAG_K_OFFSET,
             A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
     }
 
 private:
-    template <typename Mmad>
     __aicore__ inline void Run(
-        Mmad &mmad, uint64_t slotBase, uint32_t aOffset,
+        uint64_t slotBase, uint32_t aOffset,
         uint32_t bOffset, uint32_t cOffset, uint32_t m, uint32_t k)
     {
         using Element = float;
         using Layout = Catlass::layout::RowMajor;
+        using DispatchPolicy =
+            Catlass::Gemm::MmadPingpong<ArchTag, true, false>;
+        static_assert(!DispatchPolicy::USE_HF32_MODE,
+                      "KDA full-Cube path must keep IEEE FP32 MMAD");
+        using TileShape =
+            tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+            ArchTag, Element, Layout, Element, Layout, Element, Layout>;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
+            DispatchPolicy, TileShape, TileShape,
+            Element, Element, Element, void, TileCopy>;
         auto layoutA = tla::MakeLayout<Element, Layout>(m, k);
         auto layoutB = tla::MakeLayout<Element, Layout>(k, HEAD_DIM);
         auto layoutC = tla::MakeLayout<Element, Layout>(m, HEAD_DIM);
@@ -1181,7 +1190,10 @@ private:
                               tla::MakeShape(shape.k(), shape.n()));
         auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0),
                               tla::MakeShape(shape.m(), shape.n()));
-        mmad(blockA, blockB, blockC, shape);
+        Catlass::Arch::Resource<ArchTag> resource;
+        BlockMmad blockMmad(resource);
+        blockMmad(blockA, blockB, blockC, shape);
+        PipeBarrier<PIPE_ALL>();
     }
 
 private:
@@ -1424,21 +1436,30 @@ public:
                                 const ChunkKdaBwdIntraTilingData &tiling)
     {
         workspace_ = workspace;
-        taskCount_ = static_cast<uint64_t>(tiling.totalChunks) *
-                     static_cast<uint64_t>(tiling.vHeadNum);
-        usedCoreNum_ = static_cast<uint64_t>(tiling.usedCoreNum);
+        chunkCount_ = static_cast<uint64_t>(tiling.totalChunks);
+        valueHeadCount_ = static_cast<uint64_t>(tiling.vHeadNum);
     }
 
     __aicore__ inline void ProcessAic()
     {
         AicKernel cube;
         cube.Init(workspace_);
-        const uint64_t logicalCore = static_cast<uint64_t>(GetBlockIdx());
-        for (uint64_t task = logicalCore; task < taskCount_;
-             task += usedCoreNum_) {
-            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(readyFlag_);
-            cube.ProcessSlot(logicalCore);
-            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(doneFlag_);
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx());
+        const uint64_t coreNum = static_cast<uint64_t>(GetBlockNum());
+        uint64_t windowIdx = 0;
+        for (uint64_t chunk = coreIdx; chunk < chunkCount_; chunk += coreNum) {
+            for (uint64_t hvBase = 0; hvBase < valueHeadCount_; hvBase += 2) {
+                const uint64_t headCount =
+                    hvBase + 2 <= valueHeadCount_ ? 2 : valueHeadCount_ - hvBase;
+                const uint64_t windowStartSlot = (windowIdx & 1U) * 2;
+                for (uint64_t headIdx = 0; headIdx < headCount; ++headIdx) {
+                    const uint64_t slot = windowStartSlot + headIdx;
+                    Catlass::Arch::CrossCoreWaitFlag(readyFlag_);
+                    cube.ProcessSlot(SlotBase(coreIdx, slot));
+                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(doneFlag_);
+                }
+                ++windowIdx;
+            }
         }
     }
 
@@ -1453,27 +1474,53 @@ public:
             return;
         }
         const uint64_t lane = static_cast<uint64_t>(GetSubBlockIdx());
-        const uint64_t logicalCore =
+        const uint64_t coreIdx =
             static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        const uint64_t coreNum = static_cast<uint64_t>(GetBlockNum());
         AivKernel vector;
         vector.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
                     dqOut, dkOut, dbOut, dgOut, workspace_, tiling, pipe);
 
-        for (uint64_t task = logicalCore; task < taskCount_;
-             task += usedCoreNum_) {
-            vector.PackTask(task, logicalCore, lane);
-            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(readyFlag_);
-            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(doneFlag_);
-            vector.ConsumeTask(task, logicalCore, lane);
+        uint64_t windowIdx = 0;
+        for (uint64_t chunk = coreIdx; chunk < chunkCount_; chunk += coreNum) {
+            for (uint64_t hvBase = 0; hvBase < valueHeadCount_; hvBase += 2) {
+                const uint64_t headCount =
+                    hvBase + 2 <= valueHeadCount_ ? 2 : valueHeadCount_ - hvBase;
+                const uint64_t windowStartSlot = (windowIdx & 1U) * 2;
+
+                // PR190 stages both heads before consuming the first result.
+                // AIC can therefore process head 0 while AIV packs head 1.
+                for (uint64_t headIdx = 0; headIdx < headCount; ++headIdx) {
+                    const uint64_t hv = hvBase + headIdx;
+                    const uint64_t task = chunk * valueHeadCount_ + hv;
+                    const uint64_t slot = windowStartSlot + headIdx;
+                    vector.PackTask(task, SlotBase(coreIdx, slot), lane);
+                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(readyFlag_);
+                }
+
+                for (uint64_t headIdx = 0; headIdx < headCount; ++headIdx) {
+                    const uint64_t hv = hvBase + headIdx;
+                    const uint64_t task = chunk * valueHeadCount_ + hv;
+                    const uint64_t slot = windowStartSlot + headIdx;
+                    Catlass::Arch::CrossCoreWaitFlag(doneFlag_);
+                    vector.ConsumeTask(task, SlotBase(coreIdx, slot), lane);
+                }
+                ++windowIdx;
+            }
         }
     }
 
 private:
-    Catlass::Arch::CrossCoreFlagWithReverse<> readyFlag_{0, 1};
-    Catlass::Arch::CrossCoreFlagWithReverse<> doneFlag_{2, 3};
+    __aicore__ inline uint64_t SlotBase(uint64_t coreIdx, uint64_t slot) const
+    {
+        return coreIdx * WORKSPACE_CORE_ELEMENTS + slot * SLOT_ELEMENTS;
+    }
+
+    Catlass::Arch::CrossCoreFlag readyFlag_{VEC_TO_CUBE_FLAG_READY};
+    Catlass::Arch::CrossCoreFlag doneFlag_{CUBE_TO_VEC_FLAG_READY};
     GM_ADDR workspace_ = nullptr;
-    uint64_t taskCount_ = 0;
-    uint64_t usedCoreNum_ = 1;
+    uint64_t chunkCount_ = 0;
+    uint64_t valueHeadCount_ = 0;
 };
 
 } // namespace KdaFullCube

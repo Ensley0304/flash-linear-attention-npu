@@ -23,12 +23,8 @@
 using namespace op;
 
 namespace {
-constexpr int64_t KDA_LEFT_A_ROWS = 136;
-constexpr int64_t KDA_LEFT_B_ROWS = 160;
-constexpr int64_t KDA_LEFT_C_ROWS = 224;
-constexpr int64_t KDA_LEFT_HEAD_DIM = 128;
 constexpr int64_t KDA_LEFT_MAX_SLOTS = 4096;
-constexpr bool KDA_ENABLE_SPLIT_LEFT_CUBE = true;
+constexpr bool KDA_ENABLE_PR190_MIX_CUBE = true;
 
 struct Params {
     const aclTensor *q, *k, *g, *beta, *dAqk, *dAkk, *dq, *dk, *db, *dg;
@@ -140,14 +136,14 @@ bool MatchTargetSafeFastPath(const Params &p)
            scratchSlots <= KDA_LEFT_MAX_SLOTS;
 }
 
-bool UseSplitLeftCubeFastPath(const Params &p)
+bool UsePr190MixCubeFastPath(const Params &p)
 {
-    return KDA_ENABLE_SPLIT_LEFT_CUBE && MatchTargetSafeFastPath(p);
+    return KDA_ENABLE_PR190_MIX_CUBE && MatchTargetSafeFastPath(p);
 }
 
 bool UseRow3MixedRollback(const Params &p)
 {
-    return !KDA_ENABLE_SPLIT_LEFT_CUBE && MatchTargetSafeFastPath(p);
+    return !KDA_ENABLE_PR190_MIX_CUBE && MatchTargetSafeFastPath(p);
 }
 } // namespace
 
@@ -172,48 +168,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
         CHECK_RET(MakeContiguous(*tensor, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     }
     std::array<const aclTensor *, 4> result{};
-    if (UseSplitLeftCubeFastPath(p)) {
-        const int64_t scratchSlots = p.totalChunks * p.g->GetViewShape().GetDim(1);
-        auto stageA = executorPtr->AllocTensor(
-            KdaBwdMakeShape({scratchSlots, KDA_LEFT_A_ROWS, KDA_LEFT_HEAD_DIM}),
-            DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto stageB = executorPtr->AllocTensor(
-            KdaBwdMakeShape({scratchSlots, KDA_LEFT_B_ROWS, KDA_LEFT_HEAD_DIM}),
-            DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto stageC = executorPtr->AllocTensor(
-            KdaBwdMakeShape({scratchSlots, KDA_LEFT_C_ROWS, KDA_LEFT_HEAD_DIM}),
-            DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto dummy0 = executorPtr->AllocTensor(
-            KdaBwdMakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto dummy1 = executorPtr->AllocTensor(
-            KdaBwdMakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        auto dummy2 = executorPtr->AllocTensor(
-            KdaBwdMakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        CHECK_RET(stageA != nullptr && stageB != nullptr && stageC != nullptr &&
-                      dummy0 != nullptr && dummy1 != nullptr && dummy2 != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
-
-        // Three independent launches mirror the staged orchestration proven in
-        // the fused GDN kernels while avoiding MIX-mode handshakes entirely:
-        // AIV packs compact left A/B, AIC computes two IEEE-FP32 GEMMs, then AIV
-        // consumes C and executes the unchanged right-half vector path.
-        auto prep = l0op::ChunkKdaBwdIntra(
-            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 1,
-            stageA, stageB, dummy0, dummy1, executorPtr);
-        for (const aclTensor *tensor : prep) {
-            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        }
-        auto cube = l0op::ChunkKdaBwdIntra(
-            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, stageA, stageB, nullptr, 2,
-            stageC, dummy0, dummy1, dummy2, executorPtr);
-        for (const aclTensor *tensor : cube) {
-            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        }
+    if (UsePr190MixCubeFastPath(p)) {
+        // One MIX launch, matching PR190's paired AIC/AIV execution contract.
+        // The device kernel owns four bounded workspace slots per logical core;
+        // no task-sized executor tensors or inter-launch dependencies remain.
         result = l0op::ChunkKdaBwdIntra(
             p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
-            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, stageC, 3,
+            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 5,
             p.dqOut, p.dkOut, p.dbOut, p.dgOut, executorPtr);
     } else if (UseRow3MixedRollback(p)) {
         result = l0op::ChunkKdaBwdIntra(

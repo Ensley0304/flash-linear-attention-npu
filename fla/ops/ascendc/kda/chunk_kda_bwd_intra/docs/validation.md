@@ -6,15 +6,15 @@
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| Python 语法 | 已通过 | wrapper、导出、CPU reference、NPU pytest 均通过 `py_compile`；新增 split left-Cube 源码契约后应收集 38 项 |
+| Python 语法 | 已通过 | NPU pytest 已通过 `py_compile`；当前服务器测试文件应收集 37 项 |
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| Cube 源码隔离契约 | 本地已通过 | key15 仍隔离；key16/17/18 分别为 AIV/AIC/AIV，public 路径为三次独立 launch，无 CrossCore flag；key17 只发 `64x64xK` 单 tile 并显式闭合 L1/L0 事件；一处 host 常量可恢复 key13 |
+| Cube 源码隔离契约 | 本地待复核 | key19 为独立 MIX key；public 只调用一次 stage-5 L0；PR190 四槽/HV-pair/raw-flag 调度与 `chunk_kda_fwd` FP32 BlockMmad 配置均由源码契约固定；一处 host 常量可恢复 key13 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | key15 已通过 | clean isolated wheel 已包含两个目标设备对象；运行时 endpoint 门禁仍阻断 key15 |
-| AscendC NPU 精度 | key15 阻断 | clean wheel 的 endpoint guard 超时；key15 重构并通过 endpoint/repeated-launch 前不得重新分派 |
-| Profiling/性能优化 | key14 已采集 | key7 48.660 ms、BK64 key12 32.477 ms、key13 31.034 ms、key14 31.036 ms；key15 待采集，要求每次调用只有一条 MIX KDA 记录 |
+| CANN host/kernel 编译 | key19 待验证 | 必须用单算子 clean build，确认 wheel 中新设备对象哈希 |
+| AscendC NPU 精度 | key19 待验证 | 先过 endpoint，再过 repeated-launch 和完整 37 项；不放宽原容差 |
+| Profiling/性能优化 | key13 已采集 | key7 48.660 ms、BK64 key12 32.477 ms、key13 31.034 ms；key19 要求每次调用只有一条同时含 AIC/AIV 时间的 MIX KDA 记录 |
 
 ## A2 精度与性能基线（2026-07-21）
 
@@ -23,7 +23,8 @@ clean wheel 完成真实 kernel launch，原完整 pytest 为 `22 passed in 12.7
 safe/unsafe、FP16/BF16、dense/varlen、GVA、四种 layout、BT=64/128、K=16/48/96/256、
 重复 launch、零 dA 和 one-hot dA 路径。当前额外保留 1 项 endpoint reassociation 极值用例，
 因此方向端点修正版原预期收集 23 项。本轮再增加 `dAqk/dAkk` 两路 rowBlock3 off-left BF16
-canary、dense random、Cube repeated-launch、八路 full-Cube path canary 和 3 项源码契约，实验分支完整收集数应为 38 项；尚未上板前不声明新增路径已通过。
+canary、dense random、Cube repeated-launch、八路 full-Cube path canary 和源码契约，当前服务器
+测试文件完整收集数为 37 项；尚未上板前不声明新增路径已通过。
 
 目标性能 shape 的 legacy AscendC kernel duration 为 477.937 ms，AIV time 为 455.734 ms；
 同 shape Triton kernel 为 19.272 ms。`75535cd` AIV block-wise kernel 为 48.660 ms，端到端
@@ -100,31 +101,26 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
   `target=55`、`source=9`，分别隔离 rowBlock3 off-left 的 `dAqk` 和 `dAkk` Cube 输出；q 与
   target k 置零，避免 right、`db/dg` 项掩盖 left contraction 错误。
 
-## key15 full-Cube 实验门禁
+## key19 PR190-style MIX 实验门禁
 
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-和满 chunk。源码契约要求 key15 仍是独立 MIX 分支；public split left-Cube 路径调用三次 L0，且
-key16/17/18 不允许出现 MIX task type 或 CrossCore flag；key17 不允许进入
-`BlockMmadTla` 的多 tile 循环，必须保持 K 不拆，并按 PR190 的
-`MTE2_MTE1/MTE1_M/M_FIX/FIX_M` 顺序闭合每个单 tile。key15 为
-`KERNEL_TYPE_MIX_AIC_1_2`，六组 A/B/C 为 FP32，使用单 tile `TileMmadTla`，HF32 显式关闭，
-且 key15 必须保留独立实验 key。当前手写 `TileMmadTla` 完成协议未通过 endpoint
-运行时门禁，不能把源码级 event/unitFlag 断言视为协议正确性的证明。AIC/AIV 使用相同
-logical core/slot 映射；新的 Cube 执行器应优先复用仓内已验证组件，并逐级通过运行时门禁。
+和满 chunk。源码契约要求 key19 为独立 `KERNEL_TYPE_MIX_AIC_1_2` 分支，public 只调用一次
+stage-5 L0。AIC/AIV 必须使用 PR190 相同的 chunk 分核、HV-pair、四槽双窗口与普通 flag id 2/4
+协议；Cube 必须使用仓内 `chunk_kda_fwd` 相同的 IEEE-FP32 BlockMmad policy 和
+`64x64x64` tile。key15 和 key16/17/18 继续编译但不得被 public fastpath 选择。
 
-稳定 key13 是目标 shape 的当前默认路径，key7 是通用 fallback。key15 workspace 为
-`usedCoreNum * 600 KiB`，20 个逻辑 AIC 约 12 MiB；当前不启用 double buffer。建议按以下顺序放行：
+稳定 key13 是目标 shape 的已知可运行 fallback，key7 是通用 fallback。key19 workspace 为
+`usedCoreNum * 4 * 600 KiB`，20 个逻辑 AIC 约 46.9 MiB。建议按以下顺序放行：
 
 1. 源码契约和 Python collect 通过；
-2. 单算子快速 build，确认 key13 回退和 key15 MIX 实例均进入 wheel；
+2. 单算子快速 build，确认 key13 回退和 key19 MIX 实例均进入 wheel；
 3. 八路 full-Cube path canary、zero dA、endpoint guard 通过；
 4. 连续 launch 至少 100 次，无超时或设备复位；
-5. 完整 38 项通过，原容差不删除、不放宽；
+5. 完整 37 项通过，原容差不删除、不放宽；
 6. msprof 只出现一条 `ChunkKdaBwdIntra`，该行同时具有 AIC/AIV 时间，再与 key7 比较。
 
-key13 保留为已知可运行的 BK64 回退；当前 key15 改动必须重新执行第 2～6 项。未满足第 3～6 项前，
-不扩大实验 fastpath eligibility，不移除 key7/key13，也不引入 double buffer、persistent MMAD
-或 workspace ring。
+key13 保留为已知可运行的 BK64 回退；key19 必须重新执行第 2～6 项。未满足第 3～6 项前，
+不扩大实验 fastpath eligibility，也不移除 key7/key13。
 
 板端通过门槛：四个输出均 finite，且逐输出通过测试中的 CPU FP64 golden 容差。若 safe case 失败，应先分别对比 `dq_local`、`dk_left_pre`、`dk_right`，重点检查 16-token 首/中/尾参考点的内外指数方向。
 

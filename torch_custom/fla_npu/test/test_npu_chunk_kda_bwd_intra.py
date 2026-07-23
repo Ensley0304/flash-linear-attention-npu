@@ -157,7 +157,7 @@ def _rowblock3_off_left_cube_canary_case(source):
 
 
 def _full_cube_path_canary_case(path, source):
-    """Isolate one of key15's four causal contraction families."""
+    """Isolate one of key19's four causal contraction families."""
     b, t, h, kdim, chunk_size = 1, 64, 1, 128, 64
     path_tokens = {
         "left_previous": (18, 2),
@@ -286,7 +286,7 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_off_left_cube_canary(source):
 )
 @pytest.mark.parametrize("source", ["dAqk", "dAkk"])
 def test_chunk_kda_bwd_intra_safe_gate_full_cube_path_canary(path, source):
-    """Protect every sparse block family packed for key15's six GEMMs."""
+    """Protect every sparse block family packed for key19's six GEMMs."""
     device = _device()
     inputs, target = _full_cube_path_canary_case(path, source)
     ref = _golden(*inputs, chunk_size=64, safe_gate=True)
@@ -315,7 +315,7 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_dense_random():
 
 
 def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
-    """The single MIX fastpath must advance every reverse-flag generation."""
+    """The single MIX fastpath must drain every raw ready/done handshake."""
     device = _device()
     inputs = _case(t=64, h=1, hv=1, kdim=128, dtype=torch.bfloat16, gate_scale=0.2)
     ref = _golden(*inputs, chunk_size=64, safe_gate=True)
@@ -328,7 +328,7 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
 
 
 def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
-    """Keep key12-key14 intact while the new split path remains independently gated."""
+    """Keep key12-key14 intact while key19 remains independently gated."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -410,18 +410,16 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert "SetScheduleMode(1)" in tiling_source
 
     fastpath = re.search(
-        r"if \(UseSplitLeftCubeFastPath\(p\)\) \{(?P<body>.*?)"
+        r"if \(UsePr190MixCubeFastPath\(p\)\) \{(?P<body>.*?)"
         r"\n\s*\} else if \(UseRow3MixedRollback\(p\)\) \{",
         aclnn_source,
         re.DOTALL,
     )
-    assert fastpath is not None, "missing public split left-Cube dispatch"
+    assert fastpath is not None, "missing public PR190-style MIX dispatch"
     fastpath_body = fastpath.group("body")
-    assert fastpath_body.count("l0op::ChunkKdaBwdIntra(") == 3
-    assert fastpath_body.count("AllocTensor") == 6
-    assert re.search(r"nullptr, nullptr, nullptr, 1,", fastpath_body)
-    assert re.search(r"stageA, stageB, nullptr, 2,", fastpath_body)
-    assert re.search(r"nullptr, nullptr, stageC, 3,", fastpath_body)
+    assert fastpath_body.count("l0op::ChunkKdaBwdIntra(") == 1
+    assert "AllocTensor" not in fastpath_body
+    assert re.search(r"nullptr, nullptr, nullptr, 5,", fastpath_body)
     assert "CrossCoreSetFlag" not in fastpath_body
     assert "CrossCoreWaitFlag" not in fastpath_body
 
@@ -555,7 +553,8 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
         "the proven key13 implementation must remain compiled as the fallback"
     )
     key15 = re.search(
-        r"else if \(TILING_KEY_IS\(15\)\) \{(?P<body>.*?)\n    \}\n\}",
+        r"else if \(TILING_KEY_IS\(15\)\) \{(?P<body>.*?)"
+        r"(?=\n    \} else if)",
         kernel_source,
         re.DOTALL,
     )
@@ -567,41 +566,7 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
     assert "GetUserWorkspace(workspace)" in key15_body
 
     assert "static_assert(SLOT_BYTES == 614400" in cube_source
-    assert "logicalCore * SLOT_ELEMENTS" in cube_source
-    assert cube_source.count("Run(directMmad,") == 6, (
-        "only the disabled key15 experiment may use DirectMmad"
-    )
-    assert "TileMmadTla" in cube_source
-    assert "constexpr uint32_t CUBE_TILE_M = 128;" in cube_source
-    assert "constexpr uint32_t CUBE_TILE_N = 128;" in cube_source
-    assert "constexpr uint32_t CUBE_TILE_K = 128;" in cube_source
-    assert "CUBE_TILE_M >= A_LEFT_PREV_M" in cube_source
-    assert "CUBE_TILE_M >= A_LEFT_DIAG_M" in cube_source
-    assert "CUBE_TILE_M >= A_RIGHT_FUTURE_M" in cube_source
-    assert "CUBE_TILE_M >= A_RIGHT_DIAG_M" in cube_source
-    assert "CUBE_TILE_N >= HEAD_DIM" in cube_source
-    assert "CUBE_TILE_K >= A_LEFT_PREV_K" in cube_source
-    assert "CUBE_TILE_K >= A_LEFT_DIAG_K" in cube_source
-    assert "CUBE_TILE_K >= A_RIGHT_FUTURE_K" in cube_source
-    assert "CUBE_TILE_K >= A_RIGHT_DIAG_K" in cube_source
-    assert "SetHF32Mode(false);" in cube_source
-    assert re.search(
-        r"tileMmad\(tensorL0C,\s*tensorL0A,\s*tensorL0B,\s*true,\s*0b11\);",
-        cube_source,
-    )
-    assert "copyL0CToGm(tensorC, tensorL0C, 0b11);" in cube_source
-    assert "static constexpr int32_t EVENT_L1A = 0;" in cube_source
-    assert "static constexpr int32_t EVENT_L1B = 1;" in cube_source
-    assert "static constexpr int32_t EVENT_L0A = 0;" in cube_source
-    assert "static constexpr int32_t EVENT_L0B = 1;" in cube_source
-    assert "SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);" in cube_source
-    assert "SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);" in cube_source
-    assert "SetFlag<HardEvent::M_MTE1>(EVENT_L0A);" in cube_source
-    assert "SetFlag<HardEvent::M_MTE1>(EVENT_L0B);" in cube_source
-    assert "SetFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
-    assert "WaitFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
-    assert "SetFlag<HardEvent::FIX_M>(EVENT_L0C);" in cube_source
-    assert "WaitFlag<HardEvent::FIX_M>(EVENT_L0C);" in cube_source
+    assert "coreIdx * WORKSPACE_CORE_ELEMENTS + slot * SLOT_ELEMENTS" in cube_source
     assert "OuterAccumulate" not in cube_source
     assert "lane == 0 ? 0 : 1" in cube_source
     assert "lane == 0 ? 3 : 2" in cube_source
@@ -609,22 +574,17 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
         "safe diagonal paths must retain the Triton midpoint reference"
     )
     assert (
-        cube_source.count("CrossCoreSetFlagWithReverse<0x2") == 2
-        and cube_source.count("CrossCoreWaitFlagWithReverse<0x2") == 2
-    ), "key15 must use one symmetric ready/done generation per task"
-
-    assert (
-        "static_cast<uint64_t>(usedCoreNum) * KDA_FULL_CUBE_BYTES_PER_CORE"
-        in tiling_source
-    )
+        "static_cast<uint64_t>(usedCoreNum) *" in tiling_source
+        and "KDA_PR190_WORKSPACE_BYTES_PER_CORE" in tiling_source
+    ), "the dormant key15 alias must also reserve four slots per logical core"
     assert (
         "static_cast<uint64_t>(scratchSlots) *" in tiling_source
         and "KDA_ROW3_BYTES_PER_SLOT" in tiling_source
     ), "key13 rollback must retain its task-sized workspace formula"
 
 
-def test_chunk_kda_bwd_intra_split_left_cube_source_contract():
-    """The first left-Cube integration must stay launch-isolated and reversible."""
+def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
+    """The full-Cube path must reuse the proven PR190/KDA-forward structure."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -638,11 +598,22 @@ def test_chunk_kda_bwd_intra_split_left_cube_source_contract():
     aclnn_source = (
         op_root / "op_host" / "op_api" / "aclnn_chunk_kda_bwd_intra.cpp"
     ).read_text(encoding="utf-8")
+    kda_forward_source = (
+        ROOT
+        / "fla"
+        / "ops"
+        / "ascendc"
+        / "kda"
+        / "chunk_kda_fwd"
+        / "op_kernel"
+        / "chunk_kda_fwd.cpp"
+    ).read_text(encoding="utf-8")
 
     expected = {
         16: "KERNEL_TYPE_AIV_ONLY",
         17: "KERNEL_TYPE_AIC_ONLY",
         18: "KERNEL_TYPE_AIV_ONLY",
+        19: "KERNEL_TYPE_MIX_AIC_1_2",
     }
     for key, task_type in expected.items():
         match = re.search(
@@ -654,60 +625,66 @@ def test_chunk_kda_bwd_intra_split_left_cube_source_contract():
         assert match is not None, f"missing split left-Cube key{key}"
         body = match.group("body")
         assert f"KERNEL_TASK_TYPE({key}, {task_type})" in body
-        assert "KERNEL_TYPE_MIX" not in body
-        assert "CrossCoreSetFlag" not in body
-        assert "CrossCoreWaitFlag" not in body
+        if key != 19:
+            assert "KERNEL_TYPE_MIX" not in body
+            assert "CrossCoreSetFlag" not in body
+            assert "CrossCoreWaitFlag" not in body
+        else:
+            assert "ASCEND_IS_AIC" in body and "ASCEND_IS_AIV" in body
 
     assert "context->SetTilingKey(KDA_LEFT_PREP_TILING_KEY);" in tiling_source
     assert "context->SetTilingKey(KDA_LEFT_CUBE_TILING_KEY);" in tiling_source
     assert "context->SetTilingKey(KDA_LEFT_CONSUME_TILING_KEY);" in tiling_source
+    assert "context->SetTilingKey(KDA_PR190_MIX_CUBE_TILING_KEY);" in tiling_source
     for rows in (136, 160, 224):
         assert f"constexpr int64_t KDA_LEFT_" in tiling_source
         assert str(rows) in tiling_source
 
-    assert "static_assert((LEFT_A_ELEMENTS * sizeof(float)) % 512 == 0" in cube_source
-    assert "class LeftAicKernel" in cube_source
-    assert "class LeftSingleTileMmad" in cube_source
-    assert "using TileMmad = Catlass::Gemm::Tile::TileMmadTla<" in cube_source
-    assert "static constexpr uint32_t TILE_M = 64;" in cube_source
-    assert "static constexpr uint32_t TILE_N = 64;" in cube_source
-    assert "static constexpr uint32_t TILE_K = 128;" in cube_source
-    assert "SetHF32Mode(false);" in cube_source
-    assert "WaitFlag<HardEvent::MTE2_MTE1>(EVENT_L1A);" in cube_source
-    assert "SetFlag<HardEvent::MTE1_M>(EVENT_L0_READY);" in cube_source
-    assert "WaitFlag<HardEvent::MTE1_M>(EVENT_L0_READY);" in cube_source
-    assert "SetFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
-    assert "WaitFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
-    assert "SetFlag<HardEvent::FIX_M>(EVENT_L0C);" in cube_source
-    left_body = re.search(
-        r"class LeftAicKernel \{(?P<body>.*?)\n\};",
+    mixed_body = re.search(
+        r"class MixedKernel \{(?P<body>.*?)\n\};",
         cube_source,
         re.DOTALL,
     ).group("body")
-    assert "BlockMmadTla" not in left_body
-    assert "MmadPingpong" not in left_body
-    assert "mOffset += LeftSingleTileMmad::TILE_M" in left_body
-    assert "nOffset += LeftSingleTileMmad::TILE_N" in left_body
-    assert "Catlass::GemmCoord shape{" in left_body
-    assert "curM, LeftSingleTileMmad::TILE_N, k" in left_body
-    assert "kOffset" not in left_body, "K must remain whole to preserve FP32 reduction order"
-    assert "A_LEFT_PREV_M, A_LEFT_PREV_K" in cube_source
-    assert "A_LEFT_DIAG_M, A_LEFT_DIAG_K" in cube_source
-    assert "SetHF32Mode(false);" in cube_source
-    assert "if constexpr (CUBE_LEFT)" in kernel_source
-    assert "LoadCubeLeftPrefix" in kernel_source
-    assert "true, false, true> op;" in kernel_source
+    assert "constexpr uint32_t WORKSPACE_BUFFER_COUNT = 4;" in cube_source
+    assert "hvBase += 2" in mixed_body
+    assert "(windowIdx & 1U) * 2" in mixed_body
+    assert "chunk = coreIdx; chunk < chunkCount_; chunk += coreNum" in mixed_body
+    assert "CrossCoreFlag readyFlag_{VEC_TO_CUBE_FLAG_READY}" in mixed_body
+    assert "CrossCoreFlag doneFlag_{CUBE_TO_VEC_FLAG_READY}" in mixed_body
+    assert "CrossCoreFlagWithReverse" not in mixed_body
+    assert "CrossCoreWaitFlag(readyFlag_)" in mixed_body
+    assert "CrossCoreSetFlag<0x2, PIPE_FIX>(doneFlag_)" in mixed_body
+    assert "CrossCoreSetFlag<0x2, PIPE_MTE3>(readyFlag_)" in mixed_body
+    assert "CrossCoreWaitFlag(doneFlag_)" in mixed_body
 
-    assert "UseSplitLeftCubeFastPath" in aclnn_source
-    assert "constexpr bool KDA_ENABLE_SPLIT_LEFT_CUBE = true;" in aclnn_source
+    aic_body = re.search(
+        r"class AicKernel \{(?P<body>.*?)\n\};",
+        cube_source,
+        re.DOTALL,
+    ).group("body")
+    assert "MmadPingpong<ArchTag, true, false>" in aic_body
+    assert "Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>" in aic_body
+    assert "BlockMmadTla<" in aic_body
+    assert "DirectMmad" not in aic_body
+    assert "USE_HF32_MODE" in aic_body
+    assert "MmadPingpong<KdaArchTag, true, false>" in kda_forward_source
+    assert "KdaSolveL1TileShape = tla::Shape<_64, _64, _64>" in kda_forward_source
+
+    assert "UsePr190MixCubeFastPath" in aclnn_source
+    assert "constexpr bool KDA_ENABLE_PR190_MIX_CUBE = true;" in aclnn_source
     assert "UseRow3MixedRollback" in aclnn_source
     assert re.search(
         r"UseRow3MixedRollback\(p\).*?nullptr, nullptr, nullptr, 4,",
         aclnn_source,
         re.DOTALL,
     ), "one constant must restore the proven key13 stage-4 launch"
-    assert aclnn_source.count("stageA, stageB, nullptr, 2") == 1
-    assert aclnn_source.count("nullptr, nullptr, stageC, 3") == 1
+    assert re.search(
+        r"UsePr190MixCubeFastPath\(p\).*?nullptr, nullptr, nullptr, 5,",
+        aclnn_source,
+        re.DOTALL,
+    ), "the target shape must use one stage-5 MIX launch"
+    assert "KDA_PR190_WORKSPACE_BUFFER_COUNT = 4" in tiling_source
+    assert "KDA_PR190_WORKSPACE_BYTES_PER_CORE" in tiling_source
     assert "KDA_STAGE4_TILING_KEY = KDA_ROW3_BATCHED_GATE_TILING_KEY" in tiling_source
 
 

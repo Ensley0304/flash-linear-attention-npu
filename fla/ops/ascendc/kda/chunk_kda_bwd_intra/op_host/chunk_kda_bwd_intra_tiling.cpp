@@ -41,6 +41,7 @@ constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;
 constexpr uint64_t KDA_LEFT_PREP_TILING_KEY = 16;
 constexpr uint64_t KDA_LEFT_CUBE_TILING_KEY = 17;
 constexpr uint64_t KDA_LEFT_CONSUME_TILING_KEY = 18;
+constexpr uint64_t KDA_PR190_MIX_CUBE_TILING_KEY = 19;
 // Keep the proven key13 path as the public stage-4 dispatch while key15 is
 // rebuilt around a validated Cube completion protocol. Key15 remains
 // compiled as an isolated experiment and can be re-enabled with this single
@@ -59,10 +60,13 @@ constexpr int64_t KDA_LEFT_B_ROWS = 160;
 constexpr int64_t KDA_LEFT_C_ROWS = 224;
 constexpr int64_t KDA_LEFT_HEAD_DIM = 128;
 constexpr int64_t KDA_LEFT_MAX_SLOTS = 4096;
-// key15 stores six block-diagonal GEMM A/B/C groups in one 600-KiB slot per
-// logical AIC core.  AIV0/AIV1 cannot advance to the next task until both have
-// consumed the current C groups, so task-count-sized scratch is unnecessary.
-constexpr uint64_t KDA_FULL_CUBE_BYTES_PER_CORE = 614400;
+// key19 follows PR190 and keeps four 600-KiB A/B/C slots per logical AIC:
+// two heads per window and two alternating windows.  The dormant key15 alias
+// uses the same MixedKernel, so it must reserve the same per-core capacity.
+constexpr uint64_t KDA_FULL_CUBE_BYTES_PER_SLOT = 614400;
+constexpr uint64_t KDA_PR190_WORKSPACE_BUFFER_COUNT = 4;
+constexpr uint64_t KDA_PR190_WORKSPACE_BYTES_PER_CORE =
+    KDA_PR190_WORKSPACE_BUFFER_COUNT * KDA_FULL_CUBE_BYTES_PER_SLOT;
 
 bool MatchScratchShape(const gert::StorageShape *shape, int64_t dim0, int64_t dim1, int64_t dim2)
 {
@@ -101,7 +105,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t stage = *attrs->GetAttrPointer<int64_t>(ATTR_STAGE);
     if ((chunkSize != 64 && chunkSize != 128) || k < 16 || k > 256 || (k % 16) != 0 ||
         h <= 0 || hv < h || (hv % h) != 0 || h > 128 || hv > 128 || totalChunks <= 0 ||
-        stage < 0 || stage > 4) {
+        stage < 0 || stage > 5) {
         return ge::GRAPH_FAILED;
     }
 
@@ -136,7 +140,9 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t scratchSlots = chunks * hv;
     if (stage != 0) {
         const bool scratchFits =
-            stage == 4
+            stage == 5
+                ? true
+                : stage == 4
                 ? (KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY ||
                    scratchSlots <= KDA_ROW3_MAX_SLOTS)
                 : scratchSlots <= KDA_LEFT_MAX_SLOTS;
@@ -186,13 +192,17 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         taskCount = scratchSlots;
     } else if (stage == 4) {
         taskCount = scratchSlots;
+    } else if (stage == 5) {
+        // Match PR190: distribute chunks across AICs and keep HV windows
+        // serial within the paired AIC/AIV logical core.
+        taskCount = chunks;
     }
     auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t aivNum = platform.GetCoreNumAiv();
     const uint32_t aicNum = platform.GetCoreNumAic();
     uint32_t usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aivNum));
     uint32_t blockDim = usedCoreNum;
-    if (stage == 2 || stage == 4) {
+    if (stage == 2 || stage == 4 || stage == 5) {
         usedCoreNum = static_cast<uint32_t>(std::min<int64_t>(taskCount, aicNum));
         if (usedCoreNum == 0) {
             return ge::GRAPH_FAILED;
@@ -203,17 +213,25 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     context->SetBlockDim(blockDim);
-    if (stage == 4) {
+    if (stage == 4 || stage == 5) {
         context->SetScheduleMode(1);
     }
     const bool useFullCube = stage == 4 && KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY;
     const uint64_t row3WorkspaceBytes = stage == 4
         ? (useFullCube
-               ? static_cast<uint64_t>(usedCoreNum) * KDA_FULL_CUBE_BYTES_PER_CORE
+               ? static_cast<uint64_t>(usedCoreNum) *
+                     KDA_PR190_WORKSPACE_BYTES_PER_CORE
                : static_cast<uint64_t>(scratchSlots) *
                      static_cast<uint64_t>(KDA_ROW3_BYTES_PER_SLOT))
         : 0;
-    context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize() + row3WorkspaceBytes;
+    const uint64_t pr190WorkspaceBytes =
+        stage == 5
+            ? static_cast<uint64_t>(usedCoreNum) *
+                  KDA_PR190_WORKSPACE_BYTES_PER_CORE
+            : 0;
+    context->GetWorkspaceSizes(1)[0] =
+        platform.GetLibApiWorkSpaceSize() + row3WorkspaceBytes +
+        pr190WorkspaceBytes;
 
     ChunkKdaBwdIntraTilingData tiling;
     tiling.set_batch(batch);
@@ -244,6 +262,8 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
         // back to key13 also restores the task-count-sized legacy workspace
         // formula above.
         context->SetTilingKey(KDA_STAGE4_TILING_KEY);
+    } else if (stage == 5) {
+        context->SetTilingKey(KDA_PR190_MIX_CUBE_TILING_KEY);
     } else {
         context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     }

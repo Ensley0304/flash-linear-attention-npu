@@ -100,10 +100,11 @@ block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、
 累加。这样不会重复计算 `source=[0,48)`，也不会改变 `dkLeftPre` 在 `db` 归约前的语义。
 
 实验 fastpath 只允许 `safe_gate=true`、BF16 q/k、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且 workspace 不超过 256 MiB、chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe
-case 全部走稳定 key7/legacy 回退。host 当前对目标 shape 分派已验证的 key13，key15 仅保留为
-未启用的独立实验 key；key13/key12 保留为逐级回退。设备侧实验 MIX 路径均使用
-`KERNEL_TYPE_MIX_AIC_1_2`：一个逻辑 AIC 与两个 AIV 子核处理相同的 `(chunk,HV)` slot。
+且 chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe case 全部走稳定
+key7/legacy 回退。host 对目标 shape 分派独立 key19；key13/key12 保留为逐级回退，key15 和
+key16/17/18 只保留为诊断实例。key19 完整复用 PR190 的 MIX 调度骨架：
+`KERNEL_TYPE_MIX_AIC_1_2`、按 chunk 分配逻辑 AIC、HV 每次处理两个 head、每核四个 workspace
+slot，并按双窗口循环复用 slot。
 
 ```text
 AIV0: pack A/B -> ready -> rowBlock0 ------- wait done -> rowBlock3 consume
@@ -111,13 +112,16 @@ AIV1:          -> ready -> rowBlock1/2 ----- wait done
 AIC :             wait ready -> FP32 Cube -> done
 ```
 
-ready 使用 `0x2` 汇合两个 AIV 子核，确保 AIV0 完成 A/B 的 GM 写回后 AIC 才读取；done 由 AIC
-广播，两个 AIV 子核都消费同一代反转 flag，避免下一 slot 误读陈旧事件。前三个 rowBlock 与 Cube
-重叠，rowBlock3 只在 done 后读取 C。A/B/C 均保持 FP32，使用 IEEE FP32 模式并显式关闭 HF32。
+ready 使用 `0x2` 汇合两个 AIV 子核，确保两个 lane 完成当前 slot 的 A/B GM 写回后 AIC 才读取；
+done 由 AIC 以 `0x2` 广播给两个 AIV 子核。与 PR190 一致，key19 使用 flag id 2/4 的非 reverse
+`CrossCoreFlag`，先生产同一窗口的两个 head，再按相同顺序消费结果。A/B/C 均保持 FP32，使用
+IEEE FP32 模式并显式关闭 HF32。
 设备源文件受 `TORCH_MODE` 保护地引入 `lib/matmul_intf.h`，仅为 CANN MIX 生成包装器注入的
-`matmul::clearWorkspace` 提供声明；实际矩阵收缩使用 CATLASS 单 tile `TileMmadTla`，不启动
-Matmul API server。key15 的六个 FP32 contraction 均落入单个 `128x128x128` tile，MMAD 与
-Fixpipe copyout 显式使用 `unitFlag=0b11`，并以 `M_FIX/FIX_M` 事件闭合 L0C 生命周期。
+`matmul::clearWorkspace` 提供声明；实际矩阵收缩不启动 Matmul API server。key19 不再维护一套
+手写 TileMmad 事件状态机，而是直接采用仓内 `chunk_kda_fwd` 已运行的
+`BlockMmadTla<MmadPingpong<ArchTag, true, false>>` FP32 配置和 `64x64x64` tile。
+六个 contraction 的 K 为 64 或 96；K=96 由成熟 BlockMmad 状态机分块，最终数值由 endpoint、
+稀疏路径和 dense FP64 golden 门禁约束，不再用手写事件协议换取单 K tile。
 
 split left-Cube 的 key17 不再把两次大 GEMM 交给 `BlockMmadTla` 的多层
 M/N/K ping-pong 循环。它沿用 PR190 已验证的 `TileMmadTla` 完成协议，
@@ -125,9 +129,8 @@ M/N/K ping-pong 循环。它沿用 PR190 已验证的 `TileMmadTla` 完成协议
 `64x64` 独立 tile；K 保持完整的 96 或 64，不拆 K、不改变 FP32 点积归约顺序。
 每个 tile 完整写回后才复用同一组 L1/L0 buffer，从而避免 key15 的大 tile
 L0B 同址冲突，也避免此前 key17 进入未验证的 BlockMmad 多 tile 状态机。
-每个 `(chunk,HV)` workspace slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部 512B 对齐；
-目标 shape 的 4096 个 slot 共约 184 MiB。当前版本使用唯一 slot，不做复用或双 buffer，先保证
-无覆盖、无死锁；通过 NPU 门禁后再评估 ring workspace 和更深的 contraction 覆盖。
+上述 split 路径继续保留用于定位，但不再作为 public fastpath。key19 每个 slot 为 600 KiB，
+每个逻辑 AIC 固定四个 slot；20 个 AIC 共约 46.9 MiB，workspace 不随 4096 个任务线性增长。
 
 单 kernel key12 的 BK64 版本已把目标 profiling 从 49.168 ms 降到 32.477 ms。key13 只把
 source-loop gate 构造按 16 行打包为 repeat 指令，实测进一步降到 31.034 ms。key14 在 key13
