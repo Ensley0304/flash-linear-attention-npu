@@ -95,7 +95,10 @@ key14 同卡实测为 31.036 ms，与 key13 的 31.034 ms 基本持平，因此�
 ## key15 full-Cube
 
 key15 将 previous-left、diagonal-left、diagonal-right 和 future-right 四类 contraction 全部改写为
-六次块对角 FP32 `BlockMmadTla`。AIV 只负责 A/B 打包、safe gate 内外因子、`db/dg` 和输出累加。
+六次块对角 FP32 单 tile `TileMmadTla`。六个 contraction 的最大 M/N/K 为 `128/128/96`，
+统一使用一个 `128x128x128` 容量的 L1/L0 buffer，不进入 BlockMmad 多层循环。MMAD 与
+Fixpipe copyout 均显式使用 `unitFlag=0b11`，并以 `M_FIX/FIX_M` 闭合每次 L0C 生命周期。
+AIV 只负责 A/B 打包、safe gate 内外因子、`db/dg` 和输出累加。
 每个逻辑 AIC 复用一份 600 KiB workspace，20 核约 12 MiB；两个 AIV lane 按 `{0,3}` 与 `{1,2}`
 分配 row block，并继续使用一代 ready/done 反转 flag。该版本不启用 double buffer。
 

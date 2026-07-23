@@ -117,26 +117,24 @@ using ArchTag = Catlass::Arch::Ascend950;
 #else
 using ArchTag = Catlass::Arch::AtlasA2;
 #endif
-using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
-static_assert(!DispatchPolicy::USE_HF32_MODE,
-              "ChunkKdaBwdIntra full Cube must use IEEE FP32 mode");
-// This CATLASS MmadPingpong implementation requires identical L1/L0 M/N
-// basic blocks and only performs its outer L1 loop along K.  M/N therefore
-// have to cover every full-Cube operand, while K can remain tiled at 64.
+// Every key15 contraction fits one Cube tile.  Keep all three dimensions at
+// 128 so the direct path does not need BlockMmad's nested loops or partial-K
+// accumulation protocol.
 constexpr uint32_t CUBE_TILE_M = 128;
 constexpr uint32_t CUBE_TILE_N = 128;
-constexpr uint32_t CUBE_TILE_K = 64;
+constexpr uint32_t CUBE_TILE_K = 128;
 static_assert(CUBE_TILE_M >= A_LEFT_PREV_M &&
               CUBE_TILE_M >= A_LEFT_DIAG_M &&
               CUBE_TILE_M >= A_RIGHT_FUTURE_M &&
               CUBE_TILE_M >= A_RIGHT_DIAG_M,
-              "KDA full-Cube L1 M tile must cover every contraction");
+              "KDA full-Cube direct M tile must cover every contraction");
 static_assert(CUBE_TILE_N >= HEAD_DIM,
-              "KDA full-Cube L1 N tile must cover the complete head dimension");
-using L1TileShape =
-    tla::Shape<tla::Int<CUBE_TILE_M>, tla::Int<CUBE_TILE_N>,
-               tla::Int<CUBE_TILE_K>>;
-using L0TileShape = L1TileShape;
+              "KDA full-Cube direct N tile must cover the complete head dimension");
+static_assert(CUBE_TILE_K >= A_LEFT_PREV_K &&
+              CUBE_TILE_K >= A_LEFT_DIAG_K &&
+              CUBE_TILE_K >= A_RIGHT_FUTURE_K &&
+              CUBE_TILE_K >= A_RIGHT_DIAG_K,
+              "KDA full-Cube direct K tile must cover every contraction");
 
 enum FeatureKind : uint32_t {
     FEATURE_K = 0,
@@ -822,6 +820,149 @@ private:
     TPipe *pipe_ = nullptr;
 };
 
+class DirectMmad {
+public:
+    using Element = float;
+    using Layout = Catlass::layout::RowMajor;
+    using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+        ArchTag, Element, Layout, Element, Layout, Element, Layout>;
+    using ElementAccumulator = typename TileCopy::ElementAccumulator;
+    using LayoutTagL1A = typename TileCopy::LayoutTagL1A;
+    using LayoutTagL1B = typename TileCopy::LayoutTagL1B;
+    using LayoutTagL0A = typename TileCopy::LayoutTagL0A;
+    using LayoutTagL0B = typename TileCopy::LayoutTagL0B;
+    using CopyL1ToL0A = typename TileCopy::CopyL1ToL0A;
+    using CopyL1ToL0B = typename TileCopy::CopyL1ToL0B;
+    using TileMmad = Catlass::Gemm::Tile::TileMmadTla<
+        ArchTag, Element, LayoutTagL1A>;
+
+    static constexpr uint32_t L1A_BYTES =
+        CUBE_TILE_M * CUBE_TILE_K * sizeof(Element);
+    static constexpr uint32_t L1B_BYTES =
+        CUBE_TILE_K * CUBE_TILE_N * sizeof(Element);
+    static constexpr auto L1A_LAYOUT =
+        tla::MakeLayout<Element, LayoutTagL1A>(
+            tla::Int<CUBE_TILE_M>{}, tla::Int<CUBE_TILE_K>{});
+    static constexpr auto L1B_LAYOUT =
+        tla::MakeLayout<Element, LayoutTagL1B>(
+            tla::Int<CUBE_TILE_K>{}, tla::Int<CUBE_TILE_N>{});
+    static constexpr int32_t EVENT_ID = 0;
+
+    static_assert(L1A_BYTES == 64 * 1024 &&
+                  L1B_BYTES == 64 * 1024,
+                  "KDA direct MMAD expects one 64 KiB L1 buffer per operand");
+
+    __aicore__ inline explicit DirectMmad(
+        Catlass::Arch::Resource<ArchTag> &resource)
+    {
+        SetHF32Mode(false);
+        SetMMLayoutTransform(true);
+        l1ABuf_ = resource.l1Buf.template GetBufferByByte<Element>(0);
+        l1BBuf_ =
+            resource.l1Buf.template GetBufferByByte<Element>(L1A_BYTES);
+        l0ABuf_ = resource.l0ABuf.template GetBufferByByte<Element>(0);
+        l0BBuf_ = resource.l0BBuf.template GetBufferByByte<Element>(0);
+        l0CBuf_ =
+            resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+
+        // Each event starts in the producer-free state.  One event ID is
+        // sufficient because all six contractions intentionally execute in
+        // sequence and reuse the same L1/L0 buffers.
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
+        SetFlag<HardEvent::M_MTE1>(EVENT_ID);
+        SetFlag<HardEvent::FIX_M>(EVENT_ID);
+    }
+
+    __aicore__ inline ~DirectMmad()
+    {
+        // Drain the final copyout before the AIC publishes its cross-core done
+        // flag and before MM layout transform is restored.
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_ID);
+        WaitFlag<HardEvent::FIX_M>(EVENT_ID);
+        SetMMLayoutTransform(false);
+        SetHF32Mode(false);
+    }
+
+    template <typename TensorA, typename TensorB, typename TensorC>
+    __aicore__ inline void operator()(
+        TensorA &tensorA, TensorB &tensorB, TensorC &tensorC,
+        const Catlass::GemmCoord &shape)
+    {
+        using CopyGmToL1A =
+            typename TileCopy::template CopyGmToL1A<TensorA>;
+        using CopyGmToL1B =
+            typename TileCopy::template CopyGmToL1B<TensorB>;
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
+        using CopyL0CToGm =
+            typename TileCopy::template CopyL0CToDst<TensorC>;
+#else
+        using CopyL0CToGm =
+            typename TileCopy::template CopyL0CToGm<TensorC>;
+#endif
+
+        CopyGmToL1A copyGmToL1A;
+        CopyGmToL1B copyGmToL1B;
+        CopyL1ToL0A copyL1ToL0A;
+        CopyL1ToL0B copyL1ToL0B;
+        CopyL0CToGm copyL0CToGm;
+        TileMmad tileMmad;
+
+        auto tensorL1A = tla::MakeTensor(
+            l1ABuf_, L1A_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1B = tla::MakeTensor(
+            l1BBuf_, L1B_LAYOUT, Catlass::Arch::PositionL1{});
+
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
+        copyGmToL1A(tensorL1A, tensorA);
+        copyGmToL1B(tensorL1B, tensorB);
+        SetFlag<HardEvent::MTE2_MTE1>(EVENT_ID);
+
+        auto layoutL0A = tla::MakeLayout<Element, LayoutTagL0A>(
+            shape.m(), shape.k());
+        auto layoutL0B = tla::MakeLayout<Element, LayoutTagL0B>(
+            shape.k(), shape.n());
+        auto tensorL0A = tla::MakeTensor(
+            l0ABuf_, layoutL0A, Catlass::Arch::PositionL0A{});
+        auto tensorL0B = tla::MakeTensor(
+            l0BBuf_, layoutL0B, Catlass::Arch::PositionL0B{});
+        auto tensorTileL1A = GetTile(
+            tensorL1A, tla::MakeCoord(0, 0),
+            tla::MakeShape(shape.m(), shape.k()));
+        auto tensorTileL1B = GetTile(
+            tensorL1B, tla::MakeCoord(0, 0),
+            tla::MakeShape(shape.k(), shape.n()));
+
+        WaitFlag<HardEvent::MTE2_MTE1>(EVENT_ID);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_ID);
+        copyL1ToL0A(tensorL0A, tensorTileL1A);
+        copyL1ToL0B(tensorL0B, tensorTileL1B);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
+        SetFlag<HardEvent::MTE1_M>(EVENT_ID);
+
+        auto layoutL0C = tla::MakeLayoutL0C(shape.m(), shape.n());
+        auto tensorL0C = tla::MakeTensor(
+            l0CBuf_, layoutL0C, Catlass::Arch::PositionL0C{});
+
+        WaitFlag<HardEvent::MTE1_M>(EVENT_ID);
+        WaitFlag<HardEvent::FIX_M>(EVENT_ID);
+        tileMmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
+        SetFlag<HardEvent::M_MTE1>(EVENT_ID);
+        SetFlag<HardEvent::M_FIX>(EVENT_ID);
+
+        WaitFlag<HardEvent::M_FIX>(EVENT_ID);
+        copyL0CToGm(tensorC, tensorL0C, 0b11);
+        SetFlag<HardEvent::FIX_M>(EVENT_ID);
+    }
+
+private:
+    LocalTensor<Element> l1ABuf_;
+    LocalTensor<Element> l1BBuf_;
+    LocalTensor<Element> l0ABuf_;
+    LocalTensor<Element> l0BBuf_;
+    LocalTensor<ElementAccumulator> l0CBuf_;
+};
+
 class AicKernel {
 public:
     __aicore__ inline void Init(GM_ADDR workspace)
@@ -831,39 +972,31 @@ public:
 
     __aicore__ inline void ProcessSlot(uint64_t logicalCore)
     {
-        using Element = float;
-        using Layout = Catlass::layout::RowMajor;
-        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
-            ArchTag, Element, Layout, Element, Layout, Element, Layout>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
-            DispatchPolicy, L1TileShape, L0TileShape,
-            Element, Element, Element, void, TileCopy>;
-
         Catlass::Arch::Resource<ArchTag> resource;
-        BlockMmad blockMmad(resource);
+        DirectMmad directMmad(resource);
         const uint64_t slotBase = logicalCore * SLOT_ELEMENTS;
-        Run(blockMmad, slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+        Run(directMmad, slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
             C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K);
-        Run(blockMmad, slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
+        Run(directMmad, slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
             C_LEFT_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K);
-        Run(blockMmad, slotBase, A_RIGHT_FUTURE_Q_OFFSET,
+        Run(directMmad, slotBase, A_RIGHT_FUTURE_Q_OFFSET,
             B_RIGHT_FUTURE_Q_OFFSET, C_RIGHT_FUTURE_Q_OFFSET,
             A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
-        Run(blockMmad, slotBase, A_RIGHT_FUTURE_K_OFFSET,
+        Run(directMmad, slotBase, A_RIGHT_FUTURE_K_OFFSET,
             B_RIGHT_FUTURE_K_OFFSET, C_RIGHT_FUTURE_K_OFFSET,
             A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
-        Run(blockMmad, slotBase, A_RIGHT_DIAG_Q_OFFSET,
+        Run(directMmad, slotBase, A_RIGHT_DIAG_Q_OFFSET,
             B_RIGHT_DIAG_Q_OFFSET, C_RIGHT_DIAG_Q_OFFSET,
             A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
-        Run(blockMmad, slotBase, A_RIGHT_DIAG_K_OFFSET,
+        Run(directMmad, slotBase, A_RIGHT_DIAG_K_OFFSET,
             B_RIGHT_DIAG_K_OFFSET, C_RIGHT_DIAG_K_OFFSET,
             A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
     }
 
 private:
-    template <typename BlockMmad>
+    template <typename Mmad>
     __aicore__ inline void Run(
-        BlockMmad &blockMmad, uint64_t slotBase, uint32_t aOffset,
+        Mmad &mmad, uint64_t slotBase, uint32_t aOffset,
         uint32_t bOffset, uint32_t cOffset, uint32_t m, uint32_t k)
     {
         using Element = float;
@@ -884,8 +1017,7 @@ private:
                               tla::MakeShape(shape.k(), shape.n()));
         auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0),
                               tla::MakeShape(shape.m(), shape.n()));
-        blockMmad(blockA, blockB, blockC, shape);
-        PipeBarrier<PIPE_ALL>();
+        mmad(blockA, blockB, blockC, shape);
     }
 
 private:

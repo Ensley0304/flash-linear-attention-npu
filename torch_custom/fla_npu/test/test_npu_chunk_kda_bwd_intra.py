@@ -528,7 +528,7 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
 
 
 def test_chunk_kda_bwd_intra_full_cube_source_contract():
-    """Keep key15 bounded, IEEE-FP32, single-launch, and easy to roll back."""
+    """Keep key15 bounded, IEEE-FP32, unit-flag complete, and easy to roll back."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -562,20 +562,33 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
 
     assert "static_assert(SLOT_BYTES == 614400" in cube_source
     assert "logicalCore * SLOT_ELEMENTS" in cube_source
-    assert cube_source.count("Run(blockMmad,") == 6
-    assert "MmadPingpong<ArchTag, false, false>" in cube_source
+    assert cube_source.count("Run(directMmad,") == 6
+    assert "BlockMmadTla" not in cube_source
+    assert "MmadPingpong<ArchTag" not in cube_source
+    assert "TileMmadTla" in cube_source
     assert "constexpr uint32_t CUBE_TILE_M = 128;" in cube_source
     assert "constexpr uint32_t CUBE_TILE_N = 128;" in cube_source
-    assert "constexpr uint32_t CUBE_TILE_K = 64;" in cube_source
+    assert "constexpr uint32_t CUBE_TILE_K = 128;" in cube_source
     assert "CUBE_TILE_M >= A_LEFT_PREV_M" in cube_source
     assert "CUBE_TILE_M >= A_LEFT_DIAG_M" in cube_source
     assert "CUBE_TILE_M >= A_RIGHT_FUTURE_M" in cube_source
     assert "CUBE_TILE_M >= A_RIGHT_DIAG_M" in cube_source
     assert "CUBE_TILE_N >= HEAD_DIM" in cube_source
-    assert "using L0TileShape = L1TileShape;" in cube_source, (
-        "CATLASS MmadPingpong requires equal L1/L0 M/N basic blocks"
+    assert "CUBE_TILE_K >= A_LEFT_PREV_K" in cube_source
+    assert "CUBE_TILE_K >= A_LEFT_DIAG_K" in cube_source
+    assert "CUBE_TILE_K >= A_RIGHT_FUTURE_K" in cube_source
+    assert "CUBE_TILE_K >= A_RIGHT_DIAG_K" in cube_source
+    assert "SetHF32Mode(false);" in cube_source
+    assert re.search(
+        r"tileMmad\(tensorL0C,\s*tensorL0A,\s*tensorL0B,\s*true,\s*0b11\);",
+        cube_source,
     )
-    assert "!DispatchPolicy::USE_HF32_MODE" in cube_source
+    assert "copyL0CToGm(tensorC, tensorL0C, 0b11);" in cube_source
+    assert "SetFlag<HardEvent::M_FIX>(EVENT_ID);" in cube_source
+    assert "WaitFlag<HardEvent::M_FIX>(EVENT_ID);" in cube_source
+    assert "SetFlag<HardEvent::FIX_M>(EVENT_ID);" in cube_source
+    assert "WaitFlag<HardEvent::FIX_M>(EVENT_ID);" in cube_source
+    assert "PipeBarrier<PIPE_ALL>()" not in cube_source
     assert "OuterAccumulate" not in cube_source
     assert "lane == 0 ? 0 : 1" in cube_source
     assert "lane == 0 ? 3 : 2" in cube_source

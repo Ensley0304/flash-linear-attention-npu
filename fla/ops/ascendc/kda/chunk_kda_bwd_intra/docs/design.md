@@ -114,8 +114,9 @@ ready 使用 `0x2` 汇合两个 AIV 子核，确保 AIV0 完成 A/B 的 GM 写�
 广播，两个 AIV 子核都消费同一代反转 flag，避免下一 slot 误读陈旧事件。前三个 rowBlock 与 Cube
 重叠，rowBlock3 只在 done 后读取 C。A/B/C 均保持 FP32，使用 IEEE FP32 模式并显式关闭 HF32。
 设备源文件受 `TORCH_MODE` 保护地引入 `lib/matmul_intf.h`，仅为 CANN MIX 生成包装器注入的
-`matmul::clearWorkspace` 提供声明；实际矩阵收缩仍是 CATLASS direct `BlockMmadTla`，不启动
-Matmul API server。
+`matmul::clearWorkspace` 提供声明；实际矩阵收缩使用 CATLASS 单 tile `TileMmadTla`，不启动
+Matmul API server。key15 的六个 FP32 contraction 均落入单个 `128x128x128` tile，MMAD 与
+Fixpipe copyout 显式使用 `unitFlag=0b11`，并以 `M_FIX/FIX_M` 事件闭合 L0C 生命周期。
 每个 `(chunk,HV)` workspace slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部 512B 对齐；
 目标 shape 的 4096 个 slot 共约 184 MiB。当前版本使用唯一 slot，不做复用或双 buffer，先保证
 无覆盖、无死锁；通过 NPU 门禁后再评估 ring workspace 和更深的 contraction 覆盖。

@@ -40,12 +40,24 @@ is introduced.
 | Component | Selection |
 |---|---|
 | Architecture | `AtlasA2` (`Ascend950` under arch310) |
-| Dispatch policy | `MmadPingpong<ArchTag, false, false>` |
-| L1/L0 tiles | 128x128x64 / 128x128x64 (required equal M/N; M/N cover every full-Cube operand) |
+| Dispatch policy | direct `TileMmadTla`, IEEE FP32 |
+| L1/L0 tiles | one 128x128x128 tile covering every full-Cube operand |
 | A/B/C | FP32 row-major |
-| Mainloop | direct `BlockMmadTla`, six calls |
+| Mainloop | six serial single-tile calls; no BlockMmad loops or ping-pong |
 | Epilogue | none; AIV consumes FP32 C |
 | Kernel task type | `KERNEL_TYPE_MIX_AIC_1_2` |
+
+Each contraction closes the A2 Cube completion protocol explicitly:
+
+```text
+GM -> L1 -> L0 -> TileMmad(unitFlag=0b11)
+   -> M_FIX -> Fixpipe(unitFlag=0b11) -> FIX_M
+```
+
+The same L1/L0 buffers are reused only after their corresponding free event
+has returned. This follows the proven `prepare_wy_repr_bwd_full` pattern and
+avoids the disabled-unit-flag `BlockMmadTla` path that timed out during the
+first key15 endpoint canary.
 
 ## Workspace and synchronization
 

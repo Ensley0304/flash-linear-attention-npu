@@ -10,7 +10,7 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| full-Cube 源码契约 | 本地已通过 | key15 为单次 L0、MIX 1:2、六次 FP32 `BlockMmadTla`、HF32 off、600 KiB/逻辑 AIC；key13/key14 和通用 key7 均保留 |
+| full-Cube 源码契约 | 本地已通过 | key15 为单 tile `TileMmadTla`、MIX 1:2、六次 FP32 contraction、MMAD/Fixpipe `unitFlag=0b11`、HF32 off、600 KiB/逻辑 AIC；key13/key14 和通用 key7 均保留 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
 | CANN host/kernel 编译 | key15 待执行 | key13/key14 已生成并上板；新增 key15 必须重新单算子快速编译 |
 | AscendC NPU 精度 | key15 待执行 | 历史回退路径已完成回归；key15 必须重新完整通过，不能沿用旧 wheel 结论 |
@@ -104,7 +104,8 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key15 为
-`KERNEL_TYPE_MIX_AIC_1_2`，六组 A/B/C 为 FP32 且 HF32 显式关闭。AIC/AIV 使用相同 logical core/slot
+`KERNEL_TYPE_MIX_AIC_1_2`，六组 A/B/C 为 FP32，使用单 tile `TileMmadTla`，HF32 显式关闭，
+且每次 MMAD/Fixpipe 都以 `unitFlag=0b11` 和 `M_FIX/FIX_M` 事件完成闭环。AIC/AIV 使用相同 logical core/slot
 映射；两个 AIV 子核每 slot 各 set 一次 ready、各 wait 一次 done，AIC 各 wait/set 一次。
 
 稳定 key13 是目标 shape 的立即 fallback，key7 是通用 fallback。key15 workspace 为

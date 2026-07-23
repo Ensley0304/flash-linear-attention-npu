@@ -18,6 +18,8 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
+#include "catlass/gemm/tile/tile_mmad.hpp"
 #include "catlass/gemm_coord.hpp"
 #include "catlass/layout/layout.hpp"
 #include "tla/layout.hpp"
@@ -30,6 +32,8 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
+#include "catlass/gemm/tile/tile_mmad.hpp"
 #include "catlass/gemm_coord.hpp"
 #include "catlass/layout/layout.hpp"
 #include "tla/layout.hpp"
@@ -38,7 +42,7 @@
 
 // CANN's MIX wrapper injects matmul::clearWorkspace before entering the
 // user kernel.  The declaration is required even though the contraction
-// itself uses CATLASS direct BlockMmad rather than the Matmul API server.
+// itself uses CATLASS direct TileMmad rather than the Matmul API server.
 #ifndef TORCH_MODE
 #include "lib/matmul_intf.h"
 #endif
