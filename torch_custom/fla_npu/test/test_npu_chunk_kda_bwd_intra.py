@@ -284,12 +284,19 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     batch_key_match = re.search(
         r"\bKDA_ROW3_BATCHED_GATE_TILING_KEY\b\s*=\s*(\d+)", source
     )
+    post_key_match = re.search(
+        r"\bKDA_ROW3_BATCHED_POST_GATE_TILING_KEY\b\s*=\s*(\d+)", source
+    )
     assert key_match is not None, "missing the stable single-launch rowBlock3 MIX key"
     assert batch_key_match is not None, "missing the batched-gate rowBlock3 MIX key"
+    assert post_key_match is not None, "missing the batched row post-scale MIX key"
     mixed_key = int(key_match.group(1))
     batch_key = int(batch_key_match.group(1))
+    post_key = int(post_key_match.group(1))
     assert mixed_key == 12
     assert batch_key == 13
+    assert post_key == 14
+    assert len({mixed_key, batch_key, post_key}) == 3
 
     mixed_branch = re.search(
         rf"else if \(TILING_KEY_IS\({mixed_key}\)\) \{{(?P<body>.*?)"
@@ -303,7 +310,8 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert "ASCEND_IS_AIC" in mixed_body and "ASCEND_IS_AIV" in mixed_body
     assert "GetUserWorkspace(workspace)" in mixed_body
     batch_branch = re.search(
-        rf"else if \(TILING_KEY_IS\({batch_key}\)\) \{{(?P<body>.*?)\n    \}}\n\}}",
+        rf"else if \(TILING_KEY_IS\({batch_key}\)\) \{{(?P<body>.*?)"
+        rf"\n    \}} else if \(TILING_KEY_IS\({post_key}\)\)",
         kernel_source,
         re.DOTALL,
     )
@@ -312,8 +320,19 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert f"KERNEL_TASK_TYPE({batch_key}, KERNEL_TYPE_MIX_AIC_1_2)" in batch_body
     assert "ASCEND_IS_AIC" in batch_body and "ASCEND_IS_AIV" in batch_body
     assert "GetUserWorkspace(workspace)" in batch_body
-    assert "op.ProcessAiv<false>" in mixed_body
-    assert "op.ProcessAiv<true>" in batch_body
+    post_branch = re.search(
+        rf"else if \(TILING_KEY_IS\({post_key}\)\) \{{(?P<body>.*?)\n    \}}\n\}}",
+        kernel_source,
+        re.DOTALL,
+    )
+    assert post_branch is not None, "missing batched row post-scale MIX branch"
+    post_body = post_branch.group("body")
+    assert f"KERNEL_TASK_TYPE({post_key}, KERNEL_TYPE_MIX_AIC_1_2)" in post_body
+    assert "ASCEND_IS_AIC" in post_body and "ASCEND_IS_AIV" in post_body
+    assert "GetUserWorkspace(workspace)" in post_body
+    assert "op.ProcessAiv<false, false>" in mixed_body
+    assert "op.ProcessAiv<true, false>" in batch_body
+    assert "op.ProcessAiv<true, true>" in post_body
     assert "CrossCoreSetFlagWithReverse<0x2" in kernel_source
     assert "CrossCoreWaitFlagWithReverse<0x2" in kernel_source
     assert "GetBlockIdx()) / subBlockNum" in kernel_source
@@ -344,13 +363,42 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert re.search(
         r"ChunkKdaBwdIntraKernel\s*<\s*bfloat16_t\s*,\s*true\s*,\s*true\s*,\s*true\s*,"
         r"\s*KDA_MIX_FEATURE_TILE\s*,\s*KDA_MIX_CHUNK_CAPACITY\s*,"
-        r"\s*BATCH_SOURCE_GATES\s*>\s+vector\s*;",
+        r"\s*BATCH_SOURCE_GATES\s*,\s*BATCH_ROW_POST_GATES\s*>\s+vector\s*;",
         kernel_source,
-    ), "key12/key13 AIV must share the BT64/BK64 specialization"
+    ), "key12/key13/key14 AIV must share the BT64/BK64 specialization"
     assert "BuildSourceGateBatch<FIXED_LHS>" in kernel_source
     assert "AccumulateLeftSourceRange<true>" in kernel_source
     assert "AccumulateRightSourceRange<false>" in kernel_source
-    assert "context->SetTilingKey(KDA_ROW3_BATCHED_GATE_TILING_KEY);" in tiling_source
+    assert "MulRowPairBatch(dqAcc, dqAcc, dkLeft, dkLeft" in kernel_source
+    assert "AddRowPairBatch(dqAcc, dqAcc, dqDiag, dkLeft, dkLeft, dkLeftDiag" in kernel_source
+    assert "MulRowBatch(dkRight, dkRight" in kernel_source
+    assert "AddRowBatch(dkRight, dkRight, dkRightFuture" in kernel_source
+    post_batch = re.search(
+        r"if constexpr \(BATCH_ROW_POST_GATES\) \{(?P<body>.*?)"
+        r"\n        \} else \{\n            for \(uint64_t row",
+        kernel_source,
+        re.DOTALL,
+    )
+    assert post_batch is not None, "missing the compile-time row post-scale batch/fallback split"
+    post_batch_body = post_batch.group("body")
+    gate_directions = (
+        "BuildSourceGateBatch<false>(gate, gLeftRef, gRows",
+        "BuildSourceGateBatch<false>(gate, gRightRef, gRows",
+        "BuildSourceGateBatch<true>(gate, gLeftRef, gRows",
+        "BuildSourceGateBatch<true>(gate, gRightRef, gRows",
+    )
+    gate_positions = [post_batch_body.find(marker) for marker in gate_directions]
+    assert all(position >= 0 for position in gate_positions)
+    assert gate_positions == sorted(gate_positions), (
+        "row post-scale batching must preserve left-prefix, diagonal-left, "
+        "diagonal-right, future-right stage order"
+    )
+    assert re.search(
+        r"!BATCH_ROW_POST_GATES\s*\|\|\s*"
+        r"\(BATCH_SOURCE_GATES\s*&&\s*SAFE_GATE\s*&&\s*BLOCKWISE",
+        kernel_source,
+    ), "row post-scale batching must remain inside the batched safe MIX path"
+    assert "context->SetTilingKey(KDA_ROW3_BATCHED_POST_GATE_TILING_KEY);" in tiling_source
     source_ranges = []
     for row_begin in range(0, 64, 16):
         row_end = row_begin + 16
@@ -365,6 +413,14 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     )
     assert scalar_gate_groups == 272
     assert batched_gate_groups == 17
+    row_post_families = sum(
+        int(row_begin > 0) + 2 + int(row_end < 64)
+        for row_begin, row_end in ((begin, begin + 16) for begin in range(0, 64, 16))
+    )
+    scalar_row_post_gate_groups = row_post_families * 16
+    assert row_post_families == 14
+    assert scalar_row_post_gate_groups == 224
+    assert batched_gate_groups + row_post_families == 31
     assert all(
         [source for batch_begin in range(begin, end, 16)
          for source in range(batch_begin, min(batch_begin + 16, end))]

@@ -36,6 +36,7 @@ q/k/g feature tile，并按 source token 同时更新 16 个目标行。`safe_ga
 | AIV block-wise `75535cd` | 48.660 ms | 48.660 ms | clean wheel，原 22 项精度通过 |
 | key12 MIX BK32 | 49.168 ms | 48.990 ms | 单 kernel、28 项通过；Vector 53.3%，Scalar 37.9%，MTE2 3.2% |
 | key12 MIX BK64 | 32.477 ms | 32.372 ms | 单 MIX kernel；Vector 14.272 ms / 44.1%，Scalar 16.471 ms / 50.9%，MTE2 1.104 ms / 3.4% |
+| key13 MIX BK64 | 31.034 ms | 30.955 ms | source gate batch；较 key12 -4.44%，Vector 12.516 ms / 40.4%，Scalar 17.353 ms / 56.1% |
 
 外围 layout/cast 总计约 2.45 ms，不是主要差距。方向端点修正不增加 Vector API 调用或搬运，
 但其性能仍须重新上板确认，不能直接沿用 `75535cd` 的实测值。
@@ -61,7 +62,7 @@ key12 的 Cube MAC 仅 0.036 ms；`cube_utilization` 不能替代绝对 MAC 时�
 主要是等待 AIV。与 key7 相比，rowBlock3 Cube 令 Vector 下降约 2.184 ms，但 Scalar、同步和
 MIX 调度抵消了收益。当前瓶颈是 AIV Vector + Scalar，不是 MTE，因此不优先做 double buffer。
 
-## BK64 实测与 key13 source-gate 批处理
+## BK64、key13 实测与 key14 row post-scale 批处理
 
 BK64 已把 key12 从 49.168 ms 降到 32.477 ms，说明减少 feature-loop 和小 Vector API 发射有效；当前主要瓶颈仍是 AIV Scalar + Vector，而不是 MTE2。key13 在不改变 Cube、workspace、跨核事件、输出累加顺序和 `db` 四段 BK32 归约顺序的前提下，只批处理 source 维 gate：
 
@@ -71,7 +72,25 @@ BK64 已把 key12 从 49.168 ms 降到 32.477 ms，说明减少 feature-loop 和
 4. gate UB 从 256 B 增加到 4 KiB，AIV0 估算总 UB 约 143.9 KiB，仍低于 192 KiB；
 5. key12 保留为原 BK64 MIX 回退，host 只需把 stage4 从 key13 切回 key12 即可撤销实验。
 
-key13 尚未上板。验收顺序为单算子快速编译、目标 shape 定向精度、100 次 repeated launch、完整回归和同卡 msprof；未完成这些门禁前不声明性能收益。
+key13 同卡 profiling 的 6 次 kernel duration 为 `31.030～31.044 ms`，中位数 31.034 ms，
+相较 key12 减少 1.443 ms（4.44%）。Vector 下降 1.756 ms（12.31%），但 Scalar 增加
+0.882 ms（5.36%），抵消了接近一半收益；MTE2/MTE3 基本不变。因此下一步不做 double buffer，
+而是减少仍由逐行循环下发的 post-scale gate 和 `Mul/Add`。
+
+key14 保持 source-loop、Cube、workspace、跨核事件和 `db` 归约树不变，只批处理 row post-scale：
+
+1. 四个 row block 共 14 个独立 gate family，分别用最多 16 次 repeat 的
+   `Sub -> Muls -> Exp` 构造 `[rowCount,64]` gate；
+2. 对应 `dqAcc/dkLeft`、`dqDiag/dkLeftDiag`、`dkRight` 和 `dkRightFuture` 使用相同 row repeat
+   完成 `Mul/Add`，不引入 FMA；
+3. 单个 BK64 tile 的 row post-scale gate 组数从 224 降到 14，总 gate 组数从 241 降到 31；
+4. 复用 key13 的 4 KiB gate UB，AIV0 总 UB 仍约 143.9 KiB；
+5. 每个输出元素的算术顺序不变，source 累加顺序和 `db` 四段 BK32 归约顺序不变；
+6. key13/key12 保留为立即回退，host 只需切换 stage4 tiling key。
+
+key14 验收顺序为单算子快速编译、目标 shape 定向精度、100 次 repeated launch、完整回归和
+同卡 msprof。性能门槛暂定 kernel duration 中位数低于 29.5 ms、AIV Scalar 低于 15.62 ms，
+且 Vector/MTE2 不明显回退；未完成这些门禁前不声明性能收益。
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 
@@ -91,7 +110,7 @@ concat(dAqk_row3_left, dAkk_row3_left) [32,48]
 rowBlock 的 AIV 计算，所以第一轮目标是证明 Cube 能稳定带来净收益，不预设一次降至 10 ms。
 
 实验 eligibility 固定为 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且 workspace 不超过 256 MiB和满 chunk；其他 case 继续使用 key7/legacy。已验证的三 launch
+且 workspace 不超过 256 MiB 和满 chunk；其他 case 继续使用 key7/legacy。已验证的三 launch
 canary 仅用于确认 FP32 MMAD 数值，其总 kernel duration 约 46.011 ms，净收益有限且不满足交付
 要求。当前实现改为一次 MIX launch：
 
@@ -101,7 +120,7 @@ AIV1 rowBlock1/2           ├─ 与 AIC FP32 Cube 重叠 -> AIV0 rowBlock3
 AIC  wait ready -> Cube    ┘
 ```
 
-key12 使用 `KERNEL_TYPE_MIX_AIC_1_2`，host `blockDim=min(slot_count,AIC count)` 并设置 MIX
+key12/key13/key14 使用 `KERNEL_TYPE_MIX_AIC_1_2`，host `blockDim=min(slot_count,AIC count)` 并设置 MIX
 schedule mode。两个 AIV 子核共同提交 ready，AIC 完成后广播 done；双方按相同的逻辑 core 和
 slot 步长推进。HF32 关闭，稳定 key7 不删除，也不改变非实验 shape 的调度。
 
@@ -110,10 +129,11 @@ scratch 按 `(chunk,HV)` 分配 46 KiB（A 6 KiB、B 24 KiB、C 16 KiB），目�
 双 buffer、persistent MMAD、slot ring 或 workspace alias；这些只在单 kernel NPU 精度和
 profiling 门禁通过后逐项评估。
 
-BK64 key12 已证明缩短 feature-loop 能形成净收益。当前唯一实验变量是 key13 的 source-gate
-批处理：每次对最多 16 行做 repeat `Sub/Muls/Exp`，随后仍按 source 顺序消费对应 gate。
-key7、key12、独立三阶段诊断、Cube MMAD、scratch 和 flag 协议均不变；`db` 在每个 BK64
-tile 内仍分两次 BK32 ReduceSum，维持四段累加顺序。
+BK64 key12 已证明缩短 feature-loop 能形成净收益，key13 又证明 source-gate 批处理能稳定减少
+Vector 时间。当前唯一实验变量是 key14 的 row post-scale gate/Mul/Add 批处理：每个 gate family
+对最多 16 个输出行做 repeat，随后仍按原阶段顺序更新独立行。key7、key12、key13、独立三阶段
+诊断、Cube MMAD、scratch 和 flag 协议均不变；`db` 在每个 BK64 tile 内仍分两次 BK32
+ReduceSum，维持四段累加顺序。
 
 完整方向仍可将其余 16-token 子块重写为 FP32 Cube GEMM：
 
@@ -125,6 +145,6 @@ dAkk_right^T @ (beta*K * exp2(g - g_ref_right))
 ```
 
 AIV 负责 gate 预处理和行缩放，AIC 负责 GEMM。后续必须按一个 contraction 切片逐步扩展，不能
-在 key13 编译、完整精度和 profiling 通过前不批处理 row post-scale gate，也不引入更大的 Cube
-切片、double buffer 或 workspace ring。profiling 必须仍只出现一条 KDA MIX kernel 记录，并与
+在 key14 编译、完整精度和 profiling 通过前引入更大的 Cube 切片、double buffer 或 workspace
+ring。profiling 必须仍只出现一条 KDA MIX kernel 记录，并与
 48.660 ms key7、49.168 ms BK32 key12、32.477 ms BK64 key12 以及 46.011 ms 三 launch canary 比较。

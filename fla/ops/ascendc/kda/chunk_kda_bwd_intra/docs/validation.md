@@ -10,11 +10,11 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| rowBlock3 Cube 源码契约 | 本地已通过 | key12 回退与 key13 实验均为单次 L0、MIX 1:2、BK64/BT64 专用 AIV；key13 仅启用 16-source gate repeat；BK32 `db` 分段归约、FP32 MMAD/HF32 off、对称反转 flag 不变 |
+| rowBlock3 Cube 源码契约 | 本地已通过 | key12/key13/key14 均为单次 L0、MIX 1:2、BK64/BT64 专用 AIV；key13 仅启用 16-source gate repeat，key14 再启用 16-row post-scale gate/Mul/Add repeat；BK32 `db` 分段归约、FP32 MMAD/HF32 off、对称反转 flag 不变 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | key13 待执行 | key12 BK64 已生成并上板；新增 key13 必须重新单算子快速编译 |
-| AscendC NPU 精度 | key13 待执行 | 历史 key12 路径已完成回归；key13 必须重新完整通过，不能沿用旧 wheel 结论 |
-| Profiling/性能优化 | key12 BK64 已采集 | key7 48.660 ms、BK32 key12 49.168 ms、BK64 key12 32.477 ms；key13 待采集，三者均要求单 MIX KDA 记录 |
+| CANN host/kernel 编译 | key14 待执行 | key12/key13 已生成并上板；新增 key14 必须重新单算子快速编译 |
+| AscendC NPU 精度 | key14 待执行 | 历史 key12 路径已完成回归；key14 必须重新完整通过，不能沿用旧 wheel 结论 |
+| Profiling/性能优化 | key13 已采集 | key7 48.660 ms、BK32 key12 49.168 ms、BK64 key12 32.477 ms、key13 31.034 ms；key14 待采集，均要求每次调用只有一条 MIX KDA 记录 |
 
 ## A2 精度与性能基线（2026-07-21）
 
@@ -29,6 +29,10 @@ canary、dense random、Cube repeated-launch 和 1 项源码契约，实验分�
 同 shape Triton kernel 为 19.272 ms。`75535cd` AIV block-wise kernel 为 48.660 ms，端到端
 中位数为 51.107 ms。当前仅增加方向端点数值修正，必须重新完成编译、23 项精度与 repeated
 launch 后再复测；不能把旧二进制的 48.660 ms 自动当作新 wheel 的实测结论。
+
+key13 的目标 shape profiling 已确认设备二进制来自目标 wheel，6 次 kernel duration 为
+`31.030～31.044 ms`，中位数 31.034 ms。key14 只在该路径上增加 row post-scale gate/Mul/Add
+repeat；该结果不能作为 key14 的编译、精度或性能结论。
 
 ## 构建与安装
 
@@ -99,7 +103,7 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 ## rowBlock3 Cube 实验门禁
 
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且 workspace 不超过 256 MiB 和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key12/key13 均为
+且 workspace 不超过 256 MiB 和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key12/key13/key14 均为
 `KERNEL_TYPE_MIX_AIC_1_2`，A/B/C 为 FP32且 HF32 显式关闭。AIC/AIV 使用相同 logical core/slot
 映射；两个 AIV 子核每 slot 各 set 一次 ready、各 wait 一次 done，AIC 各 wait/set 一次。
 
@@ -107,15 +111,15 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 double buffer 或 slot 复用。BK64 不修改该 workspace 或同步协议。建议按以下顺序放行：
 
 1. 源码契约和 Python collect 通过；
-2. 单算子快速 build，确认 key12 回退和 key13 MIX 实例均进入 wheel；
+2. 单算子快速 build，确认 key12/key13 回退和 key14 MIX 实例均进入 wheel；
 3. 两路 rowBlock3 canary、zero dA、endpoint guard 通过；
 4. 连续 launch 至少 100 次，无超时或设备复位；
 5. 完整 28 项通过，原容差不删除、不放宽；
 6. msprof 只出现一条 `ChunkKdaBwdIntra`，该行同时具有 AIC/AIV 时间，再与 key7 比较。
 
-key12 保留为已知可运行的 BK64 回退；当前 key13 改动必须重新执行第 2～6 项。未满足第 3～6 项前，
-不扩大实验 fastpath eligibility，不移除 key7/key12，也不引入 row post-scale gate 批处理、double buffer、
-persistent MMAD 或 workspace ring。
+key12/key13 保留为已知可运行的 BK64 回退；当前 key14 改动必须重新执行第 2～6 项。未满足第 3～6 项前，
+不扩大实验 fastpath eligibility，不移除 key7/key12/key13，也不引入更大的 Cube contraction、
+double buffer、persistent MMAD 或 workspace ring。
 
 板端通过门槛：四个输出均 finite，且逐输出通过测试中的 CPU FP64 golden 容差。若 safe case 失败，应先分别对比 `dq_local`、`dk_left_pre`、`dk_right`，重点检查 16-token 首/中/尾参考点的内外指数方向。
 

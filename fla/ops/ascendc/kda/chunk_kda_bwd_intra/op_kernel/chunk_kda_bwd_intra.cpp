@@ -60,10 +60,12 @@ constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
 constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
 constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
+constexpr uint64_t KDA_ROW3_BATCHED_POST_GATE_TILING_KEY = 14;
 static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
               KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY &&
               KDA_ROW3_CONSUME_TILING_KEY != KDA_ROW3_MIXED_TILING_KEY &&
-              KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY,
+              KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY &&
+              KDA_ROW3_BATCHED_GATE_TILING_KEY != KDA_ROW3_BATCHED_POST_GATE_TILING_KEY,
               "ChunkKdaBwdIntra row3 stages require distinct tiling keys");
 constexpr uint32_t KDA_ROW3_READY_FLAG0 = 0;
 constexpr uint32_t KDA_ROW3_READY_FLAG1 = 1;
@@ -330,7 +332,7 @@ private:
 
 template <typename T, bool SAFE_GATE, bool BLOCKWISE = false, bool CUBE_ROW3 = false,
           uint32_t FEATURE_TILE = BK, uint32_t CHUNK_CAPACITY = MAX_BT,
-          bool BATCH_SOURCE_GATES = false>
+          bool BATCH_SOURCE_GATES = false, bool BATCH_ROW_POST_GATES = false>
 class ChunkKdaBwdIntraKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
@@ -377,9 +379,16 @@ public:
                       "ChunkKdaBwdIntra chunk capacity must match a public chunk size");
         static_assert((FEATURE_TILE * sizeof(float) / 32) <= 255,
                       "ChunkKdaBwdIntra vector repeat stride must fit uint8_t");
+        static_assert(KDA_SOURCE_GATE_BATCH <= 255 && BC <= 255,
+                      "ChunkKdaBwdIntra vector repeat count must fit uint8_t");
         static_assert(!BATCH_SOURCE_GATES ||
                           (SAFE_GATE && BLOCKWISE && FEATURE_TILE == KDA_MIX_FEATURE_TILE),
                       "Batched source gates are restricted to the BF16 MIX fastpath");
+        static_assert(!BATCH_ROW_POST_GATES ||
+                          (BATCH_SOURCE_GATES && SAFE_GATE && BLOCKWISE &&
+                           FEATURE_TILE == KDA_MIX_FEATURE_TILE &&
+                           CHUNK_CAPACITY == KDA_MIX_CHUNK_CAPACITY),
+                      "Batched row post-scale gates require the batched BF16 MIX fastpath");
         pipe_->InitBuffer(dARowQBuf_, BC * CHUNK_CAPACITY * sizeof(float));
         pipe_->InitBuffer(dARowKBuf_, BC * CHUNK_CAPACITY * sizeof(float));
         pipe_->InitBuffer(dAColQBuf_, CHUNK_CAPACITY * BC * sizeof(float));
@@ -398,7 +407,9 @@ public:
             pipe_->InitBuffer(kSrcBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(gSrcBuf_, CHUNK_CAPACITY * FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(gateBuf_,
-                              (BATCH_SOURCE_GATES ? KDA_SOURCE_GATE_BATCH : 1) *
+                              ((BATCH_SOURCE_GATES || BATCH_ROW_POST_GATES)
+                                   ? KDA_SOURCE_GATE_BATCH
+                                   : 1) *
                                   FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(tmp0Buf_, FEATURE_TILE * sizeof(float));
             pipe_->InitBuffer(tmp1Buf_, BC * 8 * sizeof(float));
@@ -689,6 +700,58 @@ private:
         Muls(gateBatch, gateBatch, LN2, curK, repeatCount, unaryParams);
         PipeBarrier<PIPE_V>();
         Exp(gateBatch, gateBatch, curK, repeatCount, unaryParams);
+        PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void MulRowBatch(LocalTensor<float> dst, LocalTensor<float> source,
+                                       LocalTensor<float> gateBatch, uint32_t rowCount,
+                                       uint32_t curK)
+    {
+        const uint8_t repeatCount = static_cast<uint8_t>(rowCount);
+        constexpr uint8_t repeatStride =
+            static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32);
+        BinaryRepeatParams params{1, 1, 1, repeatStride, repeatStride, repeatStride};
+        Mul(dst, source, gateBatch, curK, repeatCount, params);
+        PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void MulRowPairBatch(LocalTensor<float> dst0, LocalTensor<float> source0,
+                                           LocalTensor<float> dst1, LocalTensor<float> source1,
+                                           LocalTensor<float> gateBatch, uint32_t rowCount,
+                                           uint32_t curK)
+    {
+        const uint8_t repeatCount = static_cast<uint8_t>(rowCount);
+        constexpr uint8_t repeatStride =
+            static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32);
+        BinaryRepeatParams params{1, 1, 1, repeatStride, repeatStride, repeatStride};
+        Mul(dst0, source0, gateBatch, curK, repeatCount, params);
+        Mul(dst1, source1, gateBatch, curK, repeatCount, params);
+        PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void AddRowBatch(LocalTensor<float> dst, LocalTensor<float> lhs,
+                                       LocalTensor<float> rhs, uint32_t rowCount,
+                                       uint32_t curK)
+    {
+        const uint8_t repeatCount = static_cast<uint8_t>(rowCount);
+        constexpr uint8_t repeatStride =
+            static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32);
+        BinaryRepeatParams params{1, 1, 1, repeatStride, repeatStride, repeatStride};
+        Add(dst, lhs, rhs, curK, repeatCount, params);
+        PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void AddRowPairBatch(LocalTensor<float> dst0, LocalTensor<float> lhs0,
+                                           LocalTensor<float> rhs0, LocalTensor<float> dst1,
+                                           LocalTensor<float> lhs1, LocalTensor<float> rhs1,
+                                           uint32_t rowCount, uint32_t curK)
+    {
+        const uint8_t repeatCount = static_cast<uint8_t>(rowCount);
+        constexpr uint8_t repeatStride =
+            static_cast<uint8_t>(FEATURE_TILE * sizeof(float) / 32);
+        BinaryRepeatParams params{1, 1, 1, repeatStride, repeatStride, repeatStride};
+        Add(dst0, lhs0, rhs0, curK, repeatCount, params);
+        Add(dst1, lhs1, rhs1, curK, repeatCount, params);
         PipeBarrier<PIPE_V>();
     }
 
@@ -1391,31 +1454,58 @@ private:
             }
         }
 
-        for (uint64_t row = 0; row < rowCount; ++row) {
-            const uint64_t rowOffset = row * FEATURE_TILE;
-            LocalTensor<float> gSelf = gCache[(rowBegin + row) * FEATURE_TILE];
+        if constexpr (BATCH_ROW_POST_GATES) {
+            // The 16 output rows are independent.  Build each post-scale gate
+            // family once with repeat instructions, then apply the same
+            // Mul/Add sequence used by the row-wise fallback.  This changes
+            // only instruction issue granularity: every output element keeps
+            // its original Sub -> Muls -> Exp -> Mul -> Add arithmetic chain.
+            const uint32_t postRowCount = static_cast<uint32_t>(rowCount);
+            LocalTensor<float> gRows = gCache[rowBegin * FEATURE_TILE];
             if (rowBegin > 0) {
-                BuildGate(gate, gSelf, gLeftRef, curK);
-                Mul(dqAcc[rowOffset], dqAcc[rowOffset], gate, curK);
-                Mul(dkLeft[rowOffset], dkLeft[rowOffset], gate, curK);
-                PipeBarrier<PIPE_V>();
+                BuildSourceGateBatch<false>(gate, gLeftRef, gRows, postRowCount, curK);
+                MulRowPairBatch(dqAcc, dqAcc, dkLeft, dkLeft, gate, postRowCount, curK);
             }
-            BuildGate(gate, gSelf, gRightRef, curK);
-            Mul(dqDiag[rowOffset], dqDiag[rowOffset], gate, curK);
-            Mul(dkLeftDiag[rowOffset], dkLeftDiag[rowOffset], gate, curK);
-            PipeBarrier<PIPE_V>();
-            Add(dqAcc[rowOffset], dqAcc[rowOffset], dqDiag[rowOffset], curK);
-            Add(dkLeft[rowOffset], dkLeft[rowOffset], dkLeftDiag[rowOffset], curK);
-            PipeBarrier<PIPE_V>();
-            BuildGate(gate, gLeftRef, gSelf, curK);
-            Mul(dkRight[rowOffset], dkRight[rowOffset], gate, curK);
-            PipeBarrier<PIPE_V>();
+            BuildSourceGateBatch<false>(gate, gRightRef, gRows, postRowCount, curK);
+            MulRowPairBatch(dqDiag, dqDiag, dkLeftDiag, dkLeftDiag, gate, postRowCount, curK);
+            AddRowPairBatch(dqAcc, dqAcc, dqDiag, dkLeft, dkLeft, dkLeftDiag,
+                            postRowCount, curK);
+
+            BuildSourceGateBatch<true>(gate, gLeftRef, gRows, postRowCount, curK);
+            MulRowBatch(dkRight, dkRight, gate, postRowCount, curK);
+
             if (rowEnd < curT) {
-                BuildGate(gate, gRightRef, gSelf, curK);
-                Mul(dkRightFuture[rowOffset], dkRightFuture[rowOffset], gate, curK);
+                BuildSourceGateBatch<true>(gate, gRightRef, gRows, postRowCount, curK);
+                MulRowBatch(dkRightFuture, dkRightFuture, gate, postRowCount, curK);
+                AddRowBatch(dkRight, dkRight, dkRightFuture, postRowCount, curK);
+            }
+        } else {
+            for (uint64_t row = 0; row < rowCount; ++row) {
+                const uint64_t rowOffset = row * FEATURE_TILE;
+                LocalTensor<float> gSelf = gCache[(rowBegin + row) * FEATURE_TILE];
+                if (rowBegin > 0) {
+                    BuildGate(gate, gSelf, gLeftRef, curK);
+                    Mul(dqAcc[rowOffset], dqAcc[rowOffset], gate, curK);
+                    Mul(dkLeft[rowOffset], dkLeft[rowOffset], gate, curK);
+                    PipeBarrier<PIPE_V>();
+                }
+                BuildGate(gate, gSelf, gRightRef, curK);
+                Mul(dqDiag[rowOffset], dqDiag[rowOffset], gate, curK);
+                Mul(dkLeftDiag[rowOffset], dkLeftDiag[rowOffset], gate, curK);
                 PipeBarrier<PIPE_V>();
-                Add(dkRight[rowOffset], dkRight[rowOffset], dkRightFuture[rowOffset], curK);
+                Add(dqAcc[rowOffset], dqAcc[rowOffset], dqDiag[rowOffset], curK);
+                Add(dkLeft[rowOffset], dkLeft[rowOffset], dkLeftDiag[rowOffset], curK);
                 PipeBarrier<PIPE_V>();
+                BuildGate(gate, gLeftRef, gSelf, curK);
+                Mul(dkRight[rowOffset], dkRight[rowOffset], gate, curK);
+                PipeBarrier<PIPE_V>();
+                if (rowEnd < curT) {
+                    BuildGate(gate, gRightRef, gSelf, curK);
+                    Mul(dkRightFuture[rowOffset], dkRightFuture[rowOffset], gate, curK);
+                    PipeBarrier<PIPE_V>();
+                    Add(dkRight[rowOffset], dkRight[rowOffset], dkRightFuture[rowOffset], curK);
+                    PipeBarrier<PIPE_V>();
+                }
             }
         }
 
@@ -1620,7 +1710,7 @@ public:
         }
     }
 
-    template <bool BATCH_SOURCE_GATES = false>
+    template <bool BATCH_SOURCE_GATES = false, bool BATCH_ROW_POST_GATES = false>
     __aicore__ inline void ProcessAiv(
         GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
         GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg, GM_ADDR dqOut, GM_ADDR dkOut,
@@ -1634,14 +1724,15 @@ public:
         const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
         const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
 
-        // key12/key13 are restricted to BT=64/K=128, so a 64-feature AIV tile
+        // key12/key13/key14 are restricted to BT=64/K=128, so a 64-feature AIV tile
         // stays within one FP32 vector mask while halving the hot feature loop.
         // The stable key7 and the three-stage diagnostic keep their 32-feature
-        // defaults and 128-token buffer capacity.  Only key13 enables batched
-        // source-gate construction.
+        // defaults and 128-token buffer capacity.  Key13 enables batched
+        // source-gate construction, while key14 also batches the independent
+        // row post-scale gates and their Mul/Add operations.
         ChunkKdaBwdIntraKernel<bfloat16_t, true, true, true,
                                KDA_MIX_FEATURE_TILE, KDA_MIX_CHUNK_CAPACITY,
-                               BATCH_SOURCE_GATES> vector;
+                               BATCH_SOURCE_GATES, BATCH_ROW_POST_GATES> vector;
         vector.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
                     dqOut, dkOut, dbOut, dgOut, chunkIndices, stageC_, tiling, pipe);
 
@@ -1762,8 +1853,8 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
             op.ProcessAic(tilingData);
         }
         if ASCEND_IS_AIV {
-            op.ProcessAiv<false>(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
-                                 dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
+            op.ProcessAiv<false, false>(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                                        dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
         }
     } else if (TILING_KEY_IS(13)) {
         KERNEL_TASK_TYPE(13, KERNEL_TYPE_MIX_AIC_1_2);
@@ -1777,8 +1868,23 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
             op.ProcessAic(tilingData);
         }
         if ASCEND_IS_AIV {
-            op.ProcessAiv<true>(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
-                                dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
+            op.ProcessAiv<true, false>(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                                       dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
+        }
+    } else if (TILING_KEY_IS(14)) {
+        KERNEL_TASK_TYPE(14, KERNEL_TYPE_MIX_AIC_1_2);
+        GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
+        if (userWS == nullptr) {
+            return;
+        }
+        KdaRow3MixedKernel op;
+        op.InitWorkspace(userWS, tilingData);
+        if ASCEND_IS_AIC {
+            op.ProcessAic(tilingData);
+        }
+        if ASCEND_IS_AIV {
+            op.ProcessAiv<true, true>(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                                      dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
         }
     }
 }
