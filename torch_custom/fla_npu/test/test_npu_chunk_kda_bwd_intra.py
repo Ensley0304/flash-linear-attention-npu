@@ -584,10 +584,18 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
         cube_source,
     )
     assert "copyL0CToGm(tensorC, tensorL0C, 0b11);" in cube_source
-    assert "SetFlag<HardEvent::M_FIX>(EVENT_ID);" in cube_source
-    assert "WaitFlag<HardEvent::M_FIX>(EVENT_ID);" in cube_source
-    assert "SetFlag<HardEvent::FIX_M>(EVENT_ID);" in cube_source
-    assert "WaitFlag<HardEvent::FIX_M>(EVENT_ID);" in cube_source
+    assert "static constexpr int32_t EVENT_L1A = 0;" in cube_source
+    assert "static constexpr int32_t EVENT_L1B = 1;" in cube_source
+    assert "static constexpr int32_t EVENT_L0A = 0;" in cube_source
+    assert "static constexpr int32_t EVENT_L0B = 1;" in cube_source
+    assert "SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);" in cube_source
+    assert "SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);" in cube_source
+    assert "SetFlag<HardEvent::M_MTE1>(EVENT_L0A);" in cube_source
+    assert "SetFlag<HardEvent::M_MTE1>(EVENT_L0B);" in cube_source
+    assert "SetFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
+    assert "WaitFlag<HardEvent::M_FIX>(EVENT_L0C);" in cube_source
+    assert "SetFlag<HardEvent::FIX_M>(EVENT_L0C);" in cube_source
+    assert "WaitFlag<HardEvent::FIX_M>(EVENT_L0C);" in cube_source
     assert "PipeBarrier<PIPE_ALL>()" not in cube_source
     assert "OuterAccumulate" not in cube_source
     assert "lane == 0 ? 0 : 1" in cube_source

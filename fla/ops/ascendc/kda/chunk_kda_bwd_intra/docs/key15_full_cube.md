@@ -55,9 +55,12 @@ GM -> L1 -> L0 -> TileMmad(unitFlag=0b11)
 ```
 
 The same L1/L0 buffers are reused only after their corresponding free event
-has returned. This follows the proven `prepare_wy_repr_bwd_full` pattern and
-avoids the disabled-unit-flag `BlockMmadTla` path that timed out during the
-first key15 endpoint canary.
+has returned. L1A/L1B use distinct MTE2/MTE1 event IDs, and L0A/L0B use
+distinct M/MTE1 event IDs; sharing an event between the two operands can
+release L0A while MMAD is still reading it. This follows the proven
+`prepare_wy_repr_bwd_full` pattern and avoids both the disabled-unit-flag
+`BlockMmadTla` timeout and the direct-MMAD L0A read/write conflict observed
+during key15 endpoint validation.
 
 ## Workspace and synchronization
 

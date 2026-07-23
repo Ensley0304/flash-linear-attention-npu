@@ -846,7 +846,12 @@ public:
     static constexpr auto L1B_LAYOUT =
         tla::MakeLayout<Element, LayoutTagL1B>(
             tla::Int<CUBE_TILE_K>{}, tla::Int<CUBE_TILE_N>{});
-    static constexpr int32_t EVENT_ID = 0;
+    static constexpr int32_t EVENT_L1A = 0;
+    static constexpr int32_t EVENT_L1B = 1;
+    static constexpr int32_t EVENT_L0A = 0;
+    static constexpr int32_t EVENT_L0B = 1;
+    static constexpr int32_t EVENT_L0_READY = 0;
+    static constexpr int32_t EVENT_L0C = 0;
 
     static_assert(L1A_BYTES == 64 * 1024 &&
                   L1B_BYTES == 64 * 1024,
@@ -865,21 +870,25 @@ public:
         l0CBuf_ =
             resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
 
-        // Each event starts in the producer-free state.  One event ID is
-        // sufficient because all six contractions intentionally execute in
-        // sequence and reuse the same L1/L0 buffers.
-        SetFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
-        SetFlag<HardEvent::M_MTE1>(EVENT_ID);
-        SetFlag<HardEvent::FIX_M>(EVENT_ID);
+        // L1A/L1B and L0A/L0B are independent physical buffers. Keep their
+        // producer/free lifetimes on distinct event IDs even though the six
+        // contractions execute serially.
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        SetFlag<HardEvent::FIX_M>(EVENT_L0C);
     }
 
     __aicore__ inline ~DirectMmad()
     {
         // Drain the final copyout before the AIC publishes its cross-core done
         // flag and before MM layout transform is restored.
-        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
-        WaitFlag<HardEvent::M_MTE1>(EVENT_ID);
-        WaitFlag<HardEvent::FIX_M>(EVENT_ID);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        WaitFlag<HardEvent::FIX_M>(EVENT_L0C);
         SetMMLayoutTransform(false);
         SetHF32Mode(false);
     }
@@ -913,10 +922,12 @@ public:
         auto tensorL1B = tla::MakeTensor(
             l1BBuf_, L1B_LAYOUT, Catlass::Arch::PositionL1{});
 
-        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
         copyGmToL1A(tensorL1A, tensorA);
+        SetFlag<HardEvent::MTE2_MTE1>(EVENT_L1A);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
         copyGmToL1B(tensorL1B, tensorB);
-        SetFlag<HardEvent::MTE2_MTE1>(EVENT_ID);
+        SetFlag<HardEvent::MTE2_MTE1>(EVENT_L1B);
 
         auto layoutL0A = tla::MakeLayout<Element, LayoutTagL0A>(
             shape.m(), shape.k());
@@ -933,26 +944,30 @@ public:
             tensorL1B, tla::MakeCoord(0, 0),
             tla::MakeShape(shape.k(), shape.n()));
 
-        WaitFlag<HardEvent::MTE2_MTE1>(EVENT_ID);
-        WaitFlag<HardEvent::M_MTE1>(EVENT_ID);
+        WaitFlag<HardEvent::MTE2_MTE1>(EVENT_L1A);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0A);
         copyL1ToL0A(tensorL0A, tensorTileL1A);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1A);
+        WaitFlag<HardEvent::MTE2_MTE1>(EVENT_L1B);
+        WaitFlag<HardEvent::M_MTE1>(EVENT_L0B);
         copyL1ToL0B(tensorL0B, tensorTileL1B);
-        SetFlag<HardEvent::MTE1_MTE2>(EVENT_ID);
-        SetFlag<HardEvent::MTE1_M>(EVENT_ID);
+        SetFlag<HardEvent::MTE1_MTE2>(EVENT_L1B);
+        SetFlag<HardEvent::MTE1_M>(EVENT_L0_READY);
 
         auto layoutL0C = tla::MakeLayoutL0C(shape.m(), shape.n());
         auto tensorL0C = tla::MakeTensor(
             l0CBuf_, layoutL0C, Catlass::Arch::PositionL0C{});
 
-        WaitFlag<HardEvent::MTE1_M>(EVENT_ID);
-        WaitFlag<HardEvent::FIX_M>(EVENT_ID);
+        WaitFlag<HardEvent::MTE1_M>(EVENT_L0_READY);
+        WaitFlag<HardEvent::FIX_M>(EVENT_L0C);
         tileMmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
-        SetFlag<HardEvent::M_MTE1>(EVENT_ID);
-        SetFlag<HardEvent::M_FIX>(EVENT_ID);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0A);
+        SetFlag<HardEvent::M_MTE1>(EVENT_L0B);
+        SetFlag<HardEvent::M_FIX>(EVENT_L0C);
 
-        WaitFlag<HardEvent::M_FIX>(EVENT_ID);
+        WaitFlag<HardEvent::M_FIX>(EVENT_L0C);
         copyL0CToGm(tensorC, tensorL0C, 0b11);
-        SetFlag<HardEvent::FIX_M>(EVENT_ID);
+        SetFlag<HardEvent::FIX_M>(EVENT_L0C);
     }
 
 private:
