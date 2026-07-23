@@ -4,7 +4,7 @@
 
 本算子迁移 `flash-linear-attention` 中的 `chunk_kda_bwd_kernel_intra`，计算 KDA 单个 chunk 内部对 `q`、`k`、`beta` 和逐特征 gate 的梯度贡献。主交付路径为 `safe_gate=true`，同时保留独立的 `safe_gate=false` 编译分支。
 
-首版支持 Ascend A2/A3/A5、`float16`/`bfloat16` 的 `q/k`、FP32 的 L0 gate/其余输入和四个输出，`K` 为 16 的倍数且位于 `[16, 256]`，`chunk_size` 为 64 或 128。通用 kernel 以 `BK=32` 分块，并用实际 `curK=16` 处理尾块；严格限定的 key12 目标 shape 使用 `BK=64`。公开 Python 接口允许 BF16 `g/beta` 并在进入 L0 前提升到 FP32。L0 内部布局统一为 BNSD；Python 接口负责 BSND/BNSD/TND/NTD 的无歧义转换。
+首版支持 Ascend A2/A3/A5、`float16`/`bfloat16` 的 `q/k`、FP32 的 L0 gate/其余输入和四个输出，`K` 为 16 的倍数且位于 `[16, 256]`，`chunk_size` 为 64 或 128。通用 kernel 以 `BK=32` 分块，并用实际 `curK=16` 处理尾块；严格限定的 key12/key13 目标 shape 使用 `BK=64`。公开 Python 接口允许 BF16 `g/beta` 并在进入 L0 前提升到 FP32。L0 内部布局统一为 BNSD；Python 接口负责 BSND/BNSD/TND/NTD 的无歧义转换。
 
 ## 2. 数学语义
 
@@ -76,6 +76,8 @@ key12 的 AIV consume 编译为 `BT_CAPACITY=64/BK=64`。其 block-wise buffer �
 AIV0 再加现有 rowBlock3 prep 约 21.3 KiB 后合计约 140.1 KiB，仍低于 192 KiB。BK64
 是 FP32 Vector 单次 64-element mask 的上限，16-row repeat 和 8-block stride 均在 `uint8_t`
 范围内；不为该实验引入 double buffer 或 UB alias。
+key13 将 gate buffer 从一行扩为 16 行，额外增加 3.75 KiB，AIV0 合计约 143.9 KiB；其余
+buffer 与 key12 相同。repeatTime 最大为 16，仍远低于 Vector API 的 255 上限。
 
 ### 4.4 rowBlock3 off-left Cube 实验路径
 
@@ -96,7 +98,7 @@ block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、
 
 实验 fastpath 只允许 `safe_gate=true`、BF16 q/k、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 且 workspace 不超过 256 MiB、chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe
-case 全部走稳定 key7/legacy 回退。host 只登记一次 key12，设备侧使用
+case 全部走稳定 key7/legacy 回退。host 对目标 shape 登记一次 key13，key12 保留为立即回退；设备侧均使用
 `KERNEL_TYPE_MIX_AIC_1_2`：一个逻辑 AIC 与两个 AIV 子核处理相同的 `(chunk,HV)` slot。
 
 ```text
@@ -115,9 +117,10 @@ Matmul API server。
 目标 shape 的 4096 个 slot 共约 184 MiB。当前版本使用唯一 slot，不做复用或双 buffer，先保证
 无覆盖、无死锁；通过 NPU 门禁后再评估 ring workspace 和更深的 contraction 覆盖。
 
-单 kernel key12 在 BK32 下完成编译、28 项精度和单行 profiling 后，下一步只放大 AIV feature
-tile：目标 `K=128` 的 `for d` 从 4 轮减为 2 轮，Cube、workspace、slot 映射和 ready/done
-协议不变。`db` 仍按连续四个 32-feature FP32 子段归约并依次累加，避免 BK64 改变归约树。
+单 kernel key12 的 BK64 版本已把目标 profiling 从 49.168 ms 降到 32.477 ms。key13 只把
+source-loop gate 构造按 16 行打包为 repeat 指令；Cube、workspace、slot 映射、ready/done、
+row post-scale gate 和输出公式均不变。`db` 仍按连续四个 32-feature FP32 子段归约并依次累加，
+避免 gate 批处理改变归约树。
 
 ## 5. safe_gate 分支
 
@@ -152,7 +155,7 @@ tile：目标 `K=128` 的 `for d` 从 4 轮减为 2 轮，Cube、workspace、slo
 4. 根据实际 `K/BT/HV` 决定 task 是否沿 K 二次切核。
 
 rowBlock3 off-left 是第 3 步的最小实验切片。稳定 key7 始终保留为非实验形状的默认路径和即时回退。
-当前 BK64 仅减少 key12 AIV 的 feature-loop/API 发射次数，不扩大 Cube contraction、eligibility
+当前 key13 仅减少 target MIX AIV 的 source-gate API 发射次数，不扩大 Cube contraction、eligibility
 或 workspace 生命周期；其性能结论仍须重新完成编译、完整精度和单行 profiling 后给出。
 
 ## 8. 接口约束

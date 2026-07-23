@@ -35,6 +35,9 @@ constexpr uint64_t KDA_ROW3_PREP_TILING_KEY = 9;
 constexpr uint64_t KDA_ROW3_CUBE_TILING_KEY = 10;
 constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
 constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
+constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
+static_assert(KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY,
+              "ChunkKdaBwdIntra MIX fallback and experiment require distinct tiling keys");
 constexpr int64_t KDA_ROW3_BYTES_PER_SLOT = (32 * 48 + 48 * 128 + 32 * 128) * 4;
 constexpr int64_t KDA_ROW3_MAX_SLOTS = (256LL * 1024 * 1024) / KDA_ROW3_BYTES_PER_SLOT;
 
@@ -198,7 +201,10 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     } else if (stage == 3) {
         context->SetTilingKey(KDA_ROW3_CONSUME_TILING_KEY);
     } else if (stage == 4) {
-        context->SetTilingKey(KDA_ROW3_MIXED_TILING_KEY);
+        // Keep key12 as the proven BK64 MIX fallback.  Key13 changes only the
+        // target fastpath's source-gate construction and can be rolled back by
+        // switching this single dispatch constant.
+        context->SetTilingKey(KDA_ROW3_BATCHED_GATE_TILING_KEY);
     } else {
         context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     }

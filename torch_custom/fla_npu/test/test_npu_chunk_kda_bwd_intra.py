@@ -281,12 +281,19 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     source = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
 
     key_match = re.search(r"\bKDA_ROW3_MIXED_TILING_KEY\b\s*=\s*(\d+)", source)
-    assert key_match is not None, "missing the single-launch rowBlock3 MIX key"
+    batch_key_match = re.search(
+        r"\bKDA_ROW3_BATCHED_GATE_TILING_KEY\b\s*=\s*(\d+)", source
+    )
+    assert key_match is not None, "missing the stable single-launch rowBlock3 MIX key"
+    assert batch_key_match is not None, "missing the batched-gate rowBlock3 MIX key"
     mixed_key = int(key_match.group(1))
+    batch_key = int(batch_key_match.group(1))
     assert mixed_key == 12
+    assert batch_key == 13
 
     mixed_branch = re.search(
-        rf"else if \(TILING_KEY_IS\({mixed_key}\)\) \{{(?P<body>.*?)\n\s*\}}\n\}}",
+        rf"else if \(TILING_KEY_IS\({mixed_key}\)\) \{{(?P<body>.*?)"
+        rf"\n    \}} else if \(TILING_KEY_IS\({batch_key}\)\)",
         kernel_source,
         re.DOTALL,
     )
@@ -295,6 +302,18 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert f"KERNEL_TASK_TYPE({mixed_key}, KERNEL_TYPE_MIX_AIC_1_2)" in mixed_body
     assert "ASCEND_IS_AIC" in mixed_body and "ASCEND_IS_AIV" in mixed_body
     assert "GetUserWorkspace(workspace)" in mixed_body
+    batch_branch = re.search(
+        rf"else if \(TILING_KEY_IS\({batch_key}\)\) \{{(?P<body>.*?)\n    \}}\n\}}",
+        kernel_source,
+        re.DOTALL,
+    )
+    assert batch_branch is not None, "missing batched-gate rowBlock3 MIX branch"
+    batch_body = batch_branch.group("body")
+    assert f"KERNEL_TASK_TYPE({batch_key}, KERNEL_TYPE_MIX_AIC_1_2)" in batch_body
+    assert "ASCEND_IS_AIC" in batch_body and "ASCEND_IS_AIV" in batch_body
+    assert "GetUserWorkspace(workspace)" in batch_body
+    assert "op.ProcessAiv<false>" in mixed_body
+    assert "op.ProcessAiv<true>" in batch_body
     assert "CrossCoreSetFlagWithReverse<0x2" in kernel_source
     assert "CrossCoreWaitFlagWithReverse<0x2" in kernel_source
     assert "GetBlockIdx()) / subBlockNum" in kernel_source
@@ -321,11 +340,37 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert re.search(r"\bKDA_MIX_FEATURE_TILE\b\s*=\s*64\s*;", kernel_source)
     assert re.search(r"\bKDA_MIX_CHUNK_CAPACITY\b\s*=\s*64\s*;", kernel_source)
     assert re.search(r"\bKDA_DB_REDUCTION_TILE\b\s*=\s*32\s*;", kernel_source)
+    assert re.search(r"\bKDA_SOURCE_GATE_BATCH\b\s*=\s*BC\s*;", kernel_source)
     assert re.search(
         r"ChunkKdaBwdIntraKernel\s*<\s*bfloat16_t\s*,\s*true\s*,\s*true\s*,\s*true\s*,"
-        r"\s*KDA_MIX_FEATURE_TILE\s*,\s*KDA_MIX_CHUNK_CAPACITY\s*>\s+vector\s*;",
+        r"\s*KDA_MIX_FEATURE_TILE\s*,\s*KDA_MIX_CHUNK_CAPACITY\s*,"
+        r"\s*BATCH_SOURCE_GATES\s*>\s+vector\s*;",
         kernel_source,
-    ), "key12 AIV must use the BT64/BK64 specialization"
+    ), "key12/key13 AIV must share the BT64/BK64 specialization"
+    assert "BuildSourceGateBatch<FIXED_LHS>" in kernel_source
+    assert "AccumulateLeftSourceRange<true>" in kernel_source
+    assert "AccumulateRightSourceRange<false>" in kernel_source
+    assert "context->SetTilingKey(KDA_ROW3_BATCHED_GATE_TILING_KEY);" in tiling_source
+    source_ranges = []
+    for row_begin in range(0, 64, 16):
+        row_end = row_begin + 16
+        if row_begin != 48:  # rowBlock3 off-left is produced by Cube.
+            source_ranges.append((0, row_begin))
+        source_ranges.extend(
+            ((row_begin, row_end), (row_begin, row_end), (row_end, 64))
+        )
+    scalar_gate_groups = sum(end - begin for begin, end in source_ranges)
+    batched_gate_groups = sum(
+        (end - begin + 15) // 16 for begin, end in source_ranges
+    )
+    assert scalar_gate_groups == 272
+    assert batched_gate_groups == 17
+    assert all(
+        [source for batch_begin in range(begin, end, 16)
+         for source in range(batch_begin, min(batch_begin + 16, end))]
+        == list(range(begin, end))
+        for begin, end in source_ranges
+    ), "gate batching must preserve source order within every accumulator"
     assert "ChunkKdaBwdIntraKernel<bfloat16_t, true, true> op;" in kernel_source, (
         "the stable key7 fallback must keep its default BT128/BK32 specialization"
     )
