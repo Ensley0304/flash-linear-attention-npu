@@ -37,12 +37,20 @@ constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
 constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
 constexpr uint64_t KDA_ROW3_BATCHED_POST_GATE_TILING_KEY = 14;
+constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;
+constexpr uint64_t KDA_STAGE4_TILING_KEY = KDA_FULL_CUBE_TILING_KEY;
 static_assert(KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY,
               "ChunkKdaBwdIntra MIX fallback and experiment require distinct tiling keys");
 static_assert(KDA_ROW3_BATCHED_GATE_TILING_KEY != KDA_ROW3_BATCHED_POST_GATE_TILING_KEY,
               "ChunkKdaBwdIntra row gate experiments require distinct tiling keys");
+static_assert(KDA_ROW3_BATCHED_POST_GATE_TILING_KEY != KDA_FULL_CUBE_TILING_KEY,
+              "ChunkKdaBwdIntra full-Cube path requires a distinct tiling key");
 constexpr int64_t KDA_ROW3_BYTES_PER_SLOT = (32 * 48 + 48 * 128 + 32 * 128) * 4;
 constexpr int64_t KDA_ROW3_MAX_SLOTS = (256LL * 1024 * 1024) / KDA_ROW3_BYTES_PER_SLOT;
+// key15 stores six block-diagonal GEMM A/B/C groups in one 600-KiB slot per
+// logical AIC core.  AIV0/AIV1 cannot advance to the next task until both have
+// consumed the current C groups, so task-count-sized scratch is unnecessary.
+constexpr uint64_t KDA_FULL_CUBE_BYTES_PER_CORE = 614400;
 
 bool MatchScratchShape(const gert::StorageShape *shape, int64_t dim0, int64_t dim1, int64_t dim2)
 {
@@ -117,7 +125,10 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     if (stage != 0) {
         const bool fastPathShape = safeGate && qDesc->GetDataType() == ge::DT_BF16 && !isVarLen &&
                                    batch == 1 && h == hv && chunkSize == 64 && k == 128 &&
-                                   t > 0 && (t % chunkSize) == 0 && scratchSlots <= KDA_ROW3_MAX_SLOTS;
+                                   t > 0 && (t % chunkSize) == 0 &&
+                                   ((stage == 4 &&
+                                     KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY) ||
+                                    scratchSlots <= KDA_ROW3_MAX_SLOTS);
         if (!fastPathShape) {
             return ge::GRAPH_FAILED;
         }
@@ -175,8 +186,12 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     if (stage == 4) {
         context->SetScheduleMode(1);
     }
+    const bool useFullCube = stage == 4 && KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY;
     const uint64_t row3WorkspaceBytes = stage == 4
-        ? static_cast<uint64_t>(scratchSlots) * static_cast<uint64_t>(KDA_ROW3_BYTES_PER_SLOT)
+        ? (useFullCube
+               ? static_cast<uint64_t>(usedCoreNum) * KDA_FULL_CUBE_BYTES_PER_CORE
+               : static_cast<uint64_t>(scratchSlots) *
+                     static_cast<uint64_t>(KDA_ROW3_BYTES_PER_SLOT))
         : 0;
     context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize() + row3WorkspaceBytes;
 
@@ -204,10 +219,11 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     } else if (stage == 3) {
         context->SetTilingKey(KDA_ROW3_CONSUME_TILING_KEY);
     } else if (stage == 4) {
-        // Keep key12/key13 as the proven BK64 MIX fallbacks.  Key14 adds only
-        // batched row post-scale gates and can be rolled back by switching this
-        // single dispatch constant.
-        context->SetTilingKey(KDA_ROW3_BATCHED_POST_GATE_TILING_KEY);
+        // key13 is the proven 31-ms BK64 fallback.  key14 remains compiled as
+        // the no-gain post-scale experiment.  Switching KDA_STAGE4_TILING_KEY
+        // back to key13 also restores the task-count-sized legacy workspace
+        // formula above.
+        context->SetTilingKey(KDA_STAGE4_TILING_KEY);
     } else {
         context->SetTilingKey(baseTilingKey + (safeGate && ENABLE_BLOCKWISE_SAFE ? 4 : 0));
     }

@@ -37,6 +37,7 @@ q/k/g feature tile，并按 source token 同时更新 16 个目标行。`safe_ga
 | key12 MIX BK32 | 49.168 ms | 48.990 ms | 单 kernel、28 项通过；Vector 53.3%，Scalar 37.9%，MTE2 3.2% |
 | key12 MIX BK64 | 32.477 ms | 32.372 ms | 单 MIX kernel；Vector 14.272 ms / 44.1%，Scalar 16.471 ms / 50.9%，MTE2 1.104 ms / 3.4% |
 | key13 MIX BK64 | 31.034 ms | 30.955 ms | source gate batch；较 key12 -4.44%，Vector 12.516 ms / 40.4%，Scalar 17.353 ms / 56.1% |
+| key14 MIX BK64 | 31.036 ms | 30.956 ms | row post-scale batch；与 key13 基本持平，未形成净收益 |
 
 外围 layout/cast 总计约 2.45 ms，不是主要差距。方向端点修正不增加 Vector API 调用或搬运，
 但其性能仍须重新上板确认，不能直接沿用 `75535cd` 的实测值。
@@ -88,9 +89,18 @@ key14 保持 source-loop、Cube、workspace、跨核事件和 `db` 归约树不�
 5. 每个输出元素的算术顺序不变，source 累加顺序和 `db` 四段 BK32 归约顺序不变；
 6. key13/key12 保留为立即回退，host 只需切换 stage4 tiling key。
 
-key14 验收顺序为单算子快速编译、目标 shape 定向精度、100 次 repeated launch、完整回归和
-同卡 msprof。性能门槛暂定 kernel duration 中位数低于 29.5 ms、AIV Scalar 低于 15.62 ms，
-且 Vector/MTE2 不明显回退；未完成这些门禁前不声明性能收益。
+key14 同卡实测为 31.036 ms，与 key13 的 31.034 ms 基本持平，因此保留为已编译的无收益实验，
+不再继续围绕逐行 Vector API 做小步调整。
+
+## key15 full-Cube
+
+key15 将 previous-left、diagonal-left、diagonal-right 和 future-right 四类 contraction 全部改写为
+六次块对角 FP32 `BlockMmadTla`。AIV 只负责 A/B 打包、safe gate 内外因子、`db/dg` 和输出累加。
+每个逻辑 AIC 复用一份 600 KiB workspace，20 核约 12 MiB；两个 AIV lane 按 `{0,3}` 与 `{1,2}`
+分配 row block，并继续使用一代 ready/done 反转 flag。该版本不启用 double buffer。
+
+key13 仍是立即回退。key15 的首轮验收门槛是完整精度和 100 次 repeated launch 均通过，且目标 shape
+kernel duration 低于 22 ms；未取得干净 wheel 的同卡 msprof 前，不声明已经获得性能收益。
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 

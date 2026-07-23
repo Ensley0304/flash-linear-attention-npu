@@ -110,15 +110,13 @@ bool UseRow3MixedFastPath(const Params &p)
 {
     const auto qs = p.q->GetViewShape();
     const auto gs = p.g->GetViewShape();
-    constexpr int64_t ROW3_SCRATCH_BYTES_PER_SLOT = (32 * 48 + 48 * 128 + 32 * 128) * 4;
-    constexpr int64_t ROW3_MAX_SCRATCH_BYTES = 256LL * 1024 * 1024;
-    constexpr int64_t ROW3_MAX_SLOTS = ROW3_MAX_SCRATCH_BYTES / ROW3_SCRATCH_BYTES_PER_SLOT;
-    // Keep the first Cube integration deliberately narrow.  Every other
-    // supported shape continues to use the proven single-stage key7 path.
+    // Keep the full-Cube integration deliberately narrow.  key15 uses bounded
+    // per-logical-core workspace, so eligibility no longer depends on sequence
+    // length or the number of (chunk, head) tasks.
     return p.safeGate && p.cu == nullptr && p.q->GetDataType() == DataType::DT_BF16 &&
            p.chunkSize == 64 && qs.GetDim(0) == 1 && qs.GetDim(1) == gs.GetDim(1) &&
            qs.GetDim(2) > 0 && (qs.GetDim(2) % p.chunkSize) == 0 && qs.GetDim(3) == 128 &&
-           p.totalChunks <= ROW3_MAX_SLOTS / gs.GetDim(1);
+           p.totalChunks == qs.GetDim(2) / p.chunkSize;
 }
 } // namespace
 
@@ -144,9 +142,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
     }
     std::array<const aclTensor *, 4> result{};
     if (UseRow3MixedFastPath(p)) {
-        // The BF16/safe target now uses one MIX launch.  AIC and the two AIV
-        // lanes exchange workspace readiness inside the kernel; no executor
-        // tensor or intermediate launcher entry is needed.
+        // The BF16/safe target uses one MIX launch.  AIC and the two AIV lanes
+        // exchange one ready/done generation per task and reuse bounded
+        // per-core workspace; no executor tensor or intermediate launch is
+        // needed.
         result = l0op::ChunkKdaBwdIntra(
             p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
             p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 4,

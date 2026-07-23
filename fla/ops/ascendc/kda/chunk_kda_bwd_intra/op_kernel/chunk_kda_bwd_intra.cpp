@@ -45,6 +45,8 @@
 
 using namespace AscendC;
 
+#include "chunk_kda_bwd_intra_full_cube.h"
+
 namespace {
 constexpr uint32_t BC = 16;
 constexpr uint32_t BK = 32;
@@ -61,11 +63,13 @@ constexpr uint64_t KDA_ROW3_CONSUME_TILING_KEY = 11;
 constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
 constexpr uint64_t KDA_ROW3_BATCHED_POST_GATE_TILING_KEY = 14;
+constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;
 static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
               KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY &&
               KDA_ROW3_CONSUME_TILING_KEY != KDA_ROW3_MIXED_TILING_KEY &&
               KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY &&
-              KDA_ROW3_BATCHED_GATE_TILING_KEY != KDA_ROW3_BATCHED_POST_GATE_TILING_KEY,
+              KDA_ROW3_BATCHED_GATE_TILING_KEY != KDA_ROW3_BATCHED_POST_GATE_TILING_KEY &&
+              KDA_ROW3_BATCHED_POST_GATE_TILING_KEY != KDA_FULL_CUBE_TILING_KEY,
               "ChunkKdaBwdIntra row3 stages require distinct tiling keys");
 constexpr uint32_t KDA_ROW3_READY_FLAG0 = 0;
 constexpr uint32_t KDA_ROW3_READY_FLAG1 = 1;
@@ -1885,6 +1889,21 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
         if ASCEND_IS_AIV {
             op.ProcessAiv<true, true>(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
                                       dqOut, dkOut, dbOut, dgOut, chunkIndices, tilingData, &pipe);
+        }
+    } else if (TILING_KEY_IS(15)) {
+        KERNEL_TASK_TYPE(15, KERNEL_TYPE_MIX_AIC_1_2);
+        GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
+        if (userWS == nullptr) {
+            return;
+        }
+        KdaFullCube::MixedKernel op;
+        op.Init(userWS, tilingData);
+        if ASCEND_IS_AIC {
+            op.ProcessAic();
+        }
+        if ASCEND_IS_AIV {
+            op.ProcessAiv(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                          dqOut, dkOut, dbOut, dgOut, tilingData, &pipe);
         }
     }
 }

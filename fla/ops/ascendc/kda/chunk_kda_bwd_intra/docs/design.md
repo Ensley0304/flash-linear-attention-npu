@@ -4,7 +4,7 @@
 
 本算子迁移 `flash-linear-attention` 中的 `chunk_kda_bwd_kernel_intra`，计算 KDA 单个 chunk 内部对 `q`、`k`、`beta` 和逐特征 gate 的梯度贡献。主交付路径为 `safe_gate=true`，同时保留独立的 `safe_gate=false` 编译分支。
 
-首版支持 Ascend A2/A3/A5、`float16`/`bfloat16` 的 `q/k`、FP32 的 L0 gate/其余输入和四个输出，`K` 为 16 的倍数且位于 `[16, 256]`，`chunk_size` 为 64 或 128。通用 kernel 以 `BK=32` 分块，并用实际 `curK=16` 处理尾块；严格限定的 key12/key13/key14 目标 shape 使用 `BK=64`。公开 Python 接口允许 BF16 `g/beta` 并在进入 L0 前提升到 FP32。L0 内部布局统一为 BNSD；Python 接口负责 BSND/BNSD/TND/NTD 的无歧义转换。
+首版支持 Ascend A2/A3/A5、`float16`/`bfloat16` 的 `q/k`、FP32 的 L0 gate/其余输入和四个输出，`K` 为 16 的倍数且位于 `[16, 256]`，`chunk_size` 为 64 或 128。通用 kernel 以 `BK=32` 分块，并用实际 `curK=16` 处理尾块；严格限定的 key12～key15 目标 shape 使用 `BK=64`/全 K128 Cube。公开 Python 接口允许 BF16 `g/beta` 并在进入 L0 前提升到 FP32。L0 内部布局统一为 BNSD；Python 接口负责 BSND/BNSD/TND/NTD 的无歧义转换。
 
 ## 2. 数学语义
 
@@ -101,7 +101,7 @@ block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、
 
 实验 fastpath 只允许 `safe_gate=true`、BF16 q/k、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 且 workspace 不超过 256 MiB、chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe
-case 全部走稳定 key7/legacy 回退。host 对目标 shape 登记一次 key14，key13/key12 保留为逐级回退；设备侧均使用
+case 全部走稳定 key7/legacy 回退。host 对目标 shape 登记一次 key15，key13/key12 保留为逐级回退；设备侧均使用
 `KERNEL_TYPE_MIX_AIC_1_2`：一个逻辑 AIC 与两个 AIV 子核处理相同的 `(chunk,HV)` slot。
 
 ```text
@@ -130,7 +130,7 @@ source 累加顺序均不变。`db` 仍按连续四个 32-feature FP32 子段归
 
 ## 5. safe_gate 分支
 
-- `safe_gate=true` 是主验证和主优化分支，并复现兄弟仓 Triton kernel 的 16-token 参考点分解。对当前子块之前的 left 项使用子块首 token 的 gate；子块内 left 项使用末 token、right 项使用首 token；后续 right 项使用子块末 token。内层累加完成后再乘参考点到目标 token 的外层因子。方向端点使 feature-side gate 在累计 gate 单调不增的输入约束下不大于 1，避免大 BF16 feature 在零 dA 乘法前先溢出为 Inf；内外因子乘积仍严格对应 `exp2(g_i-g_j)`。
+- `safe_gate=true` 是主验证和主优化分支，并复现兄弟仓 Triton kernel 的 16-token 参考点分解。对当前子块之前的 left 项使用子块首 token 的 gate；子块内 left/right 均使用第 8 个 token 的中点参考；后续 right 项使用子块末 token。内层累加完成后再乘参考点到目标 token 的外层因子。内外因子乘积仍严格对应 `exp2(g_i-g_j)`，中点参考缩短对角块两侧的指数范围。
 - `safe_gate=false` 精确复现上游普通分支的计算顺序：当前 16×16 对角块直接计算 FP32 `exp((g_i-g_j)*ln(2))`，此前/此后的跨块项仍分别围绕块首/块末 gate 因式分解。
 - block-wise safe 路径按 source token 计算一次公共 gate，再通过 `Brcb` 和带 stride 的 FP32
   `Mul/Add` 广播到 16 个目标行；没有融合乘加，保持 legacy 的 `Mul -> Mul -> Add` 舍入顺序。

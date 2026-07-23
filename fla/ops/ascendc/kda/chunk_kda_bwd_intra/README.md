@@ -2,9 +2,9 @@
 
 AscendC implementation of the KDA chunk-local backward kernel. The operator consumes the gradients of the two intra-chunk matrices and updates `dq`, `dk`, `dbeta`, and per-feature `dg` in FP32.
 
-**Safe baseline and current experiment (2026-07-23):** key7 retains the clean AIV block-wise snapshot from commit `75535cd`. That exact snapshot passed all 22 then-existing NPU tests and measured 48.660 ms kernel time (51.107 ms end-to-end) for `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`. The single-launch key12 `AIV pack -> FP32 Cube -> AIV consume` fallback uses a 64-feature tile and measures 32.477 ms in the same profiling shape. Key13 keeps key12 intact, batches 16 contiguous source gates into each `Sub/Muls/Exp` repeat, and measures 31.034 ms kernel time. The current key14 experiment additionally batches the independent 16-row post-scale gates and their `Mul/Add` operations; every non-eligible shape still dispatches to key7 or the existing legacy keys. Key14 requires a fresh build, full precision regression, repeated-launch check, and profiling before its performance is treated as validated.
+**Safe baseline and current experiment (2026-07-23):** key7 retains the clean AIV block-wise snapshot from commit `75535cd`. That exact snapshot passed all 22 then-existing NPU tests and measured 48.660 ms kernel time (51.107 ms end-to-end) for `B=1,T=8192,H=HV=32,K=128,BT=64,BF16,safe_gate=true`. The single-launch key12 `AIV pack -> FP32 Cube -> AIV consume` fallback uses a 64-feature tile and measures 32.477 ms in the same profiling shape. Key13 keeps key12 intact, batches 16 contiguous source gates into each `Sub/Muls/Exp` repeat, and measures 31.034 ms kernel time. Key14 additionally batches row post-scale operations but measured 31.036 ms, so it is retained only as a no-gain experiment. The current key15 experiment moves all four causal contraction families to six block-diagonal FP32 Cube GEMMs while preserving key13 as the immediate rollback. Every non-eligible shape still dispatches to key7 or the existing legacy keys. Key15 requires a fresh single-op build, full precision regression, repeated-launch check, and profiling before its performance is treated as validated.
 
-The primary delivery path is `safe_gate=true`; `safe_gate=false` remains a separate compiled branch for compatibility. The stable safe fallback uses one AIV launch, 16-token block-wise accumulation, resident `[chunk, 32]` q/k/g feature tiles, FP32 accumulation, dense/GVA/varlen support, and no sequence-sized workspace. The narrowly eligible key12/key13/key14 MIX paths use one launch, per-slot FP32 workspace, and a target-specific `[64,64]` source feature tile; key13 is the immediate target-shape rollback, key12 remains the pre-batching fallback, and key7 remains the general fallback.
+The primary delivery path is `safe_gate=true`; `safe_gate=false` remains a separate compiled branch for compatibility. The stable safe fallback uses one AIV launch, 16-token block-wise accumulation, resident `[chunk, 32]` q/k/g feature tiles, FP32 accumulation, dense/GVA/varlen support, and no sequence-sized workspace. The narrowly eligible MIX paths use one launch. Key15 uses a bounded 600 KiB workspace slot per logical AIC core (about 12 MiB on 20 cores), while key13 remains the proven target-shape rollback and key7 remains the general fallback.
 
 Public Python API:
 
@@ -21,7 +21,9 @@ dq, dk, db, dg = ascendc.chunk_kda_bwd_intra(
 )
 ```
 
-Supported layouts are uppercase `BSND`, `BNSD`, `TND`, and `NTD`. `q/k` must share FP16 or BF16 dtype. Public `g/beta` may be FP32 or BF16 and are normalized to FP32 before L0; matrix gradients, accumulated gradients, and outputs are FP32. `K` must be a multiple of 16 in `[16, 256]`; the general paths use 32-feature tiles and a 16-feature tail when needed, while the exact key12/key13/key14 target shape uses 64-feature tiles. Chunk size is 64 or 128.
+Supported layouts are uppercase `BSND`, `BNSD`, `TND`, and `NTD`. `q/k` must share FP16 or BF16 dtype. Public `g/beta` may be FP32 or BF16 and are normalized to FP32 before L0; matrix gradients, accumulated gradients, and outputs are FP32. `K` must be a multiple of 16 in `[16, 256]`; the general paths use 32-feature tiles and a 16-feature tail when needed, while the exact key12-key15 target shape uses 64-feature tiles. Chunk size is 64 or 128.
 
-See [design.md](docs/design.md), [api.md](docs/api.md), [performance.md](docs/performance.md), and
-[validation.md](docs/validation.md) for formulas, interfaces, optimization notes, and the verification matrix.
+See [design.md](docs/design.md), [api.md](docs/api.md),
+[performance.md](docs/performance.md), [validation.md](docs/validation.md), and
+[key15_full_cube.md](docs/key15_full_cube.md) for formulas, interfaces,
+optimization notes, and the verification matrix.

@@ -6,15 +6,15 @@
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| Python 语法 | 已通过 | wrapper、导出、CPU reference、NPU pytest 均通过 `py_compile`；加入 Cube canary、dense/repeat 门禁和源码契约后应收集 28 项 |
+| Python 语法 | 已通过 | wrapper、导出、CPU reference、NPU pytest 均通过 `py_compile`；key15 新增八路 contraction canary 和独立源码契约后应收集 37 项 |
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| rowBlock3 Cube 源码契约 | 本地已通过 | key12/key13/key14 均为单次 L0、MIX 1:2、BK64/BT64 专用 AIV；key13 仅启用 16-source gate repeat，key14 再启用 16-row post-scale gate/Mul/Add repeat；BK32 `db` 分段归约、FP32 MMAD/HF32 off、对称反转 flag 不变 |
+| full-Cube 源码契约 | 本地已通过 | key15 为单次 L0、MIX 1:2、六次 FP32 `BlockMmadTla`、HF32 off、600 KiB/逻辑 AIC；key13/key14 和通用 key7 均保留 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | key14 待执行 | key12/key13 已生成并上板；新增 key14 必须重新单算子快速编译 |
-| AscendC NPU 精度 | key14 待执行 | 历史 key12 路径已完成回归；key14 必须重新完整通过，不能沿用旧 wheel 结论 |
-| Profiling/性能优化 | key13 已采集 | key7 48.660 ms、BK32 key12 49.168 ms、BK64 key12 32.477 ms、key13 31.034 ms；key14 待采集，均要求每次调用只有一条 MIX KDA 记录 |
+| CANN host/kernel 编译 | key15 待执行 | key13/key14 已生成并上板；新增 key15 必须重新单算子快速编译 |
+| AscendC NPU 精度 | key15 待执行 | 历史回退路径已完成回归；key15 必须重新完整通过，不能沿用旧 wheel 结论 |
+| Profiling/性能优化 | key14 已采集 | key7 48.660 ms、BK64 key12 32.477 ms、key13 31.034 ms、key14 31.036 ms；key15 待采集，要求每次调用只有一条 MIX KDA 记录 |
 
 ## A2 精度与性能基线（2026-07-21）
 
@@ -23,7 +23,7 @@ clean wheel 完成真实 kernel launch，原完整 pytest 为 `22 passed in 12.7
 safe/unsafe、FP16/BF16、dense/varlen、GVA、四种 layout、BT=64/128、K=16/48/96/256、
 重复 launch、零 dA 和 one-hot dA 路径。当前额外保留 1 项 endpoint reassociation 极值用例，
 因此方向端点修正版原预期收集 23 项。本轮再增加 `dAqk/dAkk` 两路 rowBlock3 off-left BF16
-canary、dense random、Cube repeated-launch 和 1 项源码契约，实验分支完整收集数应为 28 项；尚未上板前不声明新增路径已通过。
+canary、dense random、Cube repeated-launch、八路 full-Cube path canary 和 2 项源码契约，实验分支完整收集数应为 37 项；尚未上板前不声明新增路径已通过。
 
 目标性能 shape 的 legacy AscendC kernel duration 为 477.937 ms，AIV time 为 455.734 ms；
 同 shape Triton kernel 为 19.272 ms。`75535cd` AIV block-wise kernel 为 48.660 ms，端到端
@@ -60,7 +60,7 @@ python -m pip install --force-reinstall --no-deps \
 ## 精度回归
 
 ```bash
-# 版本门禁：原 22 条、endpoint guard、两路 Cube canary、dense/repeat 和源码契约，应收集 28 条。
+# 版本门禁：加上八路 key15 contraction canary 和独立源码契约后，应收集 37 条。
 python -m pytest --collect-only -q \
   torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py
 
@@ -100,26 +100,26 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
   `target=55`、`source=9`，分别隔离 rowBlock3 off-left 的 `dAqk` 和 `dAkk` Cube 输出；q 与
   target k 置零，避免 right、`db/dg` 项掩盖 left contraction 错误。
 
-## rowBlock3 Cube 实验门禁
+## key15 full-Cube 实验门禁
 
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
-且 workspace 不超过 256 MiB 和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key12/key13/key14 均为
-`KERNEL_TYPE_MIX_AIC_1_2`，A/B/C 为 FP32且 HF32 显式关闭。AIC/AIV 使用相同 logical core/slot
+和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key15 为
+`KERNEL_TYPE_MIX_AIC_1_2`，六组 A/B/C 为 FP32 且 HF32 显式关闭。AIC/AIV 使用相同 logical core/slot
 映射；两个 AIV 子核每 slot 各 set 一次 ready、各 wait 一次 done，AIC 各 wait/set 一次。
 
-稳定 key7 仍是 fallback。目标 shape workspace 为 `4096 * 46 KiB = 184 MiB`，第一版没有
-double buffer 或 slot 复用。BK64 不修改该 workspace 或同步协议。建议按以下顺序放行：
+稳定 key13 是目标 shape 的立即 fallback，key7 是通用 fallback。key15 workspace 为
+`usedCoreNum * 600 KiB`，20 个逻辑 AIC 约 12 MiB；当前不启用 double buffer。建议按以下顺序放行：
 
 1. 源码契约和 Python collect 通过；
-2. 单算子快速 build，确认 key12/key13 回退和 key14 MIX 实例均进入 wheel；
-3. 两路 rowBlock3 canary、zero dA、endpoint guard 通过；
+2. 单算子快速 build，确认 key13 回退和 key15 MIX 实例均进入 wheel；
+3. 八路 full-Cube path canary、zero dA、endpoint guard 通过；
 4. 连续 launch 至少 100 次，无超时或设备复位；
-5. 完整 28 项通过，原容差不删除、不放宽；
+5. 完整 37 项通过，原容差不删除、不放宽；
 6. msprof 只出现一条 `ChunkKdaBwdIntra`，该行同时具有 AIC/AIV 时间，再与 key7 比较。
 
-key12/key13 保留为已知可运行的 BK64 回退；当前 key14 改动必须重新执行第 2～6 项。未满足第 3～6 项前，
-不扩大实验 fastpath eligibility，不移除 key7/key12/key13，也不引入更大的 Cube contraction、
-double buffer、persistent MMAD 或 workspace ring。
+key13 保留为已知可运行的 BK64 回退；当前 key15 改动必须重新执行第 2～6 项。未满足第 3～6 项前，
+不扩大实验 fastpath eligibility，不移除 key7/key13，也不引入 double buffer、persistent MMAD
+或 workspace ring。
 
 板端通过门槛：四个输出均 finite，且逐输出通过测试中的 CPU FP64 golden 容差。若 safe case 失败，应先分别对比 `dq_local`、`dk_left_pre`、`dk_right`，重点检查 16-token 首/中/尾参考点的内外指数方向。
 

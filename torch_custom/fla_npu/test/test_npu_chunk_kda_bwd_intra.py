@@ -156,6 +156,47 @@ def _rowblock3_off_left_cube_canary_case(source):
     return (q, k, g, beta, dAqk, dAkk, dq, dk, db, dg), target
 
 
+def _full_cube_path_canary_case(path, source):
+    """Isolate one of key15's four causal contraction families."""
+    b, t, h, kdim, chunk_size = 1, 64, 1, 128, 64
+    path_tokens = {
+        "left_previous": (18, 2),
+        "left_diagonal": (27, 20),
+        "right_future": (5, 37),
+        "right_diagonal": (20, 27),
+    }
+    target, source_token = path_tokens[path]
+    q = torch.zeros(b, t, h, kdim, dtype=torch.bfloat16)
+    k = torch.zeros_like(q)
+    feature = (
+        0.125 + torch.arange(kdim, dtype=torch.float32) / 512
+    ).to(torch.bfloat16)
+    if path.startswith("left") or source == "dAkk":
+        k[0, source_token, 0] = feature
+    if path.startswith("right") and source == "dAqk":
+        q[0, source_token, 0] = feature
+
+    feature_slope = 0.002 + torch.arange(kdim, dtype=torch.float32) * 1.0e-5
+    g = (
+        -torch.arange(t, dtype=torch.float32).reshape(1, t, 1, 1)
+        * feature_slope.reshape(1, 1, 1, kdim)
+    )
+    beta = torch.linspace(0.25, 0.75, t, dtype=torch.float32).reshape(1, t, 1)
+    dAqk = torch.zeros(b, t, h, chunk_size, dtype=torch.float32)
+    dAkk = torch.zeros_like(dAqk)
+    matrix = dAqk if source == "dAqk" else dAkk
+    if path.startswith("left"):
+        matrix[0, target, 0, source_token] = 0.75
+    else:
+        matrix[0, source_token, 0, target] = 0.75
+
+    dq = torch.zeros(b, t, h, kdim, dtype=torch.float32)
+    dk = torch.zeros_like(dq)
+    db = torch.zeros(b, t, h, dtype=torch.float32)
+    dg = torch.zeros_like(dq)
+    return (q, k, g, beta, dAqk, dAkk, dq, dk, db, dg), target
+
+
 def test_chunk_kda_bwd_intra_reference_safe_and_unsafe_fp64_agree():
     inputs = _case(t=23, h=2, hv=4, kdim=32, gate_scale=0.1)
     safe = _golden(*inputs, chunk_size=64, safe_gate=True)
@@ -239,6 +280,29 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_off_left_cube_canary(source):
     )
 
 
+@pytest.mark.parametrize(
+    "path",
+    ["left_previous", "left_diagonal", "right_future", "right_diagonal"],
+)
+@pytest.mark.parametrize("source", ["dAqk", "dAkk"])
+def test_chunk_kda_bwd_intra_safe_gate_full_cube_path_canary(path, source):
+    """Protect every sparse block family packed for key15's six GEMMs."""
+    device = _device()
+    inputs, target = _full_cube_path_canary_case(path, source)
+    ref = _golden(*inputs, chunk_size=64, safe_gate=True)
+    got = fla_ascendc.chunk_kda_bwd_intra(
+        *(tensor.to(device) for tensor in inputs), chunk_size=64, safe_gate=True
+    )
+    _assert_outputs(got, ref, rtol=5e-3, atol=5e-3)
+
+    output_index = 0 if path.startswith("left") and source == "dAqk" else 1
+    signal = got[output_index].detach().cpu()[0, target, 0]
+    assert torch.isfinite(signal).all()
+    assert torch.count_nonzero(signal) == signal.numel(), (
+        f"full-Cube {path}/{source} signal was not propagated across all K features"
+    )
+
+
 def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_dense_random():
     """Exercise all outputs on the exact BF16/safe Cube eligibility."""
     device = _device()
@@ -287,16 +351,22 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     post_key_match = re.search(
         r"\bKDA_ROW3_BATCHED_POST_GATE_TILING_KEY\b\s*=\s*(\d+)", source
     )
+    full_cube_key_match = re.search(
+        r"\bKDA_FULL_CUBE_TILING_KEY\b\s*=\s*(\d+)", source
+    )
     assert key_match is not None, "missing the stable single-launch rowBlock3 MIX key"
     assert batch_key_match is not None, "missing the batched-gate rowBlock3 MIX key"
     assert post_key_match is not None, "missing the batched row post-scale MIX key"
+    assert full_cube_key_match is not None, "missing the full-Cube MIX key"
     mixed_key = int(key_match.group(1))
     batch_key = int(batch_key_match.group(1))
     post_key = int(post_key_match.group(1))
+    full_cube_key = int(full_cube_key_match.group(1))
     assert mixed_key == 12
     assert batch_key == 13
     assert post_key == 14
-    assert len({mixed_key, batch_key, post_key}) == 3
+    assert full_cube_key == 15
+    assert len({mixed_key, batch_key, post_key, full_cube_key}) == 4
 
     mixed_branch = re.search(
         rf"else if \(TILING_KEY_IS\({mixed_key}\)\) \{{(?P<body>.*?)"
@@ -321,7 +391,8 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert "ASCEND_IS_AIC" in batch_body and "ASCEND_IS_AIV" in batch_body
     assert "GetUserWorkspace(workspace)" in batch_body
     post_branch = re.search(
-        rf"else if \(TILING_KEY_IS\({post_key}\)\) \{{(?P<body>.*?)\n    \}}\n\}}",
+        rf"else if \(TILING_KEY_IS\({post_key}\)\) \{{(?P<body>.*?)"
+        rf"\n    \}} else if \(TILING_KEY_IS\({full_cube_key}\)\)",
         kernel_source,
         re.DOTALL,
     )
@@ -398,7 +469,7 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
         r"\(BATCH_SOURCE_GATES\s*&&\s*SAFE_GATE\s*&&\s*BLOCKWISE",
         kernel_source,
     ), "row post-scale batching must remain inside the batched safe MIX path"
-    assert "context->SetTilingKey(KDA_ROW3_BATCHED_POST_GATE_TILING_KEY);" in tiling_source
+    assert "context->SetTilingKey(KDA_STAGE4_TILING_KEY);" in tiling_source
     source_ranges = []
     for row_begin in range(0, 64, 16):
         row_end = row_begin + 16
@@ -454,6 +525,65 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     for lane in (0, 1):
         scheduled = [slot for slots in per_core_slots for slot in slots]
         assert len(scheduled) == slot_count, f"AIV lane {lane} must visit every slot once"
+
+
+def test_chunk_kda_bwd_intra_full_cube_source_contract():
+    """Keep key15 bounded, IEEE-FP32, single-launch, and easy to roll back."""
+    op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
+    kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
+        encoding="utf-8"
+    )
+    cube_source = (
+        op_root / "op_kernel" / "chunk_kda_bwd_intra_full_cube.h"
+    ).read_text(encoding="utf-8")
+    tiling_source = (
+        op_root / "op_host" / "chunk_kda_bwd_intra_tiling.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;" in kernel_source
+    assert (
+        "constexpr uint64_t KDA_STAGE4_TILING_KEY = KDA_FULL_CUBE_TILING_KEY;"
+        in tiling_source
+    )
+    assert "else if (TILING_KEY_IS(13))" in kernel_source, (
+        "the proven key13 implementation must remain compiled as the fallback"
+    )
+    key15 = re.search(
+        r"else if \(TILING_KEY_IS\(15\)\) \{(?P<body>.*?)\n    \}\n\}",
+        kernel_source,
+        re.DOTALL,
+    )
+    assert key15 is not None, "missing key15 kernel dispatch"
+    key15_body = key15.group("body")
+    assert "KERNEL_TASK_TYPE(15, KERNEL_TYPE_MIX_AIC_1_2)" in key15_body
+    assert "KdaFullCube::MixedKernel op;" in key15_body
+    assert "ASCEND_IS_AIC" in key15_body and "ASCEND_IS_AIV" in key15_body
+    assert "GetUserWorkspace(workspace)" in key15_body
+
+    assert "static_assert(SLOT_BYTES == 614400" in cube_source
+    assert "logicalCore * SLOT_ELEMENTS" in cube_source
+    assert cube_source.count("Run(blockMmad,") == 6
+    assert "MmadPingpong<ArchTag, false, false>" in cube_source
+    assert "!DispatchPolicy::USE_HF32_MODE" in cube_source
+    assert "OuterAccumulate" not in cube_source
+    assert "lane == 0 ? 0 : 1" in cube_source
+    assert "lane == 0 ? 3 : 2" in cube_source
+    assert "rowBegin + BLOCK / 2" in cube_source, (
+        "safe diagonal paths must retain the Triton midpoint reference"
+    )
+    assert (
+        cube_source.count("CrossCoreSetFlagWithReverse<0x2") == 2
+        and cube_source.count("CrossCoreWaitFlagWithReverse<0x2") == 2
+    ), "key15 must use one symmetric ready/done generation per task"
+
+    assert (
+        "static_cast<uint64_t>(usedCoreNum) * KDA_FULL_CUBE_BYTES_PER_CORE"
+        in tiling_source
+    )
+    assert (
+        "static_cast<uint64_t>(scratchSlots) *" in tiling_source
+        and "KDA_ROW3_BYTES_PER_SLOT" in tiling_source
+    ), "key13 rollback must retain its task-sized workspace formula"
 
 
 @pytest.mark.parametrize("kdim", [15, 17, 257])
