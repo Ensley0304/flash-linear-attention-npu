@@ -85,6 +85,25 @@ constexpr uint32_t C_RIGHT_DIAG_K_OFFSET =
 constexpr uint32_t SLOT_ELEMENTS = C_RIGHT_DIAG_K_OFFSET + C_RIGHT_DIAG_ELEMENTS;
 constexpr uint64_t SLOT_BYTES = static_cast<uint64_t>(SLOT_ELEMENTS) * sizeof(float);
 
+// The split-launch left-Cube path deliberately uses task-sized, compact
+// tensors.  Unlike key15 it never aliases A/B/C and never relies on an
+// AIC/AIV cross-core flag.  Runtime launch ordering is the only inter-stage
+// dependency.
+constexpr uint32_t LEFT_A_PREV_OFFSET = 0;
+constexpr uint32_t LEFT_A_DIAG_OFFSET = LEFT_A_PREV_OFFSET + A_LEFT_PREV_ELEMENTS;
+constexpr uint32_t LEFT_A_ELEMENTS = LEFT_A_DIAG_OFFSET + A_LEFT_DIAG_ELEMENTS;
+constexpr uint32_t LEFT_B_PREV_OFFSET = 0;
+constexpr uint32_t LEFT_B_DIAG_OFFSET = LEFT_B_PREV_OFFSET + B_LEFT_PREV_ELEMENTS;
+constexpr uint32_t LEFT_B_ELEMENTS = LEFT_B_DIAG_OFFSET + B_LEFT_DIAG_ELEMENTS;
+constexpr uint32_t LEFT_C_PREV_OFFSET = 0;
+constexpr uint32_t LEFT_C_DIAG_OFFSET = LEFT_C_PREV_OFFSET + C_LEFT_PREV_ELEMENTS;
+constexpr uint32_t LEFT_C_ELEMENTS = LEFT_C_DIAG_OFFSET + C_LEFT_DIAG_ELEMENTS;
+
+static_assert((LEFT_A_ELEMENTS * sizeof(float)) % 512 == 0 &&
+              (LEFT_B_ELEMENTS * sizeof(float)) % 512 == 0 &&
+              (LEFT_C_ELEMENTS * sizeof(float)) % 512 == 0,
+              "KDA split left-Cube tensors must remain 512B aligned");
+
 constexpr bool IsWorkspaceOffsetAligned(uint32_t offset)
 {
     return (static_cast<uint64_t>(offset) * sizeof(float)) % 512 == 0;
@@ -186,6 +205,63 @@ public:
         pipe_->InitBuffer(scalarBuf_, 32);
         pipe_->InitBuffer(dbAccBuf_, BLOCK * 8 * sizeof(float));
         pipe_->InitBuffer(dbCompactBuf_, BLOCK * sizeof(float));
+    }
+
+    __aicore__ inline void InitLeft(
+        GM_ADDR k, GM_ADDR g, GM_ADDR dAqk, GM_ADDR dAkk,
+        GM_ADDR stageA, GM_ADDR stageB,
+        const ChunkKdaBwdIntraTilingData &tiling, TPipe *pipe)
+    {
+        k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
+        g_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(g));
+        dAqk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk));
+        dAkk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk));
+        stageA_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageA));
+        // PackBGroup writes through workspace_.  Point it at the compact
+        // stage-B tensor for this isolated prep launch.
+        workspace_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageB));
+        h_ = static_cast<uint64_t>(tiling.qHeadNum);
+        hv_ = static_cast<uint64_t>(tiling.vHeadNum);
+        t_ = static_cast<uint64_t>(tiling.seqlen);
+        nt_ = static_cast<uint64_t>(tiling.totalChunks);
+        pipe_ = pipe;
+
+        pipe_->InitBuffer(dAQBuf_, CHUNK * CHUNK * sizeof(float));
+        pipe_->InitBuffer(dAKBuf_, CHUNK * CHUNK * sizeof(float));
+        pipe_->InitBuffer(matrixBuf_, 32 * A_LEFT_PREV_K * sizeof(float));
+        pipe_->InitBuffer(typedBuf_, 2 * 48 * FEATURE_TILE * sizeof(bfloat16_t));
+        pipe_->InitBuffer(featureBuf_, 3 * 48 * FEATURE_TILE * sizeof(float));
+        pipe_->InitBuffer(gateBuf_, 48 * FEATURE_TILE * sizeof(float));
+        pipe_->InitBuffer(betaBuf_, CHUNK * sizeof(float));
+        pipe_->InitBuffer(betaBrcbBuf_, CHUNK * 8 * sizeof(float));
+        pipe_->InitBuffer(auxBuf_, 3 * TILE_ELEMENTS * sizeof(float));
+        pipe_->InitBuffer(reduceBuf_, 256 * sizeof(float));
+        pipe_->InitBuffer(scalarBuf_, 32);
+        pipe_->InitBuffer(dbAccBuf_, BLOCK * 8 * sizeof(float));
+        pipe_->InitBuffer(dbCompactBuf_, BLOCK * sizeof(float));
+    }
+
+    __aicore__ inline void PackLeftTask(uint64_t task)
+    {
+        const uint64_t valueHead = task % hv_;
+        const uint64_t chunk = task / hv_;
+        const uint64_t chunkStart = chunk * CHUNK;
+        const uint64_t aSlotBase = task * LEFT_A_ELEMENTS;
+        const uint64_t bSlotBase = task * LEFT_B_ELEMENTS;
+
+        LocalTensor<float> dAQ = dAQBuf_.Get<float>();
+        LocalTensor<float> dAK = dAKBuf_.Get<float>();
+        SyncVToMte2();
+        DataCopy(dAQ, dAqk_[AOffset(valueHead, chunkStart, 0)], CHUNK * CHUNK);
+        DataCopy(dAK, dAkk_[AOffset(valueHead, chunkStart, 0)], CHUNK * CHUNK);
+        SyncMte2ToS();
+
+        __ubuf__ float *dAQPtr = reinterpret_cast<__ubuf__ float *>(dAQ.GetPhyAddr());
+        __ubuf__ float *dAKPtr = reinterpret_cast<__ubuf__ float *>(dAK.GetPhyAddr());
+        for (uint32_t rowBlock = 0; rowBlock < CHUNK / BLOCK; ++rowBlock) {
+            PackLeftAMatrices(aSlotBase, rowBlock, dAQPtr, dAKPtr);
+            PackLeftBMatrices(bSlotBase, valueHead, chunkStart, rowBlock);
+        }
     }
 
     __aicore__ inline void PackTask(uint64_t task, uint64_t logicalCore, uint64_t lane)
@@ -325,6 +401,17 @@ private:
         SyncMte3ToV();
     }
 
+    __aicore__ inline void StoreLeftAMatrixGroup(uint64_t gmOffset, uint32_t elements)
+    {
+        LocalTensor<float> matrix = matrixBuf_.Get<float>();
+        SyncSToV();
+        Adds(matrix, matrix, 0.0f, elements);
+        PipeBarrier<PIPE_V>();
+        SyncVToMte3();
+        DataCopy(stageA_[gmOffset], matrix, elements);
+        SyncMte3ToV();
+    }
+
     __aicore__ inline void PrepareScalarMatrix(uint32_t elements)
     {
         LocalTensor<float> matrix = matrixBuf_.Get<float>();
@@ -420,6 +507,51 @@ private:
                                        elements);
             }
         }
+    }
+
+    __aicore__ inline void PackLeftAMatrices(
+        uint64_t slotBase, uint32_t rowBlock,
+        __ubuf__ float *dAQ, __ubuf__ float *dAK)
+    {
+        const uint32_t rowBegin = rowBlock * BLOCK;
+        __ubuf__ float *matrix =
+            reinterpret_cast<__ubuf__ float *>(matrixBuf_.Get<float>().GetPhyAddr());
+
+        if (rowBlock > 0) {
+            const uint32_t sourceCount = rowBegin;
+            const uint32_t group = rowBlock - 1;
+            const uint32_t rowBase = group * 2 * BLOCK;
+            const uint32_t colBase = rowBlock == 1 ? 0 : (rowBlock == 2 ? 16 : 48);
+            const uint32_t elements = 2 * BLOCK * A_LEFT_PREV_K;
+            PrepareScalarMatrix(elements);
+            for (uint32_t row = 0; row < BLOCK; ++row) {
+                for (uint32_t source = 0; source < sourceCount; ++source) {
+                    matrix[row * A_LEFT_PREV_K + colBase + source] =
+                        dAQ[(rowBegin + row) * CHUNK + source];
+                    matrix[(BLOCK + row) * A_LEFT_PREV_K + colBase + source] =
+                        dAK[(rowBegin + row) * CHUNK + source];
+                }
+            }
+            StoreLeftAMatrixGroup(
+                slotBase + LEFT_A_PREV_OFFSET + rowBase * A_LEFT_PREV_K,
+                elements);
+        }
+
+        const uint32_t rowBase = rowBlock * 2 * BLOCK;
+        const uint32_t colBase = rowBlock * BLOCK;
+        const uint32_t elements = 2 * BLOCK * A_LEFT_DIAG_K;
+        PrepareScalarMatrix(elements);
+        for (uint32_t row = 0; row < BLOCK; ++row) {
+            for (uint32_t source = 0; source <= row; ++source) {
+                matrix[row * A_LEFT_DIAG_K + colBase + source] =
+                    dAQ[(rowBegin + row) * CHUNK + rowBegin + source];
+                matrix[(BLOCK + row) * A_LEFT_DIAG_K + colBase + source] =
+                    dAK[(rowBegin + row) * CHUNK + rowBegin + source];
+            }
+        }
+        StoreLeftAMatrixGroup(
+            slotBase + LEFT_A_DIAG_OFFSET + rowBase * A_LEFT_DIAG_K,
+            elements);
     }
 
     template <bool FIXED_LHS, FeatureKind KIND>
@@ -540,6 +672,23 @@ private:
         PackBGroup<false, FEATURE_BETA_K>(
             slotBase, valueHead, chunkStart, rowBegin, BLOCK, rowMid,
             B_RIGHT_DIAG_K_OFFSET, rowBegin);
+    }
+
+    __aicore__ inline void PackLeftBMatrices(
+        uint64_t slotBase, uint64_t valueHead, uint64_t chunkStart,
+        uint32_t rowBlock)
+    {
+        const uint32_t rowBegin = rowBlock * BLOCK;
+        const uint32_t rowMid = rowBegin + BLOCK / 2;
+        if (rowBlock > 0) {
+            const uint32_t groupK = rowBlock == 1 ? 0 : (rowBlock == 2 ? 16 : 48);
+            PackBGroup<true, FEATURE_K>(
+                slotBase, valueHead, chunkStart, 0, rowBegin, rowBegin,
+                LEFT_B_PREV_OFFSET, groupK);
+        }
+        PackBGroup<true, FEATURE_K>(
+            slotBase, valueHead, chunkStart, rowBegin, BLOCK, rowMid,
+            LEFT_B_DIAG_OFFSET, rowBegin);
     }
 
     __aicore__ inline void LoadCBlock(
@@ -812,7 +961,7 @@ private:
 private:
     GlobalTensor<bfloat16_t> q_, k_;
     GlobalTensor<float> g_, beta_, dAqk_, dAkk_, dq_, dk_, db_, dg_;
-    GlobalTensor<float> dqOut_, dkOut_, dbOut_, dgOut_, workspace_;
+    GlobalTensor<float> dqOut_, dkOut_, dbOut_, dgOut_, workspace_, stageA_;
     TBuf<TPosition::VECCALC> dAQBuf_, dAKBuf_, matrixBuf_, typedBuf_;
     TBuf<TPosition::VECCALC> featureBuf_, gateBuf_, betaBuf_, betaBrcbBuf_;
     TBuf<TPosition::VECCALC> auxBuf_, reduceBuf_, scalarBuf_, dbAccBuf_, dbCompactBuf_;
@@ -1037,6 +1186,62 @@ private:
 
 private:
     GlobalTensor<float> workspace_;
+};
+
+class LeftAicKernel {
+public:
+    __aicore__ inline void Init(GM_ADDR stageA, GM_ADDR stageB, GM_ADDR stageC)
+    {
+        stageA_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageA));
+        stageB_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageB));
+        stageC_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageC));
+    }
+
+    __aicore__ inline void ProcessSlot(uint64_t task)
+    {
+        Catlass::Arch::Resource<ArchTag> resource;
+        DirectMmad directMmad(resource);
+        const uint64_t aSlotBase = task * LEFT_A_ELEMENTS;
+        const uint64_t bSlotBase = task * LEFT_B_ELEMENTS;
+        const uint64_t cSlotBase = task * LEFT_C_ELEMENTS;
+        Run(directMmad, aSlotBase, bSlotBase, cSlotBase,
+            LEFT_A_PREV_OFFSET, LEFT_B_PREV_OFFSET, LEFT_C_PREV_OFFSET,
+            A_LEFT_PREV_M, A_LEFT_PREV_K);
+        Run(directMmad, aSlotBase, bSlotBase, cSlotBase,
+            LEFT_A_DIAG_OFFSET, LEFT_B_DIAG_OFFSET, LEFT_C_DIAG_OFFSET,
+            A_LEFT_DIAG_M, A_LEFT_DIAG_K);
+    }
+
+private:
+    template <typename Mmad>
+    __aicore__ inline void Run(
+        Mmad &mmad, uint64_t aSlotBase, uint64_t bSlotBase, uint64_t cSlotBase,
+        uint32_t aOffset, uint32_t bOffset, uint32_t cOffset,
+        uint32_t m, uint32_t k)
+    {
+        using Element = float;
+        using Layout = Catlass::layout::RowMajor;
+        auto layoutA = tla::MakeLayout<Element, Layout>(m, k);
+        auto layoutB = tla::MakeLayout<Element, Layout>(k, HEAD_DIM);
+        auto layoutC = tla::MakeLayout<Element, Layout>(m, HEAD_DIM);
+        auto tensorA = tla::MakeTensor(stageA_[aSlotBase + aOffset], layoutA,
+                                       Catlass::Arch::PositionGM{});
+        auto tensorB = tla::MakeTensor(stageB_[bSlotBase + bOffset], layoutB,
+                                       Catlass::Arch::PositionGM{});
+        auto tensorC = tla::MakeTensor(stageC_[cSlotBase + cOffset], layoutC,
+                                       Catlass::Arch::PositionGM{});
+        Catlass::GemmCoord shape{m, HEAD_DIM, k};
+        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+                              tla::MakeShape(shape.m(), shape.k()));
+        auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0),
+                              tla::MakeShape(shape.k(), shape.n()));
+        auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0),
+                              tla::MakeShape(shape.m(), shape.n()));
+        mmad(blockA, blockB, blockC, shape);
+    }
+
+private:
+    GlobalTensor<float> stageA_, stageB_, stageC_;
 };
 
 class MixedKernel {

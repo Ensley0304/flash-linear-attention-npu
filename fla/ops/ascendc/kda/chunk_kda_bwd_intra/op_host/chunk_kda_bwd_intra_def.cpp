@@ -34,9 +34,9 @@ public:
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats);
-        // Legacy internal tensors retained only for the isolated stage 1/2/3
-        // diagnostics.  The public BF16/safe Cube path uses one stage-4 MIX
-        // launch and kernel user workspace instead.
+        // Internal tensors carry the split BF16/safe left-Cube pipeline:
+        // stage 1 packs A/B, stage 2 computes C, and stage 3 consumes C.
+        // Keeping these as separate launches avoids AIC/AIV cross-core flags.
         this->Input("stage_a").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
         this->Input("stage_b").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);
         this->Input("stage_c").ParamType(OPTIONAL).DataType(fp32Types).Format(formats).UnknownShapeFormat(formats);

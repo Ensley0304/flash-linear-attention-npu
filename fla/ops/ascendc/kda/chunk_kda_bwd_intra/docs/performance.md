@@ -108,6 +108,20 @@ shape kernel duration 低于 22 ms；未取得干净 wheel 的同卡 msprof 前�
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 
+## key16/17/18 split left-Cube
+
+当前实现不直接修复 key15 的 MIX 握手，而是先按已验证的 staged orchestration 拆成三个 runtime
+launch：key16 AIV 打包 previous-left 与 diagonal-left 的紧凑 FP32 A/B，key17 AIC 执行
+`96x96 @ 96x128` 和 `128x64 @ 64x128` 两次 IEEE-FP32 `TileMmadTla`，key18 AIV 读取 C，
+保留现有 right、`db/dg`、beta 和输出累加路径。三个 key 均不使用 CrossCore flag，stage
+依赖只由 executor launch 顺序表达。
+
+该切片覆盖六组 full-Cube contraction 中 50% 的 MAC。目标 shape 有 4096 个 `(chunk,head)`
+slot，紧凑 A/B/C 分别为每 slot 68/80/112 KiB；这是用于先过编译、endpoint、repeated-launch
+和完整精度门禁的保守版本，不宣称最终 workspace 方案。`KDA_ENABLE_SPLIT_LEFT_CUBE=false`
+可恢复 key13 stage-4 单 launch。上板通过后再根据三条 profiling 记录决定是缩减 task-sized
+scratch，还是按 PR190 的 slot/ring 组织逐步合并 launch。
+
 ## 下一阶段候选
 
 稳定 key7 profiling 显示目标 shape 的 Cube utilization 为 0，因此先用 rowBlock3 off-left 建立最小

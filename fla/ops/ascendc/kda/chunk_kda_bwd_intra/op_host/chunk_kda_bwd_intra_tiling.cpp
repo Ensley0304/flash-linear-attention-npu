@@ -38,6 +38,9 @@ constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
 constexpr uint64_t KDA_ROW3_BATCHED_POST_GATE_TILING_KEY = 14;
 constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;
+constexpr uint64_t KDA_LEFT_PREP_TILING_KEY = 16;
+constexpr uint64_t KDA_LEFT_CUBE_TILING_KEY = 17;
+constexpr uint64_t KDA_LEFT_CONSUME_TILING_KEY = 18;
 // Keep the proven key13 path as the public stage-4 dispatch while key15 is
 // rebuilt around a validated Cube completion protocol. Key15 remains
 // compiled as an isolated experiment and can be re-enabled with this single
@@ -51,6 +54,11 @@ static_assert(KDA_ROW3_BATCHED_POST_GATE_TILING_KEY != KDA_FULL_CUBE_TILING_KEY,
               "ChunkKdaBwdIntra full-Cube path requires a distinct tiling key");
 constexpr int64_t KDA_ROW3_BYTES_PER_SLOT = (32 * 48 + 48 * 128 + 32 * 128) * 4;
 constexpr int64_t KDA_ROW3_MAX_SLOTS = (256LL * 1024 * 1024) / KDA_ROW3_BYTES_PER_SLOT;
+constexpr int64_t KDA_LEFT_A_ROWS = 136;
+constexpr int64_t KDA_LEFT_B_ROWS = 160;
+constexpr int64_t KDA_LEFT_C_ROWS = 224;
+constexpr int64_t KDA_LEFT_HEAD_DIM = 128;
+constexpr int64_t KDA_LEFT_MAX_SLOTS = 4096;
 // key15 stores six block-diagonal GEMM A/B/C groups in one 600-KiB slot per
 // logical AIC core.  AIV0/AIV1 cannot advance to the next task until both have
 // consumed the current C groups, so task-count-sized scratch is unnecessary.
@@ -127,20 +135,24 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t chunks = isVarLen ? totalChunks : batch * totalChunks;
     const int64_t scratchSlots = chunks * hv;
     if (stage != 0) {
+        const bool scratchFits =
+            stage == 4
+                ? (KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY ||
+                   scratchSlots <= KDA_ROW3_MAX_SLOTS)
+                : scratchSlots <= KDA_LEFT_MAX_SLOTS;
         const bool fastPathShape = safeGate && qDesc->GetDataType() == ge::DT_BF16 && !isVarLen &&
                                    batch == 1 && h == hv && chunkSize == 64 && k == 128 &&
-                                   t > 0 && (t % chunkSize) == 0 &&
-                                   ((stage == 4 &&
-                                     KDA_STAGE4_TILING_KEY == KDA_FULL_CUBE_TILING_KEY) ||
-                                    scratchSlots <= KDA_ROW3_MAX_SLOTS);
+                                   t > 0 && (t % chunkSize) == 0 && scratchFits;
         if (!fastPathShape) {
             return ge::GRAPH_FAILED;
         }
         if (stage == 1) {
             auto aOutputShape = context->GetOutputShape(OUTPUT_0);
             auto bOutputShape = context->GetOutputShape(OUTPUT_1);
-            if (!MatchScratchShape(aOutputShape, scratchSlots, 32, 48) ||
-                !MatchScratchShape(bOutputShape, scratchSlots, 48, 128)) {
+            if (!MatchScratchShape(aOutputShape, scratchSlots,
+                                   KDA_LEFT_A_ROWS, KDA_LEFT_HEAD_DIM) ||
+                !MatchScratchShape(bOutputShape, scratchSlots,
+                                   KDA_LEFT_B_ROWS, KDA_LEFT_HEAD_DIM)) {
                 return ge::GRAPH_FAILED;
             }
         } else if (stage == 2) {
@@ -148,15 +160,19 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
             auto bShape = context->GetOptionalInputShape(INPUT_STAGE_B);
             auto cOutputShape = context->GetOutputShape(OUTPUT_0);
             if (aShape == nullptr || bShape == nullptr ||
-                !MatchScratchShape(aShape, scratchSlots, 32, 48) ||
-                !MatchScratchShape(bShape, scratchSlots, 48, 128) ||
-                !MatchScratchShape(cOutputShape, scratchSlots, 32, 128)) {
+                !MatchScratchShape(aShape, scratchSlots,
+                                   KDA_LEFT_A_ROWS, KDA_LEFT_HEAD_DIM) ||
+                !MatchScratchShape(bShape, scratchSlots,
+                                   KDA_LEFT_B_ROWS, KDA_LEFT_HEAD_DIM) ||
+                !MatchScratchShape(cOutputShape, scratchSlots,
+                                   KDA_LEFT_C_ROWS, KDA_LEFT_HEAD_DIM)) {
                 return ge::GRAPH_FAILED;
             }
         } else if (stage == 3) {
             auto cShape = context->GetOptionalInputShape(INPUT_STAGE_C);
             if (cShape == nullptr ||
-                !MatchScratchShape(cShape, scratchSlots, 32, 128)) {
+                !MatchScratchShape(cShape, scratchSlots,
+                                   KDA_LEFT_C_ROWS, KDA_LEFT_HEAD_DIM)) {
                 return ge::GRAPH_FAILED;
             }
         }
@@ -167,7 +183,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     if (stage == 1) {
         taskCount = scratchSlots;
     } else if (stage == 2) {
-        taskCount = scratchSlots * 2;
+        taskCount = scratchSlots;
     } else if (stage == 4) {
         taskCount = scratchSlots;
     }
@@ -217,11 +233,11 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     // safe-gate implementation uses keys 5/7 so the legacy instances remain
     // available as an immediate compile-time rollback while profiling.
     if (stage == 1) {
-        context->SetTilingKey(KDA_ROW3_PREP_TILING_KEY);
+        context->SetTilingKey(KDA_LEFT_PREP_TILING_KEY);
     } else if (stage == 2) {
-        context->SetTilingKey(KDA_ROW3_CUBE_TILING_KEY);
+        context->SetTilingKey(KDA_LEFT_CUBE_TILING_KEY);
     } else if (stage == 3) {
-        context->SetTilingKey(KDA_ROW3_CONSUME_TILING_KEY);
+        context->SetTilingKey(KDA_LEFT_CONSUME_TILING_KEY);
     } else if (stage == 4) {
         // key13 is the proven 31-ms BK64 fallback.  key14 remains compiled as
         // the no-gain post-scale experiment.  Switching KDA_STAGE4_TILING_KEY

@@ -11,6 +11,8 @@
 #include "aclnn_chunk_kda_bwd_intra.h"
 #include "chunk_kda_bwd_intra.h"
 
+#include <initializer_list>
+
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/make_op_executor.h"
@@ -21,6 +23,13 @@
 using namespace op;
 
 namespace {
+constexpr int64_t KDA_LEFT_A_ROWS = 136;
+constexpr int64_t KDA_LEFT_B_ROWS = 160;
+constexpr int64_t KDA_LEFT_C_ROWS = 224;
+constexpr int64_t KDA_LEFT_HEAD_DIM = 128;
+constexpr int64_t KDA_LEFT_MAX_SLOTS = 4096;
+constexpr bool KDA_ENABLE_SPLIT_LEFT_CUBE = true;
+
 struct Params {
     const aclTensor *q, *k, *g, *beta, *dAqk, *dAkk, *dq, *dk, *db, *dg;
     const aclIntArray *cu, *chunks;
@@ -29,6 +38,15 @@ struct Params {
     int64_t totalChunks;
     const aclTensor *dqOut, *dkOut, *dbOut, *dgOut;
 };
+
+op::Shape KdaBwdMakeShape(std::initializer_list<int64_t> dims)
+{
+    op::Shape shape;
+    for (int64_t dim : dims) {
+        shape.AppendDim(dim);
+    }
+    return shape;
+}
 
 aclnnStatus Check(const Params &p)
 {
@@ -106,17 +124,30 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     return tensor == nullptr ? ACLNN_ERR_INNER_NULLPTR : ACLNN_SUCCESS;
 }
 
-bool UseRow3MixedFastPath(const Params &p)
+bool MatchTargetSafeFastPath(const Params &p)
 {
     const auto qs = p.q->GetViewShape();
     const auto gs = p.g->GetViewShape();
-    // Keep the full-Cube integration deliberately narrow.  key15 uses bounded
-    // per-logical-core workspace, so eligibility no longer depends on sequence
-    // length or the number of (chunk, head) tasks.
+    // Keep the split left-Cube integration deliberately narrow.  It is
+    // intentionally limited to the production BF16/safe shape that has full
+    // 64-token chunks and a one-to-one Q/V head mapping.  Every other contract
+    // retains the proven stage-0 implementation.
+    const int64_t scratchSlots = p.totalChunks * gs.GetDim(1);
     return p.safeGate && p.cu == nullptr && p.q->GetDataType() == DataType::DT_BF16 &&
            p.chunkSize == 64 && qs.GetDim(0) == 1 && qs.GetDim(1) == gs.GetDim(1) &&
            qs.GetDim(2) > 0 && (qs.GetDim(2) % p.chunkSize) == 0 && qs.GetDim(3) == 128 &&
-           p.totalChunks == qs.GetDim(2) / p.chunkSize;
+           p.totalChunks == qs.GetDim(2) / p.chunkSize &&
+           scratchSlots <= KDA_LEFT_MAX_SLOTS;
+}
+
+bool UseSplitLeftCubeFastPath(const Params &p)
+{
+    return KDA_ENABLE_SPLIT_LEFT_CUBE && MatchTargetSafeFastPath(p);
+}
+
+bool UseRow3MixedRollback(const Params &p)
+{
+    return !KDA_ENABLE_SPLIT_LEFT_CUBE && MatchTargetSafeFastPath(p);
 }
 } // namespace
 
@@ -141,11 +172,50 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
         CHECK_RET(MakeContiguous(*tensor, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     }
     std::array<const aclTensor *, 4> result{};
-    if (UseRow3MixedFastPath(p)) {
-        // The BF16/safe target uses one MIX launch.  AIC and the two AIV lanes
-        // exchange one ready/done generation per task and reuse bounded
-        // per-core workspace; no executor tensor or intermediate launch is
-        // needed.
+    if (UseSplitLeftCubeFastPath(p)) {
+        const int64_t scratchSlots = p.totalChunks * p.g->GetViewShape().GetDim(1);
+        auto stageA = executorPtr->AllocTensor(
+            KdaBwdMakeShape({scratchSlots, KDA_LEFT_A_ROWS, KDA_LEFT_HEAD_DIM}),
+            DataType::DT_FLOAT, Format::FORMAT_ND);
+        auto stageB = executorPtr->AllocTensor(
+            KdaBwdMakeShape({scratchSlots, KDA_LEFT_B_ROWS, KDA_LEFT_HEAD_DIM}),
+            DataType::DT_FLOAT, Format::FORMAT_ND);
+        auto stageC = executorPtr->AllocTensor(
+            KdaBwdMakeShape({scratchSlots, KDA_LEFT_C_ROWS, KDA_LEFT_HEAD_DIM}),
+            DataType::DT_FLOAT, Format::FORMAT_ND);
+        auto dummy0 = executorPtr->AllocTensor(
+            KdaBwdMakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        auto dummy1 = executorPtr->AllocTensor(
+            KdaBwdMakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        auto dummy2 = executorPtr->AllocTensor(
+            KdaBwdMakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        CHECK_RET(stageA != nullptr && stageB != nullptr && stageC != nullptr &&
+                      dummy0 != nullptr && dummy1 != nullptr && dummy2 != nullptr,
+                  ACLNN_ERR_INNER_NULLPTR);
+
+        // Three independent launches mirror the staged orchestration proven in
+        // the fused GDN kernels while avoiding MIX-mode handshakes entirely:
+        // AIV packs compact left A/B, AIC computes two IEEE-FP32 GEMMs, then AIV
+        // consumes C and executes the unchanged right-half vector path.
+        auto prep = l0op::ChunkKdaBwdIntra(
+            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
+            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 1,
+            stageA, stageB, dummy0, dummy1, executorPtr);
+        for (const aclTensor *tensor : prep) {
+            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
+        auto cube = l0op::ChunkKdaBwdIntra(
+            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
+            p.chunkSize, p.safeGate, p.totalChunks, stageA, stageB, nullptr, 2,
+            stageC, dummy0, dummy1, dummy2, executorPtr);
+        for (const aclTensor *tensor : cube) {
+            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
+        result = l0op::ChunkKdaBwdIntra(
+            p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
+            p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, stageC, 3,
+            p.dqOut, p.dkOut, p.dbOut, p.dgOut, executorPtr);
+    } else if (UseRow3MixedRollback(p)) {
         result = l0op::ChunkKdaBwdIntra(
             p.q, p.k, p.g, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg, p.cu, p.chunks,
             p.chunkSize, p.safeGate, p.totalChunks, nullptr, nullptr, nullptr, 4,

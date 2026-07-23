@@ -68,12 +68,18 @@ constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
 constexpr uint64_t KDA_ROW3_BATCHED_POST_GATE_TILING_KEY = 14;
 constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;
+constexpr uint64_t KDA_LEFT_PREP_TILING_KEY = 16;
+constexpr uint64_t KDA_LEFT_CUBE_TILING_KEY = 17;
+constexpr uint64_t KDA_LEFT_CONSUME_TILING_KEY = 18;
 static_assert(KDA_ROW3_PREP_TILING_KEY != KDA_ROW3_CUBE_TILING_KEY &&
               KDA_ROW3_CUBE_TILING_KEY != KDA_ROW3_CONSUME_TILING_KEY &&
               KDA_ROW3_CONSUME_TILING_KEY != KDA_ROW3_MIXED_TILING_KEY &&
               KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY &&
               KDA_ROW3_BATCHED_GATE_TILING_KEY != KDA_ROW3_BATCHED_POST_GATE_TILING_KEY &&
-              KDA_ROW3_BATCHED_POST_GATE_TILING_KEY != KDA_FULL_CUBE_TILING_KEY,
+              KDA_ROW3_BATCHED_POST_GATE_TILING_KEY != KDA_FULL_CUBE_TILING_KEY &&
+              KDA_FULL_CUBE_TILING_KEY != KDA_LEFT_PREP_TILING_KEY &&
+              KDA_LEFT_PREP_TILING_KEY != KDA_LEFT_CUBE_TILING_KEY &&
+              KDA_LEFT_CUBE_TILING_KEY != KDA_LEFT_CONSUME_TILING_KEY,
               "ChunkKdaBwdIntra row3 stages require distinct tiling keys");
 constexpr uint32_t KDA_ROW3_READY_FLAG0 = 0;
 constexpr uint32_t KDA_ROW3_READY_FLAG1 = 1;
@@ -340,7 +346,8 @@ private:
 
 template <typename T, bool SAFE_GATE, bool BLOCKWISE = false, bool CUBE_ROW3 = false,
           uint32_t FEATURE_TILE = BK, uint32_t CHUNK_CAPACITY = MAX_BT,
-          bool BATCH_SOURCE_GATES = false, bool BATCH_ROW_POST_GATES = false>
+          bool BATCH_SOURCE_GATES = false, bool BATCH_ROW_POST_GATES = false,
+          bool CUBE_LEFT = false>
 class ChunkKdaBwdIntraKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR g, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
@@ -363,7 +370,7 @@ public:
         dkOut_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dkOut));
         dbOut_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dbOut));
         dgOut_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dgOut));
-        if constexpr (CUBE_ROW3) {
+        if constexpr (CUBE_ROW3 || CUBE_LEFT) {
             stageC_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(stageC));
         }
 
@@ -397,6 +404,11 @@ public:
                            FEATURE_TILE == KDA_MIX_FEATURE_TILE &&
                            CHUNK_CAPACITY == KDA_MIX_CHUNK_CAPACITY),
                       "Batched row post-scale gates require the batched BF16 MIX fastpath");
+        static_assert(!CUBE_LEFT ||
+                          (SAFE_GATE && BLOCKWISE && !CUBE_ROW3 &&
+                           FEATURE_TILE == KDA_MIX_FEATURE_TILE &&
+                           CHUNK_CAPACITY == KDA_MIX_CHUNK_CAPACITY),
+                      "Split left-Cube consume is restricted to the BF16/safe target shape");
         pipe_->InitBuffer(dARowQBuf_, BC * CHUNK_CAPACITY * sizeof(float));
         pipe_->InitBuffer(dARowKBuf_, BC * CHUNK_CAPACITY * sizeof(float));
         pipe_->InitBuffer(dAColQBuf_, CHUNK_CAPACITY * BC * sizeof(float));
@@ -1360,6 +1372,52 @@ private:
         SyncMte2ToV();
     }
 
+    __aicore__ inline void LoadCubeLeftPrefix(
+        uint64_t cubeTask, uint64_t rowBlock, uint64_t d, uint32_t curK,
+        LocalTensor<float> dqAcc, LocalTensor<float> dkLeft,
+        LocalTensor<float> dqDiag, LocalTensor<float> dkLeftDiag)
+    {
+        const uint32_t dstStride = static_cast<uint32_t>(
+            (FEATURE_TILE - curK) * sizeof(float) / 32);
+        DataCopyExtParams params{
+            static_cast<uint16_t>(BC), static_cast<uint32_t>(curK * sizeof(float)),
+            static_cast<uint32_t>((KdaFullCube::HEAD_DIM - curK) * sizeof(float)),
+            dstStride, 0};
+        DataCopyPadExtParams<float> noPad{false, 0, 0, 0.0f};
+        const uint64_t slotBase = cubeTask * KdaFullCube::LEFT_C_ELEMENTS;
+        if (rowBlock == 0) {
+            Duplicate(dqAcc, 0.0f, BC * FEATURE_TILE);
+            Duplicate(dkLeft, 0.0f, BC * FEATURE_TILE);
+            PipeBarrier<PIPE_V>();
+        }
+        SyncVToMte2();
+        if (rowBlock > 0) {
+            const uint64_t prevRowBase = (rowBlock - 1) * 2 * BC;
+            DataCopyPad(
+                dqAcc,
+                stageC_[slotBase + KdaFullCube::LEFT_C_PREV_OFFSET +
+                        prevRowBase * KdaFullCube::HEAD_DIM + d],
+                params, noPad);
+            DataCopyPad(
+                dkLeft,
+                stageC_[slotBase + KdaFullCube::LEFT_C_PREV_OFFSET +
+                        (prevRowBase + BC) * KdaFullCube::HEAD_DIM + d],
+                params, noPad);
+        }
+        const uint64_t diagRowBase = rowBlock * 2 * BC;
+        DataCopyPad(
+            dqDiag,
+            stageC_[slotBase + KdaFullCube::LEFT_C_DIAG_OFFSET +
+                    diagRowBase * KdaFullCube::HEAD_DIM + d],
+            params, noPad);
+        DataCopyPad(
+            dkLeftDiag,
+            stageC_[slotBase + KdaFullCube::LEFT_C_DIAG_OFFSET +
+                    (diagRowBase + BC) * KdaFullCube::HEAD_DIM + d],
+            params, noPad);
+        SyncMte2ToV();
+    }
+
     __aicore__ inline void ProcessSafeFeatureBlock(uint64_t b, uint64_t hv, uint64_t chunkStart,
                                                    uint64_t curT, uint64_t rowBegin, uint64_t rowCount,
                                                    uint64_t d, uint32_t curK, uint64_t cubeTask)
@@ -1385,9 +1443,14 @@ private:
                           rowCount == BC && kDim_ == KDA_ROW3_HEAD_DIM;
         }
         Duplicate(dkRight, 0.0f, blockElements);
-        Duplicate(dqDiag, 0.0f, blockElements);
-        Duplicate(dkLeftDiag, 0.0f, blockElements);
         Duplicate(dkRightFuture, 0.0f, blockElements);
+        if constexpr (CUBE_LEFT) {
+            LoadCubeLeftPrefix(cubeTask, rowBegin / BC, d, curK,
+                               dqAcc, dkLeft, dqDiag, dkLeftDiag);
+        } else {
+            Duplicate(dqDiag, 0.0f, blockElements);
+            Duplicate(dkLeftDiag, 0.0f, blockElements);
+        }
         if constexpr (CUBE_ROW3) {
             if (useCubeRow3) {
                 LoadCubeRow3Prefix(cubeTask, d, curK, dqAcc, dkLeft);
@@ -1395,7 +1458,7 @@ private:
                 Duplicate(dqAcc, 0.0f, blockElements);
                 Duplicate(dkLeft, 0.0f, blockElements);
             }
-        } else {
+        } else if constexpr (!CUBE_LEFT) {
             Duplicate(dqAcc, 0.0f, blockElements);
             Duplicate(dkLeft, 0.0f, blockElements);
         }
@@ -1404,8 +1467,17 @@ private:
         const uint64_t rowEnd = rowBegin + rowCount;
         LocalTensor<float> gLeftRef = gCache[rowBegin * FEATURE_TILE];
         LocalTensor<float> gRightRef = gCache[(rowEnd - 1) * FEATURE_TILE];
+        LocalTensor<float> gLeftDiagRef = gRightRef;
+        if constexpr (CUBE_LEFT) {
+            gLeftDiagRef = gCache[(rowBegin + rowCount / 2) * FEATURE_TILE];
+        }
 
-        if constexpr (CUBE_ROW3) {
+        if constexpr (CUBE_LEFT) {
+            // Both previous-block and diagonal left contractions already
+            // reside in dqAcc/dkLeft and dqDiag/dkLeftDiag.  The post-reference
+            // gates below remain vector-side and retain the original
+            // Sub -> Muls -> Exp -> Mul -> Add order.
+        } else if constexpr (CUBE_ROW3) {
             if (!useCubeRow3) {
                 if constexpr (BATCH_SOURCE_GATES) {
                     AccumulateLeftSourceRange<true>(dqAcc, dkLeft, kCache, gCache, gLeftRef,
@@ -1431,8 +1503,11 @@ private:
             // The left and right diagonal paths update independent accumulators.
             // Batch only gate construction; each accumulator still consumes
             // sources in the exact legacy order.
-            AccumulateLeftSourceRange<true>(dqDiag, dkLeftDiag, kCache, gCache, gRightRef,
-                                            rowQ, rowK, rowBegin, rowEnd, curK);
+            if constexpr (!CUBE_LEFT) {
+                AccumulateLeftSourceRange<true>(
+                    dqDiag, dkLeftDiag, kCache, gCache, gRightRef,
+                    rowQ, rowK, rowBegin, rowEnd, curK);
+            }
             AccumulateRightSourceRange<false>(dkRight, qCache, kCache, gCache, gLeftRef,
                                               colQ, colK, rowBegin, rowEnd, curK);
             AccumulateRightSourceRange<false>(dkRightFuture, qCache, kCache, gCache, gRightRef,
@@ -1445,9 +1520,11 @@ private:
                 // Keep the feature-side gate <= 1.  A midpoint reference can form
                 // Inf from a large, legal BF16 feature before a zero dA coefficient
                 // is applied, turning an otherwise finite contribution into NaN.
-                BuildGate(gate, gRightRef, gSource, curK);
-                AccumulateLeftSource(dqDiag, dkLeftDiag, kSource, gate,
-                                     rowQ[source * BC], rowK[source * BC], curK);
+                if constexpr (!CUBE_LEFT) {
+                    BuildGate(gate, gRightRef, gSource, curK);
+                    AccumulateLeftSource(dqDiag, dkLeftDiag, kSource, gate,
+                                         rowQ[source * BC], rowK[source * BC], curK);
+                }
                 BuildGate(gate, gSource, gLeftRef, curK);
                 AccumulateRightSource(dkRight, qSource, kSource, gate,
                                       colQ[source * BC], colK[source * BC], curK);
@@ -1474,7 +1551,7 @@ private:
                 BuildSourceGateBatch<false>(gate, gLeftRef, gRows, postRowCount, curK);
                 MulRowPairBatch(dqAcc, dqAcc, dkLeft, dkLeft, gate, postRowCount, curK);
             }
-            BuildSourceGateBatch<false>(gate, gRightRef, gRows, postRowCount, curK);
+            BuildSourceGateBatch<false>(gate, gLeftDiagRef, gRows, postRowCount, curK);
             MulRowPairBatch(dqDiag, dqDiag, dkLeftDiag, dkLeftDiag, gate, postRowCount, curK);
             AddRowPairBatch(dqAcc, dqAcc, dqDiag, dkLeft, dkLeft, dkLeftDiag,
                             postRowCount, curK);
@@ -1497,7 +1574,7 @@ private:
                     Mul(dkLeft[rowOffset], dkLeft[rowOffset], gate, curK);
                     PipeBarrier<PIPE_V>();
                 }
-                BuildGate(gate, gSelf, gRightRef, curK);
+                BuildGate(gate, gSelf, gLeftDiagRef, curK);
                 Mul(dqDiag[rowOffset], dqDiag[rowOffset], gate, curK);
                 Mul(dkLeftDiag[rowOffset], dkLeftDiag[rowOffset], gate, curK);
                 PipeBarrier<PIPE_V>();
@@ -1909,5 +1986,41 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
             op.ProcessAiv(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
                           dqOut, dkOut, dbOut, dgOut, tilingData, &pipe);
         }
+    } else if (TILING_KEY_IS(16)) {
+        KERNEL_TASK_TYPE(16, KERNEL_TYPE_AIV_ONLY);
+        KdaFullCube::AivKernel op;
+        op.InitLeft(k, g, dAqk, dAkk, dqOut, dkOut, tilingData, &pipe);
+        const uint64_t taskCount =
+            static_cast<uint64_t>(tilingData.totalChunks) *
+            static_cast<uint64_t>(tilingData.vHeadNum);
+        const uint64_t usedCoreNum =
+            static_cast<uint64_t>(tilingData.usedCoreNum);
+        for (uint64_t task = static_cast<uint64_t>(GetBlockIdx());
+             task < taskCount; task += usedCoreNum) {
+            op.PackLeftTask(task);
+        }
+    } else if (TILING_KEY_IS(17)) {
+        KERNEL_TASK_TYPE(17, KERNEL_TYPE_AIC_ONLY);
+        KdaFullCube::LeftAicKernel op;
+        op.Init(stageA, stageB, dqOut);
+        const uint64_t taskCount =
+            static_cast<uint64_t>(tilingData.totalChunks) *
+            static_cast<uint64_t>(tilingData.vHeadNum);
+        const uint64_t usedCoreNum =
+            static_cast<uint64_t>(tilingData.usedCoreNum);
+        for (uint64_t task = static_cast<uint64_t>(GetBlockIdx());
+             task < taskCount; task += usedCoreNum) {
+            op.ProcessSlot(task);
+        }
+    } else if (TILING_KEY_IS(18)) {
+        KERNEL_TASK_TYPE(18, KERNEL_TYPE_AIV_ONLY);
+        ChunkKdaBwdIntraKernel<
+            bfloat16_t, true, true, false,
+            KDA_MIX_FEATURE_TILE, KDA_MIX_CHUNK_CAPACITY,
+            true, false, true> op;
+        op.Init(q, k, g, beta, dAqk, dAkk, dq, dk, db, dg,
+                dqOut, dkOut, dbOut, dgOut, chunkIndices,
+                stageC, tilingData, &pipe);
+        op.Process();
     }
 }

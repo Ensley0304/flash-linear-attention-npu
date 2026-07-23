@@ -328,7 +328,7 @@ def test_chunk_kda_bwd_intra_safe_gate_rowblock3_cube_repeated_launch():
 
 
 def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
-    """Keep the target fastpath to one MIX launch with symmetric AIC/AIV sync."""
+    """Keep key12-key14 intact while the new split path remains independently gated."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -410,15 +410,20 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     assert "SetScheduleMode(1)" in tiling_source
 
     fastpath = re.search(
-        r"if \(UseRow3MixedFastPath\(p\)\) \{(?P<body>.*?)\n\s*\} else \{",
+        r"if \(UseSplitLeftCubeFastPath\(p\)\) \{(?P<body>.*?)"
+        r"\n\s*\} else if \(UseRow3MixedRollback\(p\)\) \{",
         aclnn_source,
         re.DOTALL,
     )
-    assert fastpath is not None, "missing public single-launch MIX dispatch"
+    assert fastpath is not None, "missing public split left-Cube dispatch"
     fastpath_body = fastpath.group("body")
-    assert fastpath_body.count("l0op::ChunkKdaBwdIntra(") == 1
-    assert "AllocTensor" not in fastpath_body
-    assert re.search(r"nullptr, nullptr, nullptr, 4,", fastpath_body)
+    assert fastpath_body.count("l0op::ChunkKdaBwdIntra(") == 3
+    assert fastpath_body.count("AllocTensor") == 6
+    assert re.search(r"nullptr, nullptr, nullptr, 1,", fastpath_body)
+    assert re.search(r"stageA, stageB, nullptr, 2,", fastpath_body)
+    assert re.search(r"nullptr, nullptr, stageC, 3,", fastpath_body)
+    assert "CrossCoreSetFlag" not in fastpath_body
+    assert "CrossCoreWaitFlag" not in fastpath_body
 
     assert '#include "lib/matmul_intf.h"' in kernel_source
     assert re.search(
@@ -454,7 +459,7 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
     post_batch_body = post_batch.group("body")
     gate_directions = (
         "BuildSourceGateBatch<false>(gate, gLeftRef, gRows",
-        "BuildSourceGateBatch<false>(gate, gRightRef, gRows",
+        "BuildSourceGateBatch<false>(gate, gLeftDiagRef, gRows",
         "BuildSourceGateBatch<true>(gate, gLeftRef, gRows",
         "BuildSourceGateBatch<true>(gate, gRightRef, gRows",
     )
@@ -528,7 +533,7 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
 
 
 def test_chunk_kda_bwd_intra_full_cube_source_contract():
-    """Keep key15 isolated while the proven key13 path remains the default."""
+    """Keep key15 isolated while key13 remains compiled as the rollback."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -563,7 +568,9 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
 
     assert "static_assert(SLOT_BYTES == 614400" in cube_source
     assert "logicalCore * SLOT_ELEMENTS" in cube_source
-    assert cube_source.count("Run(directMmad,") == 6
+    assert cube_source.count("Run(directMmad,") == 8, (
+        "key15 owns six contractions and the split left-Cube path owns two"
+    )
     assert "BlockMmadTla" not in cube_source
     assert "MmadPingpong<ArchTag" not in cube_source
     assert "TileMmadTla" in cube_source
@@ -617,6 +624,70 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
         "static_cast<uint64_t>(scratchSlots) *" in tiling_source
         and "KDA_ROW3_BYTES_PER_SLOT" in tiling_source
     ), "key13 rollback must retain its task-sized workspace formula"
+
+
+def test_chunk_kda_bwd_intra_split_left_cube_source_contract():
+    """The first left-Cube integration must stay launch-isolated and reversible."""
+    op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
+    kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
+        encoding="utf-8"
+    )
+    cube_source = (
+        op_root / "op_kernel" / "chunk_kda_bwd_intra_full_cube.h"
+    ).read_text(encoding="utf-8")
+    tiling_source = (
+        op_root / "op_host" / "chunk_kda_bwd_intra_tiling.cpp"
+    ).read_text(encoding="utf-8")
+    aclnn_source = (
+        op_root / "op_host" / "op_api" / "aclnn_chunk_kda_bwd_intra.cpp"
+    ).read_text(encoding="utf-8")
+
+    expected = {
+        16: "KERNEL_TYPE_AIV_ONLY",
+        17: "KERNEL_TYPE_AIC_ONLY",
+        18: "KERNEL_TYPE_AIV_ONLY",
+    }
+    for key, task_type in expected.items():
+        match = re.search(
+            rf"else if \(TILING_KEY_IS\({key}\)\) \{{(?P<body>.*?)"
+            rf"(?=\n    \}} else if|\n    \}}\n\}})",
+            kernel_source,
+            re.DOTALL,
+        )
+        assert match is not None, f"missing split left-Cube key{key}"
+        body = match.group("body")
+        assert f"KERNEL_TASK_TYPE({key}, {task_type})" in body
+        assert "KERNEL_TYPE_MIX" not in body
+        assert "CrossCoreSetFlag" not in body
+        assert "CrossCoreWaitFlag" not in body
+
+    assert "context->SetTilingKey(KDA_LEFT_PREP_TILING_KEY);" in tiling_source
+    assert "context->SetTilingKey(KDA_LEFT_CUBE_TILING_KEY);" in tiling_source
+    assert "context->SetTilingKey(KDA_LEFT_CONSUME_TILING_KEY);" in tiling_source
+    for rows in (136, 160, 224):
+        assert f"constexpr int64_t KDA_LEFT_" in tiling_source
+        assert str(rows) in tiling_source
+
+    assert "static_assert((LEFT_A_ELEMENTS * sizeof(float)) % 512 == 0" in cube_source
+    assert "class LeftAicKernel" in cube_source
+    assert "A_LEFT_PREV_M, A_LEFT_PREV_K" in cube_source
+    assert "A_LEFT_DIAG_M, A_LEFT_DIAG_K" in cube_source
+    assert "SetHF32Mode(false);" in cube_source
+    assert "if constexpr (CUBE_LEFT)" in kernel_source
+    assert "LoadCubeLeftPrefix" in kernel_source
+    assert "true, false, true> op;" in kernel_source
+
+    assert "UseSplitLeftCubeFastPath" in aclnn_source
+    assert "constexpr bool KDA_ENABLE_SPLIT_LEFT_CUBE = true;" in aclnn_source
+    assert "UseRow3MixedRollback" in aclnn_source
+    assert re.search(
+        r"UseRow3MixedRollback\(p\).*?nullptr, nullptr, nullptr, 4,",
+        aclnn_source,
+        re.DOTALL,
+    ), "one constant must restore the proven key13 stage-4 launch"
+    assert aclnn_source.count("stageA, stageB, nullptr, 2") == 1
+    assert aclnn_source.count("nullptr, nullptr, stageC, 3") == 1
+    assert "KDA_STAGE4_TILING_KEY = KDA_ROW3_BATCHED_GATE_TILING_KEY" in tiling_source
 
 
 @pytest.mark.parametrize("kdim", [15, 17, 257])
