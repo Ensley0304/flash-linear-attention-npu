@@ -98,6 +98,10 @@ key15 将 previous-left、diagonal-left、diagonal-right 和 future-right 四类
 六次块对角 FP32 单 tile `TileMmadTla`。六个 contraction 的最大 M/N/K 为 `128/128/96`，
 统一使用一个 `128x128x128` 容量的 L1/L0 buffer，不进入 BlockMmad 多层循环。MMAD 与
 Fixpipe copyout 均显式使用 `unitFlag=0b11`，并以 `M_FIX/FIX_M` 闭合每次 L0C 生命周期。
+
+key17 的首版复用 key15 `DirectMmad` 后在 A2 触发 L0B 同址读写冲突。当前
+key17 改用与已验证 key10 相同的 `BlockMmadTla<MmadPingpong>` 生命周期管理；
+计算映射、FP32 输入输出与 key13 回退路径不变。
 AIV 只负责 A/B 打包、safe gate 内外因子、`db/dg` 和输出累加。
 每个逻辑 AIC 复用一份 600 KiB workspace，20 核约 12 MiB；两个 AIV lane 按 `{0,3}` 与 `{1,2}`
 分配 row block，并继续使用一代 ready/done 反转 flag。该版本不启用 double buffer。

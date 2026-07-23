@@ -1199,28 +1199,37 @@ public:
 
     __aicore__ inline void ProcessSlot(uint64_t task)
     {
-        Catlass::Arch::Resource<ArchTag> resource;
-        DirectMmad directMmad(resource);
         const uint64_t aSlotBase = task * LEFT_A_ELEMENTS;
         const uint64_t bSlotBase = task * LEFT_B_ELEMENTS;
         const uint64_t cSlotBase = task * LEFT_C_ELEMENTS;
-        Run(directMmad, aSlotBase, bSlotBase, cSlotBase,
+        Run(aSlotBase, bSlotBase, cSlotBase,
             LEFT_A_PREV_OFFSET, LEFT_B_PREV_OFFSET, LEFT_C_PREV_OFFSET,
             A_LEFT_PREV_M, A_LEFT_PREV_K);
-        Run(directMmad, aSlotBase, bSlotBase, cSlotBase,
+        Run(aSlotBase, bSlotBase, cSlotBase,
             LEFT_A_DIAG_OFFSET, LEFT_B_DIAG_OFFSET, LEFT_C_DIAG_OFFSET,
             A_LEFT_DIAG_M, A_LEFT_DIAG_K);
     }
 
 private:
-    template <typename Mmad>
     __aicore__ inline void Run(
-        Mmad &mmad, uint64_t aSlotBase, uint64_t bSlotBase, uint64_t cSlotBase,
+        uint64_t aSlotBase, uint64_t bSlotBase, uint64_t cSlotBase,
         uint32_t aOffset, uint32_t bOffset, uint32_t cOffset,
         uint32_t m, uint32_t k)
     {
         using Element = float;
         using Layout = Catlass::layout::RowMajor;
+        using DispatchPolicy =
+            Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
+        static_assert(!DispatchPolicy::USE_HF32_MODE,
+                      "split left-Cube must keep IEEE FP32 MMAD");
+        using TileShape =
+            tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+            ArchTag, Element, Layout, Element, Layout, Element, Layout>;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
+            DispatchPolicy, TileShape, TileShape,
+            Element, Element, Element, void, TileCopy>;
+
         auto layoutA = tla::MakeLayout<Element, Layout>(m, k);
         auto layoutB = tla::MakeLayout<Element, Layout>(k, HEAD_DIM);
         auto layoutC = tla::MakeLayout<Element, Layout>(m, HEAD_DIM);
@@ -1237,7 +1246,12 @@ private:
                               tla::MakeShape(shape.k(), shape.n()));
         auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0),
                               tla::MakeShape(shape.m(), shape.n()));
-        mmad(blockA, blockB, blockC, shape);
+        Catlass::Arch::Resource<ArchTag> resource;
+        {
+            BlockMmad blockMmad(resource);
+            blockMmad(blockA, blockB, blockC, shape);
+        }
+        PipeBarrier<PIPE_ALL>();
     }
 
 private:

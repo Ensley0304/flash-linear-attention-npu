@@ -118,6 +118,11 @@ ready 使用 `0x2` 汇合两个 AIV 子核，确保 AIV0 完成 A/B 的 GM 写�
 `matmul::clearWorkspace` 提供声明；实际矩阵收缩使用 CATLASS 单 tile `TileMmadTla`，不启动
 Matmul API server。key15 的六个 FP32 contraction 均落入单个 `128x128x128` tile，MMAD 与
 Fixpipe copyout 显式使用 `unitFlag=0b11`，并以 `M_FIX/FIX_M` 事件闭合 L0C 生命周期。
+
+split left-Cube 的 key17 使用仓内 key10 已上卡验证的
+`BlockMmadTla<MmadPingpong>` 执行两次 FP32 GEMM，由 CATLASS 管理 L1/L0
+buffer 生命周期，避免把 key15 尚未验证通过的手写 `DirectMmad` 事件协议带入
+默认 fast path。
 每个 `(chunk,HV)` workspace slot 为 46 KiB：A 6 KiB、B 24 KiB、C 16 KiB，全部 512B 对齐；
 目标 shape 的 4096 个 slot 共约 184 MiB。当前版本使用唯一 slot，不做复用或双 buffer，先保证
 无覆盖、无死锁；通过 NPU 门禁后再评估 ring workspace 和更深的 contraction 覆盖。
