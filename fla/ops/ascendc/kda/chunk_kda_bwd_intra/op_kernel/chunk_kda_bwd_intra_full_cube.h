@@ -1190,6 +1190,45 @@ public:
         }
     }
 
+    // Isolate the six BlockMmad calls that make up left_prev.  The semantic
+    // prefix above intentionally keeps each mathematical contraction intact;
+    // this lower-level probe distinguishes a failing first tile from state
+    // corruption caused by a later call reusing the same Cube resources.
+    __aicore__ inline void ProcessLeftPrevTilePrefix(
+        uint64_t slotBase, uint32_t tileCount)
+    {
+        if (tileCount >= 1) {
+            RunBlock(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                     C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                     0, 0, 0, 32, 16);
+        }
+        if (tileCount >= 2) {
+            RunBlock(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                     C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                     0, 0, FEATURE_TILE, 32, 16);
+        }
+        if (tileCount >= 3) {
+            RunBlock(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                     C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                     32, 16, 0, 32, 32);
+        }
+        if (tileCount >= 4) {
+            RunBlock(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                     C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                     32, 16, FEATURE_TILE, 32, 32);
+        }
+        if (tileCount >= 5) {
+            RunBlock(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                     C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                     64, 48, 0, 32, 48);
+        }
+        if (tileCount >= 6) {
+            RunBlock(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                     C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                     64, 48, FEATURE_TILE, 32, 48);
+        }
+    }
+
 private:
     __aicore__ inline void RunRightFuture(
         uint64_t slotBase, uint32_t aOffset,
@@ -1534,6 +1573,16 @@ public:
         cube.Init(workspace_);
         Catlass::Arch::CrossCoreWaitFlag(readyFlag_);
         cube.ProcessSlotPrefix(SlotBase(0, 0), contractionCount);
+    }
+
+    __aicore__ inline void ProcessDiagnosticTileAic(uint32_t tileCount)
+    {
+        // Use the same normally-returning completion protocol as the semantic
+        // probe, but stop after an exact number of left_prev BlockMmad calls.
+        AicKernel cube;
+        cube.Init(workspace_);
+        Catlass::Arch::CrossCoreWaitFlag(readyFlag_);
+        cube.ProcessLeftPrevTilePrefix(SlotBase(0, 0), tileCount);
     }
 
     __aicore__ inline void ProcessAiv(

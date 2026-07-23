@@ -2049,10 +2049,16 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_intra(
         }
         KdaFullCube::MixedKernel op;
         op.Init(userWS, tilingData);
-        const uint32_t contractionCount =
-            static_cast<uint32_t>(tilingData.stage - 6);
         if ASCEND_IS_AIC {
-            op.ProcessDiagnosticAic(contractionCount);
+            if (tilingData.stage >= 13) {
+                const uint32_t tileCount =
+                    static_cast<uint32_t>(tilingData.stage - 13);
+                op.ProcessDiagnosticTileAic(tileCount);
+            } else {
+                const uint32_t contractionCount =
+                    static_cast<uint32_t>(tilingData.stage - 6);
+                op.ProcessDiagnosticAic(contractionCount);
+            }
         }
         if ASCEND_IS_AIV {
             op.ProcessDiagnosticAiv(

@@ -156,6 +156,16 @@ int64_t GetPr190DiagnosticStage(const Params &p)
     if (!isEndpointShape) {
         return 5;
     }
+    const char *rawTiles = std::getenv("FLA_NPU_KDA_DIAG_TILES");
+    if (rawTiles != nullptr && rawTiles[0] != '\0') {
+        char *end = nullptr;
+        const long tileCount = std::strtol(rawTiles, &end, 10);
+        if (end != rawTiles && end != nullptr && end[0] == '\0' &&
+            tileCount >= 0 && tileCount <= 6) {
+            return 13 + static_cast<int64_t>(tileCount);
+        }
+        return 5;
+    }
     const char *raw = std::getenv("FLA_NPU_KDA_DIAG_MATMULS");
     if (raw == nullptr || raw[0] == '\0') {
         return 5;

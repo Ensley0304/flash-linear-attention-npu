@@ -233,10 +233,15 @@ def test_chunk_kda_bwd_intra_safe_gate_endpoint_reassociation_guard():
 
 
 def test_chunk_kda_bwd_intra_pr190_cube_prefix_diagnostic():
-    """Complete after the requested key19 Cube prefix without consuming C."""
-    raw_level = os.environ.get("FLA_NPU_KDA_DIAG_MATMULS")
+    """Complete after a semantic or left_prev tile prefix without consuming C."""
+    raw_level = os.environ.get("FLA_NPU_KDA_DIAG_TILES")
     if raw_level is None:
-        pytest.skip("set FLA_NPU_KDA_DIAG_MATMULS=0..6 to run the prefix probe")
+        raw_level = os.environ.get("FLA_NPU_KDA_DIAG_MATMULS")
+    if raw_level is None:
+        pytest.skip(
+            "set FLA_NPU_KDA_DIAG_MATMULS=0..6 or "
+            "FLA_NPU_KDA_DIAG_TILES=0..6 to run the prefix probe"
+        )
     level = int(raw_level)
     assert 0 <= level <= 6
     inputs, _ = _safe_gate_endpoint_reassociation_case()
@@ -685,9 +690,21 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
     assert "ProcessSlotPrefix(slotBase, 6)" in aic_body
     for contraction_count in range(1, 7):
         assert f"contractionCount >= {contraction_count}" in aic_body
+        assert f"tileCount >= {contraction_count}" in aic_body
+    for tile_call in (
+        "0, 0, 0, 32, 16",
+        "0, 0, FEATURE_TILE, 32, 16",
+        "32, 16, 0, 32, 32",
+        "32, 16, FEATURE_TILE, 32, 32",
+        "64, 48, 0, 32, 48",
+        "64, 48, FEATURE_TILE, 32, 48",
+    ):
+        assert tile_call in aic_body
     assert "ProcessDiagnosticAic" in mixed_body
+    assert "ProcessDiagnosticTileAic" in mixed_body
     assert "ProcessDiagnosticAiv" in mixed_body
     assert "ProcessSlotPrefix(SlotBase(0, 0), contractionCount)" in mixed_body
+    assert "ProcessLeftPrevTilePrefix(SlotBase(0, 0), tileCount)" in mixed_body
     assert "CrossCoreWaitFlag(readyFlag_)" in mixed_body
     diagnostic_aiv = re.search(
         r"ProcessDiagnosticAiv\((?P<body>.*?)\n    \}",
@@ -701,7 +718,10 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
     assert "UsePr190MixCubeFastPath" in aclnn_source
     assert "constexpr bool KDA_ENABLE_PR190_MIX_CUBE = true;" in aclnn_source
     assert 'std::getenv("FLA_NPU_KDA_DIAG_MATMULS")' in aclnn_source
+    assert 'std::getenv("FLA_NPU_KDA_DIAG_TILES")' in aclnn_source
     assert "contractionCount < 0 || contractionCount > 6" in aclnn_source
+    assert "tileCount >= 0 && tileCount <= 6" in aclnn_source
+    assert "stage < 0 || stage > 19" in tiling_source
     assert "UseRow3MixedRollback" in aclnn_source
     assert re.search(
         r"UseRow3MixedRollback\(p\).*?nullptr, nullptr, nullptr, 4,",

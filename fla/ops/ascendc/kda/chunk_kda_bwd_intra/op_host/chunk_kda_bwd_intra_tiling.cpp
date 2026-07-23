@@ -106,7 +106,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
     const int64_t stage = *attrs->GetAttrPointer<int64_t>(ATTR_STAGE);
     if ((chunkSize != 64 && chunkSize != 128) || k < 16 || k > 256 || (k % 16) != 0 ||
         h <= 0 || hv < h || (hv % h) != 0 || h > 128 || hv > 128 || totalChunks <= 0 ||
-        stage < 0 || stage > 12) {
+        stage < 0 || stage > 19) {
         return ge::GRAPH_FAILED;
     }
 
