@@ -120,8 +120,12 @@ using ArchTag = Catlass::Arch::AtlasA2;
 using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
 static_assert(!DispatchPolicy::USE_HF32_MODE,
               "ChunkKdaBwdIntra full Cube must use IEEE FP32 mode");
-using L1TileShape = tla::Shape<tla::Int<128>, tla::Int<128>, tla::Int<128>>;
-using L0TileShape = tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+// This CATLASS MmadPingpong implementation requires identical L1/L0 M/N
+// basic blocks.  Keep the complete tile shape identical to the already-proven
+// FP32 rowBlock3 Cube configuration so later tuning cannot silently violate
+// that compile-time contract.
+using L1TileShape = tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+using L0TileShape = L1TileShape;
 
 enum FeatureKind : uint32_t {
     FEATURE_K = 0,

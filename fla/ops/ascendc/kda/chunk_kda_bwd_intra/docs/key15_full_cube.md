@@ -41,7 +41,7 @@ is introduced.
 |---|---|
 | Architecture | `AtlasA2` (`Ascend950` under arch310) |
 | Dispatch policy | `MmadPingpong<ArchTag, false, false>` |
-| L1/L0 tiles | 128x128x128 / 64x64x64 |
+| L1/L0 tiles | 64x64x64 / 64x64x64 (required equal M/N) |
 | A/B/C | FP32 row-major |
 | Mainloop | direct `BlockMmadTla`, six calls |
 | Epilogue | none; AIV consumes FP32 C |

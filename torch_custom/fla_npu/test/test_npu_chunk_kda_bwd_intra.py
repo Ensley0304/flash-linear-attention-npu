@@ -564,6 +564,9 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
     assert "logicalCore * SLOT_ELEMENTS" in cube_source
     assert cube_source.count("Run(blockMmad,") == 6
     assert "MmadPingpong<ArchTag, false, false>" in cube_source
+    assert "using L0TileShape = L1TileShape;" in cube_source, (
+        "CATLASS MmadPingpong requires equal L1/L0 M/N basic blocks"
+    )
     assert "!DispatchPolicy::USE_HF32_MODE" in cube_source
     assert "OuterAccumulate" not in cube_source
     assert "lane == 0 ? 0 : 1" in cube_source
