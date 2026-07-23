@@ -121,10 +121,21 @@ using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
 static_assert(!DispatchPolicy::USE_HF32_MODE,
               "ChunkKdaBwdIntra full Cube must use IEEE FP32 mode");
 // This CATLASS MmadPingpong implementation requires identical L1/L0 M/N
-// basic blocks.  Keep the complete tile shape identical to the already-proven
-// FP32 rowBlock3 Cube configuration so later tuning cannot silently violate
-// that compile-time contract.
-using L1TileShape = tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+// basic blocks and only performs its outer L1 loop along K.  M/N therefore
+// have to cover every full-Cube operand, while K can remain tiled at 64.
+constexpr uint32_t CUBE_TILE_M = 128;
+constexpr uint32_t CUBE_TILE_N = 128;
+constexpr uint32_t CUBE_TILE_K = 64;
+static_assert(CUBE_TILE_M >= A_LEFT_PREV_M &&
+              CUBE_TILE_M >= A_LEFT_DIAG_M &&
+              CUBE_TILE_M >= A_RIGHT_FUTURE_M &&
+              CUBE_TILE_M >= A_RIGHT_DIAG_M,
+              "KDA full-Cube L1 M tile must cover every contraction");
+static_assert(CUBE_TILE_N >= HEAD_DIM,
+              "KDA full-Cube L1 N tile must cover the complete head dimension");
+using L1TileShape =
+    tla::Shape<tla::Int<CUBE_TILE_M>, tla::Int<CUBE_TILE_N>,
+               tla::Int<CUBE_TILE_K>>;
 using L0TileShape = L1TileShape;
 
 enum FeatureKind : uint32_t {

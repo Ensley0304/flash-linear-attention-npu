@@ -564,6 +564,14 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
     assert "logicalCore * SLOT_ELEMENTS" in cube_source
     assert cube_source.count("Run(blockMmad,") == 6
     assert "MmadPingpong<ArchTag, false, false>" in cube_source
+    assert "constexpr uint32_t CUBE_TILE_M = 128;" in cube_source
+    assert "constexpr uint32_t CUBE_TILE_N = 128;" in cube_source
+    assert "constexpr uint32_t CUBE_TILE_K = 64;" in cube_source
+    assert "CUBE_TILE_M >= A_LEFT_PREV_M" in cube_source
+    assert "CUBE_TILE_M >= A_LEFT_DIAG_M" in cube_source
+    assert "CUBE_TILE_M >= A_RIGHT_FUTURE_M" in cube_source
+    assert "CUBE_TILE_M >= A_RIGHT_DIAG_M" in cube_source
+    assert "CUBE_TILE_N >= HEAD_DIM" in cube_source
     assert "using L0TileShape = L1TileShape;" in cube_source, (
         "CATLASS MmadPingpong requires equal L1/L0 M/N basic blocks"
     )
