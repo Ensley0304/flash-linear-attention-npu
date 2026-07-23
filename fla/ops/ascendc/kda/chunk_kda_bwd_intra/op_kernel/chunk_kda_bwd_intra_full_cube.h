@@ -1148,44 +1148,85 @@ public:
         uint64_t slotBase, uint32_t contractionCount)
     {
         if (contractionCount >= 1) {
-            Run(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
-                C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K);
+            RunFeaturePair(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                           C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                           0, 0, 32, 16);
+            RunFeaturePair(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                           C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                           32, 16, 32, 32);
+            RunFeaturePair(slotBase, A_LEFT_PREV_OFFSET, B_LEFT_PREV_OFFSET,
+                           C_LEFT_PREV_OFFSET, A_LEFT_PREV_M, A_LEFT_PREV_K,
+                           64, 48, 32, 48);
         }
         if (contractionCount >= 2) {
-            Run(slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
-                C_LEFT_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K);
+            for (uint32_t block = 0; block < CHUNK / BLOCK; ++block) {
+                RunFeaturePair(
+                    slotBase, A_LEFT_DIAG_OFFSET, B_LEFT_DIAG_OFFSET,
+                    C_LEFT_DIAG_OFFSET, A_LEFT_DIAG_M, A_LEFT_DIAG_K,
+                    block * 2 * BLOCK, block * BLOCK, 2 * BLOCK, BLOCK);
+            }
         }
         if (contractionCount >= 3) {
-            Run(slotBase, A_RIGHT_FUTURE_Q_OFFSET,
-                B_RIGHT_FUTURE_Q_OFFSET, C_RIGHT_FUTURE_Q_OFFSET,
-                A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
+            RunRightFuture(
+                slotBase, A_RIGHT_FUTURE_Q_OFFSET,
+                B_RIGHT_FUTURE_Q_OFFSET, C_RIGHT_FUTURE_Q_OFFSET);
         }
         if (contractionCount >= 4) {
-            Run(slotBase, A_RIGHT_FUTURE_K_OFFSET,
-                B_RIGHT_FUTURE_K_OFFSET, C_RIGHT_FUTURE_K_OFFSET,
-                A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K);
+            RunRightFuture(
+                slotBase, A_RIGHT_FUTURE_K_OFFSET,
+                B_RIGHT_FUTURE_K_OFFSET, C_RIGHT_FUTURE_K_OFFSET);
         }
         if (contractionCount >= 5) {
-            Run(slotBase, A_RIGHT_DIAG_Q_OFFSET,
-                B_RIGHT_DIAG_Q_OFFSET, C_RIGHT_DIAG_Q_OFFSET,
-                A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
+            RunFeaturePair(
+                slotBase, A_RIGHT_DIAG_Q_OFFSET, B_RIGHT_DIAG_Q_OFFSET,
+                C_RIGHT_DIAG_Q_OFFSET, A_RIGHT_DIAG_M, A_RIGHT_DIAG_K,
+                0, 0, A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
         }
         if (contractionCount >= 6) {
-            Run(slotBase, A_RIGHT_DIAG_K_OFFSET,
-                B_RIGHT_DIAG_K_OFFSET, C_RIGHT_DIAG_K_OFFSET,
-                A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
+            RunFeaturePair(
+                slotBase, A_RIGHT_DIAG_K_OFFSET, B_RIGHT_DIAG_K_OFFSET,
+                C_RIGHT_DIAG_K_OFFSET, A_RIGHT_DIAG_M, A_RIGHT_DIAG_K,
+                0, 0, A_RIGHT_DIAG_M, A_RIGHT_DIAG_K);
         }
     }
 
 private:
-    __aicore__ inline void Run(
+    __aicore__ inline void RunRightFuture(
         uint64_t slotBase, uint32_t aOffset,
-        uint32_t bOffset, uint32_t cOffset, uint32_t m, uint32_t k)
+        uint32_t bOffset, uint32_t cOffset)
+    {
+        RunFeaturePair(
+            slotBase, aOffset, bOffset, cOffset,
+            A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K, 0, 0, 16, 48);
+        RunFeaturePair(
+            slotBase, aOffset, bOffset, cOffset,
+            A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K, 16, 48, 16, 32);
+        RunFeaturePair(
+            slotBase, aOffset, bOffset, cOffset,
+            A_RIGHT_FUTURE_M, A_RIGHT_FUTURE_K, 32, 80, 16, 16);
+    }
+
+    __aicore__ inline void RunFeaturePair(
+        uint64_t slotBase, uint32_t aOffset,
+        uint32_t bOffset, uint32_t cOffset, uint32_t fullM, uint32_t fullK,
+        uint32_t rowOffset, uint32_t kOffset, uint32_t m, uint32_t k)
+    {
+        RunBlock(slotBase, aOffset, bOffset, cOffset, fullM, fullK,
+                 rowOffset, kOffset, 0, m, k);
+        RunBlock(slotBase, aOffset, bOffset, cOffset, fullM, fullK,
+                 rowOffset, kOffset, FEATURE_TILE, m, k);
+    }
+
+    __aicore__ inline void RunBlock(
+        uint64_t slotBase, uint32_t aOffset,
+        uint32_t bOffset, uint32_t cOffset, uint32_t fullM, uint32_t fullK,
+        uint32_t rowOffset, uint32_t kOffset, uint32_t nOffset,
+        uint32_t m, uint32_t k)
     {
         using Element = float;
         using Layout = Catlass::layout::RowMajor;
         using DispatchPolicy =
-            Catlass::Gemm::MmadPingpong<ArchTag, true, false>;
+            Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
         static_assert(!DispatchPolicy::USE_HF32_MODE,
                       "KDA full-Cube path must keep IEEE FP32 MMAD");
         using TileShape =
@@ -1195,21 +1236,21 @@ private:
         using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
             DispatchPolicy, TileShape, TileShape,
             Element, Element, Element, void, TileCopy>;
-        auto layoutA = tla::MakeLayout<Element, Layout>(m, k);
-        auto layoutB = tla::MakeLayout<Element, Layout>(k, HEAD_DIM);
-        auto layoutC = tla::MakeLayout<Element, Layout>(m, HEAD_DIM);
+        auto layoutA = tla::MakeLayout<Element, Layout>(fullM, fullK);
+        auto layoutB = tla::MakeLayout<Element, Layout>(fullK, HEAD_DIM);
+        auto layoutC = tla::MakeLayout<Element, Layout>(fullM, HEAD_DIM);
         auto tensorA = tla::MakeTensor(workspace_[slotBase + aOffset], layoutA,
                                        Catlass::Arch::PositionGM{});
         auto tensorB = tla::MakeTensor(workspace_[slotBase + bOffset], layoutB,
                                        Catlass::Arch::PositionGM{});
         auto tensorC = tla::MakeTensor(workspace_[slotBase + cOffset], layoutC,
                                        Catlass::Arch::PositionGM{});
-        Catlass::GemmCoord shape{m, HEAD_DIM, k};
-        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+        Catlass::GemmCoord shape{m, FEATURE_TILE, k};
+        auto blockA = GetTile(tensorA, tla::MakeCoord(rowOffset, kOffset),
                               tla::MakeShape(shape.m(), shape.k()));
-        auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0),
+        auto blockB = GetTile(tensorB, tla::MakeCoord(kOffset, nOffset),
                               tla::MakeShape(shape.k(), shape.n()));
-        auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0),
+        auto blockC = GetTile(tensorC, tla::MakeCoord(rowOffset, nOffset),
                               tla::MakeShape(shape.m(), shape.n()));
         Catlass::Arch::Resource<ArchTag> resource;
         BlockMmad blockMmad(resource);

@@ -600,7 +600,7 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
 
 
 def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
-    """The full-Cube path must reuse the proven PR190/KDA-forward structure."""
+    """PR190 scheduling must use only the locally proven Cube tile envelope."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -614,17 +614,6 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
     aclnn_source = (
         op_root / "op_host" / "op_api" / "aclnn_chunk_kda_bwd_intra.cpp"
     ).read_text(encoding="utf-8")
-    kda_forward_source = (
-        ROOT
-        / "fla"
-        / "ops"
-        / "ascendc"
-        / "kda"
-        / "chunk_kda_fwd"
-        / "op_kernel"
-        / "chunk_kda_fwd.cpp"
-    ).read_text(encoding="utf-8")
-
     expected = {
         16: "KERNEL_TYPE_AIV_ONLY",
         17: "KERNEL_TYPE_AIC_ONLY",
@@ -679,13 +668,20 @@ def test_chunk_kda_bwd_intra_pr190_mix_cube_source_contract():
         cube_source,
         re.DOTALL,
     ).group("body")
-    assert "MmadPingpong<ArchTag, true, false>" in aic_body
+    assert "MmadPingpong<ArchTag, false, false>" in aic_body
     assert "Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>" in aic_body
     assert "BlockMmadTla<" in aic_body
     assert "DirectMmad" not in aic_body
     assert "USE_HF32_MODE" in aic_body
-    assert "MmadPingpong<KdaArchTag, true, false>" in kda_forward_source
-    assert "KdaSolveL1TileShape = tla::Shape<_64, _64, _64>" in kda_forward_source
+    assert (
+        "KdaRow3DispatchPolicy = "
+        "Catlass::Gemm::MmadPingpong<KdaRow3ArchTag, false, false>"
+    ) in kernel_source
+    assert "Catlass::GemmCoord shape{m, FEATURE_TILE, k}" in aic_body
+    assert "RunFeaturePair" in aic_body
+    assert "RunRightFuture" in aic_body
+    assert "A_LEFT_PREV_M, A_LEFT_PREV_K,\n                           64, 48, 32, 48" in aic_body
+    assert "A_RIGHT_DIAG_M, A_RIGHT_DIAG_K,\n                0, 0, A_RIGHT_DIAG_M" in aic_body
     assert "ProcessSlotPrefix(slotBase, 6)" in aic_body
     for contraction_count in range(1, 7):
         assert f"contractionCount >= {contraction_count}" in aic_body
