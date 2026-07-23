@@ -528,7 +528,7 @@ def test_chunk_kda_bwd_intra_rowblock3_cube_source_contract():
 
 
 def test_chunk_kda_bwd_intra_full_cube_source_contract():
-    """Keep key15 bounded, IEEE-FP32, unit-flag complete, and easy to roll back."""
+    """Keep key15 isolated while the proven key13 path remains the default."""
     op_root = ROOT / "fla" / "ops" / "ascendc" / "kda" / "chunk_kda_bwd_intra"
     kernel_source = (op_root / "op_kernel" / "chunk_kda_bwd_intra.cpp").read_text(
         encoding="utf-8"
@@ -542,9 +542,10 @@ def test_chunk_kda_bwd_intra_full_cube_source_contract():
 
     assert "constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;" in kernel_source
     assert (
-        "constexpr uint64_t KDA_STAGE4_TILING_KEY = KDA_FULL_CUBE_TILING_KEY;"
+        "constexpr uint64_t KDA_STAGE4_TILING_KEY = "
+        "KDA_ROW3_BATCHED_GATE_TILING_KEY;"
         in tiling_source
-    )
+    ), "the timed-out key15 experiment must not be the public stage-4 dispatch"
     assert "else if (TILING_KEY_IS(13))" in kernel_source, (
         "the proven key13 implementation must remain compiled as the fallback"
     )

@@ -9,11 +9,12 @@ Key15 is restricted to the proven stage-4 eligibility:
 - dense `B=1`, `H=HV`
 - `BT=64`, `K=128`, complete chunks
 
-It does not change the public API or the unsafe/general dispatches. Key13
-remains compiled and is the immediate rollback. Changing
-`KDA_STAGE4_TILING_KEY` from `KDA_FULL_CUBE_TILING_KEY` to
-`KDA_ROW3_BATCHED_GATE_TILING_KEY` restores both the proven key13 kernel and
-its original task-sized workspace formula.
+It does not change the public API or the unsafe/general dispatches. Key13 is
+the active stage-4 path and the proven rollback. Key15 remains compiled but is
+quarantined after the endpoint reassociation guard timed out on a clean
+isolated wheel. Changing `KDA_STAGE4_TILING_KEY` back to
+`KDA_FULL_CUBE_TILING_KEY` is forbidden until key15 has a validated Cube
+completion protocol and passes the endpoint and repeated-launch gates.
 
 ## Contraction layout
 
@@ -93,9 +94,9 @@ Measured baselines for
 
 Key15 is not considered accepted until a clean wheel passes precision and
 repeated-launch gates and same-card profiling shows a material gain. The
-initial performance target is below 22 ms kernel duration. A regression,
-timeout, or precision failure requires switching the single stage-4 constant
-back to key13 before further optimization.
+initial performance target is below 22 ms kernel duration. The observed
+endpoint timeout has therefore returned the single stage-4 constant to key13;
+further key15 work must remain isolated until the runtime gates pass.
 
 ## Validation gate
 

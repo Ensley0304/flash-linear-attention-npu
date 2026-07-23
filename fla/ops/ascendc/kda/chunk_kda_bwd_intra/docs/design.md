@@ -101,7 +101,8 @@ block-wise 路径的 `exp2(g[48:64]-g[48])` 外层缩放，再继续 diagonal、
 
 实验 fastpath 只允许 `safe_gate=true`、BF16 q/k、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 且 workspace 不超过 256 MiB、chunk 满 64 token；其余 dtype、BT、K、GVA、varlen、tail 和 unsafe
-case 全部走稳定 key7/legacy 回退。host 对目标 shape 登记一次 key15，key13/key12 保留为逐级回退；设备侧均使用
+case 全部走稳定 key7/legacy 回退。host 当前对目标 shape 分派已验证的 key13，key15 仅保留为
+未启用的独立实验 key；key13/key12 保留为逐级回退。设备侧实验 MIX 路径均使用
 `KERNEL_TYPE_MIX_AIC_1_2`：一个逻辑 AIC 与两个 AIV 子核处理相同的 `(chunk,HV)` slot。
 
 ```text

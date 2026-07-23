@@ -102,8 +102,9 @@ AIV 只负责 A/B 打包、safe gate 内外因子、`db/dg` 和输出累加。
 每个逻辑 AIC 复用一份 600 KiB workspace，20 核约 12 MiB；两个 AIV lane 按 `{0,3}` 与 `{1,2}`
 分配 row block，并继续使用一代 ready/done 反转 flag。该版本不启用 double buffer。
 
-key13 仍是立即回退。key15 的首轮验收门槛是完整精度和 100 次 repeated launch 均通过，且目标 shape
-kernel duration 低于 22 ms；未取得干净 wheel 的同卡 msprof 前，不声明已经获得性能收益。
+clean isolated wheel 的 endpoint guard 已在 key15 上超时，因此 host 已恢复分派 key13，key15
+只保留为隔离实验。重新启用的门槛是 endpoint、完整精度和 100 次 repeated launch 均通过，且目标
+shape kernel duration 低于 22 ms；未取得干净 wheel 的同卡 msprof 前，不声明已经获得性能收益。
 
 建议采集 kernel duration、AIV utilization、MTE2 bandwidth、Vector utilization、各流水 stall 和 task tail。基准至少覆盖 `(BT,K)=(64,128),(128,128)`、FP16/BF16、dense/varlen、`HV/H=1/2/4` 和 safe/unsafe。
 

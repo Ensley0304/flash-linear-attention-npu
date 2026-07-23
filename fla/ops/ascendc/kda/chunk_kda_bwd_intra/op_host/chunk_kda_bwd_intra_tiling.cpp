@@ -38,7 +38,11 @@ constexpr uint64_t KDA_ROW3_MIXED_TILING_KEY = 12;
 constexpr uint64_t KDA_ROW3_BATCHED_GATE_TILING_KEY = 13;
 constexpr uint64_t KDA_ROW3_BATCHED_POST_GATE_TILING_KEY = 14;
 constexpr uint64_t KDA_FULL_CUBE_TILING_KEY = 15;
-constexpr uint64_t KDA_STAGE4_TILING_KEY = KDA_FULL_CUBE_TILING_KEY;
+// Keep the proven key13 path as the public stage-4 dispatch while key15 is
+// rebuilt around a validated Cube completion protocol. Key15 remains
+// compiled as an isolated experiment and can be re-enabled with this single
+// constant only after its endpoint and repeated-launch gates pass.
+constexpr uint64_t KDA_STAGE4_TILING_KEY = KDA_ROW3_BATCHED_GATE_TILING_KEY;
 static_assert(KDA_ROW3_MIXED_TILING_KEY != KDA_ROW3_BATCHED_GATE_TILING_KEY,
               "ChunkKdaBwdIntra MIX fallback and experiment require distinct tiling keys");
 static_assert(KDA_ROW3_BATCHED_GATE_TILING_KEY != KDA_ROW3_BATCHED_POST_GATE_TILING_KEY,

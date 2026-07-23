@@ -10,10 +10,10 @@
 | ABI/layout 静态 smoke | 已通过 | 校验 BNSD 转换、BF16 gate 提升、19 个 aclnn 参数和输出布局恢复 |
 | safe-gate 代数 smoke | 已通过 | 首/中/尾参考点分解在多种 chunk/tail 长度下与直接 causal 公式一致 |
 | 稳定 C++ 结构 smoke | 已通过 | AIV 基线 6 个 key 分支、Alloc/Release 配对与 packed metadata 路径不变 |
-| full-Cube 源码契约 | 本地已通过 | key15 为单 tile `TileMmadTla`、MIX 1:2、六次 FP32 contraction、MMAD/Fixpipe `unitFlag=0b11`、HF32 off、600 KiB/逻辑 AIC；key13/key14 和通用 key7 均保留 |
+| full-Cube 源码隔离契约 | 本地已通过 | key15 仍编译但不再由 host tiling 选择；stage-4 已恢复到通过上板验证的 key13 |
 | patch 卫生 | 已通过 | `git diff --check` 无错误 |
-| CANN host/kernel 编译 | key15 待执行 | key13/key14 已生成并上板；新增 key15 必须重新单算子快速编译 |
-| AscendC NPU 精度 | key15 待执行 | 历史回退路径已完成回归；key15 必须重新完整通过，不能沿用旧 wheel 结论 |
+| CANN host/kernel 编译 | key15 已通过 | clean isolated wheel 已包含两个目标设备对象；运行时 endpoint 门禁仍阻断 key15 |
+| AscendC NPU 精度 | key15 阻断 | clean wheel 的 endpoint guard 超时；key15 重构并通过 endpoint/repeated-launch 前不得重新分派 |
 | Profiling/性能优化 | key14 已采集 | key7 48.660 ms、BK64 key12 32.477 ms、key13 31.034 ms、key14 31.036 ms；key15 待采集，要求每次调用只有一条 MIX KDA 记录 |
 
 ## A2 精度与性能基线（2026-07-21）
@@ -105,11 +105,11 @@ python -m pytest -q torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_intra.py -s
 实验 fastpath 仅面向 `safe_gate=true`、BF16、dense、`B=1`、`H=HV`、`BT=64`、`K=128`
 和满 chunk。源码契约要求 public fastpath 只调用一次 L0，key15 为
 `KERNEL_TYPE_MIX_AIC_1_2`，六组 A/B/C 为 FP32，使用单 tile `TileMmadTla`，HF32 显式关闭，
-且每次 MMAD/Fixpipe 都以 `unitFlag=0b11` 和 `M_FIX/FIX_M` 事件完成闭环；
-L1A/L1B、L0A/L0B 分别使用独立的 operand event，禁止合并释放事件。AIC/AIV 使用相同 logical core/slot
-映射；两个 AIV 子核每 slot 各 set 一次 ready、各 wait 一次 done，AIC 各 wait/set 一次。
+且 key15 必须保留独立实验 key。当前手写 `TileMmadTla` 完成协议未通过 endpoint
+运行时门禁，不能把源码级 event/unitFlag 断言视为协议正确性的证明。AIC/AIV 使用相同
+logical core/slot 映射；新的 Cube 执行器应优先复用仓内已验证组件，并逐级通过运行时门禁。
 
-稳定 key13 是目标 shape 的立即 fallback，key7 是通用 fallback。key15 workspace 为
+稳定 key13 是目标 shape 的当前默认路径，key7 是通用 fallback。key15 workspace 为
 `usedCoreNum * 600 KiB`，20 个逻辑 AIC 约 12 MiB；当前不启用 double buffer。建议按以下顺序放行：
 
 1. 源码契约和 Python collect 通过；
