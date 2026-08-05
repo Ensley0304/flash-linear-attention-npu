@@ -279,18 +279,22 @@ private:
             resource.l1Buf.template GetBufferByByte<Element>(kUpperL1AOffset);
         AscendC::LocalTensor<Element> upperL1B =
             resource.l1Buf.template GetBufferByByte<Element>(kUpperL1BOffset);
-        auto lowerL1TensorA = tla::MakeTensor(
-            lowerL1A, tla::MakeLayout<Element, LowerL1ALayout>(lowerRows, prefix),
-            Catlass::Arch::PositionL1{});
-        auto lowerL1TensorB = tla::MakeTensor(
-            lowerL1B, tla::MakeLayout<Element, LowerL1BLayout>(prefix, K_DIM),
-            Catlass::Arch::PositionL1{});
-        auto upperL1TensorA = tla::MakeTensor(
-            upperL1A, tla::MakeLayout<Element, UpperL1ALayout>(upperRows, upperReduction),
-            Catlass::Arch::PositionL1{});
-        auto upperL1TensorB = tla::MakeTensor(
-            upperL1B, tla::MakeLayout<Element, UpperL1BLayout>(upperReduction, K_DIM),
-            Catlass::Arch::PositionL1{});
+        auto lowerL1BaseA = tla::MakeTensor(
+            lowerL1A, kLowerL1ALayoutSpec, Catlass::Arch::PositionL1{});
+        auto lowerL1BaseB = tla::MakeTensor(
+            lowerL1B, kLowerL1BLayoutSpec, Catlass::Arch::PositionL1{});
+        auto upperL1BaseA = tla::MakeTensor(
+            upperL1A, kUpperL1ALayoutSpec, Catlass::Arch::PositionL1{});
+        auto upperL1BaseB = tla::MakeTensor(
+            upperL1B, kUpperL1BLayoutSpec, Catlass::Arch::PositionL1{});
+        auto lowerL1TensorA = tla::GetTile(
+            lowerL1BaseA, tla::MakeCoord(0U, 0U), tla::MakeShape(lowerRows, prefix));
+        auto lowerL1TensorB = tla::GetTile(
+            lowerL1BaseB, tla::MakeCoord(0U, 0U), tla::MakeShape(prefix, K_DIM));
+        auto upperL1TensorA = tla::GetTile(
+            upperL1BaseA, tla::MakeCoord(0U, 0U), tla::MakeShape(upperRows, upperReduction));
+        auto upperL1TensorB = tla::GetTile(
+            upperL1BaseB, tla::MakeCoord(0U, 0U), tla::MakeShape(upperReduction, K_DIM));
 
         CopyLowerGmToL1A<decltype(lowerTensorA)> copyLowerGmToL1A;
         CopyLowerGmToL1B<decltype(lowerTensorB)> copyLowerGmToL1B;
@@ -438,6 +442,14 @@ private:
     static constexpr uint32_t kUpperL1BOffset = kUpperL1AOffset + kUpperL1ABytes;
     static constexpr uint32_t kL1UsedBytes = kUpperL1BOffset + kUpperL1BBytes;
     static constexpr uint32_t kL1CapacityBytes = 512 * 1024;
+    static constexpr auto kLowerL1ALayoutSpec = tla::MakeLayout<Element, LowerL1ALayout>(
+        tla::Int<kLowerRows>{}, tla::Int<kLowerReduction>{});
+    static constexpr auto kLowerL1BLayoutSpec = tla::MakeLayout<Element, LowerL1BLayout>(
+        tla::Int<kLowerReduction>{}, tla::Int<K_DIM>{});
+    static constexpr auto kUpperL1ALayoutSpec = tla::MakeLayout<Element, UpperL1ALayout>(
+        tla::Int<kUpperRows>{}, tla::Int<kUpperReduction>{});
+    static constexpr auto kUpperL1BLayoutSpec = tla::MakeLayout<Element, UpperL1BLayout>(
+        tla::Int<kUpperReduction>{}, tla::Int<K_DIM>{});
 
     static constexpr uint32_t kLowerL0ABytes = kLowerL1ABytes;
     static constexpr uint32_t kLowerL0BBytes = kLowerL1BBytes;
