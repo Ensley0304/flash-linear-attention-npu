@@ -339,12 +339,6 @@ private:
         copyLowerL1ToL0B(lowerL0TensorB, lowerL1TensorB);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kLowerEvent);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kLowerEvent);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kUpperEvent);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kUpperEvent);
-        copyUpperL1ToL0A(upperL0TensorA, upperL1TensorA);
-        copyUpperL1ToL0B(upperL0TensorB, upperL1TensorB);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kUpperEvent);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kUpperEvent);
 
         using Accumulator = typename LowerCopy::ElementAccumulator;
         AscendC::LocalTensor<Accumulator> lowerL0C =
@@ -363,18 +357,29 @@ private:
                   lowerRows, K_DIM, prefix, true, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kLowerEvent);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kLowerEvent);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kUpperEvent);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kUpperEvent);
-        upperMmad(upperL0CTensor, upperL0TensorA, upperL0TensorB,
-                  upperRows, K_DIM, upperReduction, true, 0b11);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kUpperEvent);
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kUpperEvent);
+
+        // Lower and Upper reuse the same L0A/L0B storage. Once Lower MMAD
+        // releases it, Upper MTE1 can refill L0 while Lower FIX writes GM.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kUpperEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kLowerEvent);
+        copyUpperL1ToL0A(upperL0TensorA, upperL1TensorA);
+        copyUpperL1ToL0B(upperL0TensorB, upperL1TensorB);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kUpperEvent);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kUpperEvent);
 
         CopyLowerL0CToGm<decltype(lowerTensorC)> copyLowerL0CToGm;
         CopyUpperL0CToGm<decltype(upperTensorC)> copyUpperL0CToGm;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kLowerEvent);
         copyLowerL0CToGm(lowerTensorC, lowerL0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kLowerEvent);
+
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kUpperEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kUpperEvent);
+        upperMmad(upperL0CTensor, upperL0TensorA, upperL0TensorB,
+                  upperRows, K_DIM, upperReduction, true, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kLowerEvent);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kUpperEvent);
+
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kUpperEvent);
         copyUpperL0CToGm(upperTensorC, upperL0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kUpperEvent);
@@ -456,12 +461,14 @@ private:
     static constexpr uint32_t kUpperL0ABytes = kUpperL1ABytes;
     static constexpr uint32_t kUpperL0BBytes = kUpperL1BBytes;
     static constexpr uint32_t kLowerL0AOffset = 0;
-    static constexpr uint32_t kUpperL0AOffset = kLowerL0AOffset + kLowerL0ABytes;
+    static constexpr uint32_t kUpperL0AOffset = kLowerL0AOffset;
     static constexpr uint32_t kLowerL0BOffset = 0;
-    static constexpr uint32_t kUpperL0BOffset = kLowerL0BOffset + kLowerL0BBytes;
-    static constexpr uint32_t kL0AUsedBytes = kUpperL0AOffset + kUpperL0ABytes;
-    static constexpr uint32_t kL0BUsedBytes = kUpperL0BOffset + kUpperL0BBytes;
-    static constexpr uint32_t kL0ABCapacityBytes = 128 * 1024;
+    static constexpr uint32_t kUpperL0BOffset = kLowerL0BOffset;
+    static constexpr uint32_t kL0AUsedBytes =
+        kLowerL0ABytes > kUpperL0ABytes ? kLowerL0ABytes : kUpperL0ABytes;
+    static constexpr uint32_t kL0BUsedBytes =
+        kLowerL0BBytes > kUpperL0BBytes ? kLowerL0BBytes : kUpperL0BBytes;
+    static constexpr uint32_t kL0ABCapacityBytes = 64 * 1024;
 
     static constexpr uint32_t kLowerL0CBytes = kLowerRows * K_DIM * sizeof(Element);
     static constexpr uint32_t kUpperL0CBytes = kUpperRows * K_DIM * sizeof(Element);
