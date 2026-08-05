@@ -913,15 +913,181 @@ private:
         }
     }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void FinishHeadA5Dense16(
+        const ChunkTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
+        uint32_t slot)
+    {
+        static_assert(K_DIM == 128,
+                      "The A5 16-row Vector-Post path is specialized for K=128.");
+        static_assert(!VARLEN_TND,
+                      "The A5 16-row Vector-Post path is dense-only.");
+        static_assert(kProcessRowBlock == 32,
+                      "The A5 16-row Vector-Post path requires the proven row32 outer tile.");
+
+        const uint32_t subBlock = AscendC::GetSubBlockIdx();
+        const uint32_t ownedBegin = subBlock * 16;
+        if (ownedBegin >= validRows) {
+            return;
+        }
+        const uint32_t ownedRows =
+            ownedBegin + 16 <= validRows ? 16 : validRows - ownedBegin;
+        const uint32_t tokenBegin = task.begin + rowStart + ownedBegin;
+        const uint64_t slotBase = SlotBase(slot);
+
+        // One 16 x 128 FP32 matrix occupies two consecutive 4 KiB planes.
+        // Keep only the values that remain live across the scale and output
+        // phases.  Once scale finishes, gate/anchor/beta are dead and their
+        // planes are reused by inputGrad/output, so the existing 96 KiB arena
+        // is sufficient and no additional UB is reserved.
+        auto rawDq = Plane(0);       // planes 0-1
+        auto rawDkLower = Plane(2);  // planes 2-3
+        auto rawDkUpper = Plane(4);  // planes 4-5
+        auto k = Plane(6);           // planes 6-7
+        auto gate = Plane(8);        // planes 8-9; reused by inputGrad
+        auto q = Plane(10);          // planes 10-11
+        auto anchor = Plane(12);     // plane 12; reused by output
+        auto beta = Plane(13);       // plane 13; reused by output
+        auto dbAcc = Plane(14);      // plane 14
+
+        KdaRegbaseFill(
+            (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
+
+        const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
+                                     rowStart + 8 : task.end - task.begin - 1;
+        const uint32_t anchorRow = task.begin + anchorLocal;
+        LoadScalarRows(
+            beta,
+            betaGm_[ScalarOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
+
+        const uint32_t cols = 128;
+        const uint32_t count = ownedRows * cols;
+        Load(anchor,
+             gkGm_[TensorOffset<VARLEN_TND>(
+                 tiling_, task.batchIdx, head, anchorRow, 0)],
+             cols);
+        const uint64_t resultBase =
+            slotBase / sizeof(float) + tiling_.resultRegionOffset / sizeof(float);
+        LoadMatrixRowsPair(
+            q,
+            qGm_[TensorOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements(),
+            k,
+            kGm_[TensorOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        LoadMatrixRowsPair(
+            gate,
+            gkGm_[TensorOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements(),
+            rawDq,
+            workspaceGm_[resultBase + tiling_.resultDqOffset / sizeof(float) +
+                         static_cast<uint64_t>(ownedBegin) * K_DIM],
+            ownedRows, cols, K_DIM);
+        LoadMatrixRowsPair(
+            rawDkLower,
+            workspaceGm_[resultBase + tiling_.resultDkLowerOffset / sizeof(float) +
+                         static_cast<uint64_t>(ownedBegin) * K_DIM],
+            ownedRows, cols, K_DIM,
+            rawDkUpper,
+            workspaceGm_[resultBase + tiling_.resultDkUpperOffset / sizeof(float) +
+                         static_cast<uint64_t>(ownedBegin) * K_DIM],
+            ownedRows, cols, K_DIM);
+
+        KdaRegbaseFinishScale(
+            (__ubuf__ float *)rawDq.GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+            (__ubuf__ float *)k.GetPhyAddr(),
+            (__ubuf__ float *)gate.GetPhyAddr(),
+            (__ubuf__ float *)anchor.GetPhyAddr(),
+            (__ubuf__ float *)beta.GetPhyAddr(),
+            (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            ownedRows, cols);
+
+        auto inputGrad = Plane(8);  // planes 8-9, after gate's last use
+        auto output = Plane(12);    // planes 12-13, after anchor/beta's last use
+
+        LoadRows(inputGrad,
+                 dqGm_[TensorOffset<VARLEN_TND>(
+                     tiling_, task.batchIdx, head, tokenBegin, 0)],
+                 ownedRows, cols, TensorRowElements());
+        KdaRegbaseAdd2(
+            (__ubuf__ float *)output.GetPhyAddr(),
+            (__ubuf__ float *)inputGrad.GetPhyAddr(),
+            (__ubuf__ float *)rawDq.GetPhyAddr(),
+            count);
+        StoreRows(dqOutGm_[TensorOffset<VARLEN_TND>(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  output, ownedRows, cols, TensorRowElements());
+
+        LoadRows(inputGrad,
+                 dkGm_[TensorOffset<VARLEN_TND>(
+                     tiling_, task.batchIdx, head, tokenBegin, 0)],
+                 ownedRows, cols, TensorRowElements());
+        KdaRegbaseAdd3(
+            (__ubuf__ float *)output.GetPhyAddr(),
+            (__ubuf__ float *)inputGrad.GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+            count);
+        StoreRows(dkOutGm_[TensorOffset<VARLEN_TND>(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  output, ownedRows, cols, TensorRowElements());
+
+        LoadRows(inputGrad,
+                 dgGm_[TensorOffset<VARLEN_TND>(
+                     tiling_, task.batchIdx, head, tokenBegin, 0)],
+                 ownedRows, cols, TensorRowElements());
+        KdaRegbaseDg(
+            (__ubuf__ float *)output.GetPhyAddr(),
+            (__ubuf__ float *)inputGrad.GetPhyAddr(),
+            (__ubuf__ float *)q.GetPhyAddr(),
+            (__ubuf__ float *)rawDq.GetPhyAddr(),
+            (__ubuf__ float *)k.GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+            count);
+        StoreRows(dgOutGm_[TensorOffset<VARLEN_TND>(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  output, ownedRows, cols, TensorRowElements());
+
+        // output is no longer live; plane 13 can hold the final db input.
+        LoadScalarRows(
+            beta,
+            dbGm_[ScalarOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
+        KdaRegbaseAdd2(
+            (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            (__ubuf__ float *)beta.GetPhyAddr(),
+            ownedRows);
+        StoreScalarRows(
+            dbOutGm_[ScalarOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            dbAcc, ownedRows);
+    }
+#endif
+
     __aicore__ inline void FinishHead(
         const ChunkTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
         uint32_t slot)
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (!VARLEN_TND && K_DIM == 128) {
+            FinishHeadA5Dense16(task, head, rowStart, validRows, slot);
+            return;
+        }
+#endif
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
         const uint32_t rowsPerSubBlock = kProcessRowBlock / 2;
-        // Keep the proven eight-row Vector arithmetic tile.  On the A5
-        // row32 path each AIV consumes two disjoint eight-row slices, while
-        // A2/A3 and varlen still execute exactly one slice.
+        // Preserve the proven eight-row path for A2/A3, A5 varlen and all
+        // non-K128 specializations.
         for (uint32_t ownedOffset = 0; ownedOffset < rowsPerSubBlock;
              ownedOffset += 8) {
             const uint32_t ownedBegin =
