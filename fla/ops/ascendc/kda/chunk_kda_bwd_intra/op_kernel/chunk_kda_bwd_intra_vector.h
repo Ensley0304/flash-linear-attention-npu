@@ -811,65 +811,6 @@ private:
         const ChunkTask &task, uint32_t head, uint32_t rowStart, uint32_t future,
         uint32_t subBlock, uint64_t slotBase)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        // On A5, each AIV owns half of K and prepares both q and k for that
-        // column range.  q and k share the same exp2(g - anchor), so compute
-        // it once instead of making both AIVs read g and evaluate Exp.
-        auto qData = Plane(0);
-        auto kData = Plane(2);
-        auto gate = Plane(4);
-        auto anchor = Plane(6);
-        auto beta = Plane(8);
-        const uint32_t cols = K_DIM / 2;
-        const uint32_t col = subBlock * cols;
-        const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
-                                     rowStart + 8 : task.end - task.begin - 1;
-        const uint32_t anchorRow = task.begin + anchorLocal;
-        Load(anchor,
-             gkGm_[TensorOffset<VARLEN_TND>(
-                 tiling_, task.batchIdx, head, anchorRow, col)],
-             cols);
-        for (uint32_t sourceRow = 0; sourceRow < future; sourceRow += kUpperPackRows) {
-            const uint32_t rows =
-                sourceRow + kUpperPackRows <= future ? kUpperPackRows : future - sourceRow;
-            const uint32_t token = task.begin + rowStart + sourceRow;
-            LoadMatrixRowsPair(
-                qData,
-                qGm_[TensorOffset<VARLEN_TND>(
-                    tiling_, task.batchIdx, head, token, col)],
-                rows, cols, TensorRowElements(),
-                kData,
-                kGm_[TensorOffset<VARLEN_TND>(
-                    tiling_, task.batchIdx, head, token, col)],
-                rows, cols, TensorRowElements());
-            LoadRows(
-                gate,
-                gkGm_[TensorOffset<VARLEN_TND>(
-                    tiling_, task.batchIdx, head, token, col)],
-                rows, cols, TensorRowElements());
-            LoadScalarRows(
-                beta,
-                betaGm_[ScalarOffset<VARLEN_TND>(
-                    tiling_, task.batchIdx, head, token)],
-                rows);
-            KdaRegbaseGateScalePair(
-                (__ubuf__ float *)qData.GetPhyAddr(),
-                (__ubuf__ float *)kData.GetPhyAddr(),
-                (__ubuf__ float *)gate.GetPhyAddr(),
-                (__ubuf__ float *)anchor.GetPhyAddr(),
-                (__ubuf__ float *)beta.GetPhyAddr(),
-                rows, cols);
-
-            const uint64_t qDstOffset =
-                slotBase / sizeof(float) + tiling_.bUpperOffset / sizeof(float) +
-                static_cast<uint64_t>(sourceRow) * K_DIM + col;
-            const uint64_t kDstOffset =
-                slotBase / sizeof(float) + tiling_.bUpperOffset / sizeof(float) +
-                static_cast<uint64_t>(future + sourceRow) * K_DIM + col;
-            StoreRows(workspaceGm_[qDstOffset], qData, rows, cols, K_DIM);
-            StoreRows(workspaceGm_[kDstOffset], kData, rows, cols, K_DIM);
-        }
-#else
         // data/gate/anchor/exponent may each contain 16 x 128 FP32 values.
         // Give every matrix two adjacent 4 KiB planes; beta temporaries start
         // after those non-overlapping 8 KiB regions.
@@ -959,7 +900,6 @@ private:
                 StoreRows(workspaceGm_[dstOffset], data, rows, cols, K_DIM);
             }
         }
-#endif
     }
 
     __aicore__ inline void FinishHead(
