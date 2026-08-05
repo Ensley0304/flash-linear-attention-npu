@@ -191,6 +191,38 @@ static __simd_vf__ inline void KdaRegbaseGateScale(
     }
 }
 
+static __simd_vf__ inline void KdaRegbaseGateScalePair(
+    __ubuf__ float *qData, __ubuf__ float *kData,
+    __ubuf__ float *gate, __ubuf__ float *anchor,
+    __ubuf__ float *beta, uint16_t rows, uint16_t cols)
+{
+    RegTensor<float> qReg;
+    RegTensor<float> kReg;
+    RegTensor<float> gateReg;
+    RegTensor<float> anchorReg;
+    RegTensor<float> scaleReg;
+    RegTensor<float> betaReg;
+    for (uint32_t row = 0; row < rows; ++row) {
+        DataCopy<float, LoadDist::DIST_BRC_B32>(betaReg, beta + row);
+        uint32_t remaining = cols;
+        for (uint32_t col = 0; col < cols; col += kKdaRegbaseFp32Elements) {
+            MaskReg mask = UpdateMask<float>(remaining);
+            DataCopy(qReg, qData + row * cols + col);
+            DataCopy(kReg, kData + row * cols + col);
+            DataCopy(gateReg, gate + row * cols + col);
+            DataCopy(anchorReg, anchor + col);
+            Sub(scaleReg, gateReg, anchorReg, mask);
+            Muls(scaleReg, scaleReg, kLn2, mask);
+            Exp(scaleReg, scaleReg, mask);
+            Mul(qReg, qReg, scaleReg, mask);
+            Mul(kReg, kReg, scaleReg, mask);
+            Mul(kReg, kReg, betaReg, mask);
+            DataCopy(qData + row * cols + col, qReg, mask);
+            DataCopy(kData + row * cols + col, kReg, mask);
+        }
+    }
+}
+
 static __simd_vf__ inline void KdaRegbaseFinishScale(
     __ubuf__ float *rawDq, __ubuf__ float *rawDkLower,
     __ubuf__ float *rawDkUpper, __ubuf__ float *k,
