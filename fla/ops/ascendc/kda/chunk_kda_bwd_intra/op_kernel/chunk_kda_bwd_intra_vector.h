@@ -67,11 +67,11 @@ public:
         if constexpr (VARLEN_TND) {
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
             auto offsets = ScalarGatherOffsets();
-            for (uint32_t row = 0; row < kRowBlock; ++row) {
+            for (uint32_t row = 0; row < kProcessRowBlock; ++row) {
                 offsets.SetValue(
                     row, row * (32 / sizeof(float)) * sizeof(float));
                 offsets.SetValue(
-                    kRowBlock + row,
+                    kProcessRowBlock + row,
                     row * (32 / sizeof(bfloat16_t)) * sizeof(float));
             }
             AscendC::SetFlag<AscendC::HardEvent::S_V>(0);
@@ -102,11 +102,13 @@ public:
             const ChunkTask task =
                 GetChunkTask<VARLEN_TND>(tiling_, chunkMetadataGm_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-            const uint32_t rowBlockCount = (validLen + kRowBlock - 1) / kRowBlock;
+            const uint32_t rowBlockCount =
+                (validLen + kProcessRowBlock - 1) / kProcessRowBlock;
             for (uint32_t rowBlock = 0; rowBlock < rowBlockCount; ++rowBlock) {
-                const uint32_t rowStart = rowBlock * kRowBlock;
+                const uint32_t rowStart = rowBlock * kProcessRowBlock;
                 const uint32_t validRows =
-                    rowStart + kRowBlock <= validLen ? kRowBlock : validLen - rowStart;
+                    rowStart + kProcessRowBlock <= validLen ?
+                        kProcessRowBlock : validLen - rowStart;
 
                 // PR190-style two-head stage ordering: finish Vector-Pre for
                 // head0 then head1 before entering Vector-Post.  This lets
@@ -142,6 +144,8 @@ public:
     }
 
 private:
+    static constexpr uint32_t kProcessRowBlock =
+        ProcessRowBlock<K_DIM, VARLEN_TND>::value;
     static constexpr uint32_t kPlaneElements = 8 * 128;
     // Each AIV owns half of K in PackLowerB.  For the target K=128 path,
     // 16 FP32 rows x 64 columns exactly fill one 4 KiB arena plane.
@@ -159,9 +163,9 @@ private:
     static_assert(
         6 * kIoBufferBytes + kArenaBytes + kReduceTmpBytes <= kUbBudgetBytes,
         "Vector UB buffers exceed the A2/A3 192 KiB budget.");
-    static_assert(kRowBlock * CHUNK_SIZE <= kPlaneElements,
-                  "Packed A-matrix tile exceeds one arena plane.");
-    static_assert(kRowBlock * CHUNK_SIZE * sizeof(float) <= kIoBufferBytes,
+    static_assert(kProcessRowBlock * CHUNK_SIZE <= 2 * kPlaneElements,
+                  "Packed A-matrix tile exceeds its two-plane arena group.");
+    static_assert(kProcessRowBlock * CHUNK_SIZE * sizeof(float) <= kIoBufferBytes,
                   "Packed A-matrix FP32 tile exceeds the IO queue buffer.");
     static_assert(kLowerPackRows * (K_DIM / 2) <= kPlaneElements,
                   "PackLowerB row tile exceeds one arena plane.");
@@ -541,7 +545,7 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
         inputQueue_.FreeTensor(ready);
         AscendC::Gather(
-            dst, stage, ScalarGatherOffsets()[kRowBlock],
+            dst, stage, ScalarGatherOffsets()[kProcessRowBlock],
             static_cast<uint32_t>(0), rows);
         AscendC::PipeBarrier<PIPE_V>();
 #endif
@@ -652,9 +656,11 @@ private:
         uint32_t prefix, uint32_t subBlock, uint64_t slotBase)
     {
         auto work = Plane(0);
-        auto masked = Plane(1);
+        // The A5 row32 tile occupies two consecutive 4 KiB planes.  Keep the
+        // masked destination in a disjoint two-plane group.
+        auto masked = Plane(2);
         auto &source = subBlock == 0 ? dAqkGm_ : dAkkGm_;
-        const uint32_t rowBase = subBlock * kRowBlock;
+        const uint32_t rowBase = subBlock * kProcessRowBlock;
 
         // DataCopyPad lays out each UB row at a 32-byte boundary.  Full chunks
         // therefore use one 16-row transfer for the aligned 16/32/48/64
@@ -668,9 +674,9 @@ private:
             KdaRegbaseMaskLowerA(
                 (__ubuf__ float *)masked.GetPhyAddr(),
                 (__ubuf__ float *)work.GetPhyAddr(),
-                validRows, rowStart, prefix);
+                validRows, rowStart, prefix, kProcessRowBlock);
 #else
-            AscendC::Duplicate(masked, 0.0f, kRowBlock * prefix);
+            AscendC::Duplicate(masked, 0.0f, kProcessRowBlock * prefix);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t row = 0; row < validRows; ++row) {
                 const uint32_t validCols = rowStart + row + 1;
@@ -682,11 +688,11 @@ private:
                 slotBase / sizeof(float) + tiling_.aLowerOffset / sizeof(float) +
                 static_cast<uint64_t>(rowBase) * prefix;
             StoreRows(
-                workspaceGm_[dstOffset], masked, kRowBlock, prefix, prefix);
+                workspaceGm_[dstOffset], masked, kProcessRowBlock, prefix, prefix);
             return;
         }
 
-        for (uint32_t row = 0; row < kRowBlock; ++row) {
+        for (uint32_t row = 0; row < kProcessRowBlock; ++row) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseFill(
                 (__ubuf__ float *)work.GetPhyAddr(), 0.0f, prefix);
@@ -712,7 +718,7 @@ private:
         uint32_t future, uint32_t subBlock, uint64_t slotBase)
     {
         auto work = Plane(0);
-        auto masked = Plane(1);
+        auto masked = Plane(2);
         auto &source = subBlock == 0 ? dAqkGm_ : dAkkGm_;
         const uint32_t physicalRowBase = subBlock * future;
 
@@ -722,34 +728,39 @@ private:
         const uint64_t srcOffset =
             MatrixOffset<VARLEN_TND>(
                 tiling_, task.batchIdx, head, task.begin + rowStart, rowStart);
-        LoadRows(work, source[srcOffset], future, kRowBlock, MatrixRowElements());
+        LoadRows(
+            work, source[srcOffset], future, kProcessRowBlock,
+            MatrixRowElements());
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseMaskUpperA(
             (__ubuf__ float *)masked.GetPhyAddr(),
             (__ubuf__ float *)work.GetPhyAddr(),
-            future, validRows);
+            future, validRows, kProcessRowBlock);
 #else
-        AscendC::Duplicate(masked, 0.0f, future * kRowBlock);
+        AscendC::Duplicate(masked, 0.0f, future * kProcessRowBlock);
         AscendC::PipeBarrier<PIPE_V>();
         const uint32_t maskedRows = future < validRows ? future : validRows;
         for (uint32_t row = 0; row < maskedRows; ++row) {
             AscendC::Adds(
-                masked[row * kRowBlock], work[row * kRowBlock], 0.0f, row + 1);
+                masked[row * kProcessRowBlock], work[row * kProcessRowBlock],
+                0.0f, row + 1);
         }
         if (future > maskedRows) {
-            const uint32_t tailElements = (future - maskedRows) * kRowBlock;
+            const uint32_t tailElements =
+                (future - maskedRows) * kProcessRowBlock;
             AscendC::Adds(
-                masked[maskedRows * kRowBlock], work[maskedRows * kRowBlock],
-                0.0f, tailElements);
+                masked[maskedRows * kProcessRowBlock],
+                work[maskedRows * kProcessRowBlock], 0.0f, tailElements);
         }
 #endif
 
         const uint64_t dstOffset =
             slotBase / sizeof(float) + tiling_.aUpperOffset / sizeof(float) +
-            static_cast<uint64_t>(physicalRowBase) * kRowBlock;
+            static_cast<uint64_t>(physicalRowBase) * kProcessRowBlock;
         StoreRows(
-            workspaceGm_[dstOffset], masked, future, kRowBlock, kRowBlock);
+            workspaceGm_[dstOffset], masked, future, kProcessRowBlock,
+            kProcessRowBlock);
     }
 
     __aicore__ inline void PackLowerB(
@@ -907,14 +918,21 @@ private:
         uint32_t slot)
     {
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
-        const uint32_t ownedBegin = subBlock * 8;
-        if (ownedBegin >= validRows) {
-            return;
-        }
-        const uint32_t ownedRows =
-            ownedBegin + 8 <= validRows ? 8 : validRows - ownedBegin;
-        const uint32_t tokenBegin = task.begin + rowStart + ownedBegin;
-        const uint64_t slotBase = SlotBase(slot);
+        const uint32_t rowsPerSubBlock = kProcessRowBlock / 2;
+        // Keep the proven eight-row Vector arithmetic tile.  On the A5
+        // row32 path each AIV consumes two disjoint eight-row slices, while
+        // A2/A3 and varlen still execute exactly one slice.
+        for (uint32_t ownedOffset = 0; ownedOffset < rowsPerSubBlock;
+             ownedOffset += 8) {
+            const uint32_t ownedBegin =
+                subBlock * rowsPerSubBlock + ownedOffset;
+            if (ownedBegin >= validRows) {
+                continue;
+            }
+            const uint32_t ownedRows =
+                ownedBegin + 8 <= validRows ? 8 : validRows - ownedBegin;
+            const uint32_t tokenBegin = task.begin + rowStart + ownedBegin;
+            const uint64_t slotBase = SlotBase(slot);
 
         auto rawDq = Plane(0);
         auto rawDkLower = Plane(1);
@@ -1117,6 +1135,7 @@ private:
             dbOutGm_[ScalarOffset<VARLEN_TND>(
                 tiling_, task.batchIdx, head, tokenBegin)],
             dbAcc, ownedRows);
+        }
     }
 
     GM_ADDR q_;

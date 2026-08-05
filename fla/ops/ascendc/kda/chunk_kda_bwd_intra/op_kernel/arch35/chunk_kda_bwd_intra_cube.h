@@ -89,6 +89,9 @@ public:
     }
 
 private:
+    static constexpr uint32_t kProcessRowBlock =
+        ProcessRowBlock<K_DIM, VARLEN_TND>::value;
+
     __aicore__ inline void ProcessBlockMmad()
     {
         using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, true, false>;
@@ -126,11 +129,13 @@ private:
             const ChunkTask task =
                 GetChunkTask<VARLEN_TND>(tiling_, chunkMetadataGm_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-            const uint32_t rowBlockCount = (validLen + kRowBlock - 1) / kRowBlock;
+            const uint32_t rowBlockCount =
+                (validLen + kProcessRowBlock - 1) / kProcessRowBlock;
             for (uint32_t rowBlock = 0; rowBlock < rowBlockCount; ++rowBlock) {
-                const uint32_t rowStart = rowBlock * kRowBlock;
+                const uint32_t rowStart = rowBlock * kProcessRowBlock;
                 const uint32_t validRows =
-                    rowStart + kRowBlock <= validLen ? kRowBlock : validLen - rowStart;
+                    rowStart + kProcessRowBlock <= validLen ?
+                        kProcessRowBlock : validLen - rowStart;
                 const uint32_t prefix = rowStart + validRows;
                 const uint32_t future = validLen - rowStart;
                 for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
@@ -208,11 +213,13 @@ private:
             const ChunkTask task =
                 GetChunkTask<VARLEN_TND>(tiling_, chunkMetadataGm_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-            const uint32_t rowBlockCount = (validLen + kRowBlock - 1) / kRowBlock;
+            const uint32_t rowBlockCount =
+                (validLen + kProcessRowBlock - 1) / kProcessRowBlock;
             for (uint32_t rowBlock = 0; rowBlock < rowBlockCount; ++rowBlock) {
-                const uint32_t rowStart = rowBlock * kRowBlock;
+                const uint32_t rowStart = rowBlock * kProcessRowBlock;
                 const uint32_t validRows =
-                    rowStart + kRowBlock <= validLen ? kRowBlock : validLen - rowStart;
+                    rowStart + kProcessRowBlock <= validLen ?
+                        kProcessRowBlock : validLen - rowStart;
                 const uint32_t prefix = rowStart + validRows;
                 const uint32_t future = validLen - rowStart;
                 for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
@@ -255,8 +262,8 @@ private:
         upperC.SetGlobalBuffer((__gm__ Element *)(
             workspace_ + slotBase + tiling_.resultRegionOffset + tiling_.resultDkUpperOffset));
 
-        const uint32_t lowerRows = 2 * kRowBlock;
-        const uint32_t upperRows = kRowBlock;
+        const uint32_t lowerRows = 2 * kProcessRowBlock;
+        const uint32_t upperRows = kProcessRowBlock;
         const uint32_t upperReduction = 2 * future;
         auto lowerLayoutA = tla::MakeLayout<Element, RowMajor>(lowerRows, prefix);
         auto lowerLayoutB = tla::MakeLayout<Element, RowMajor>(prefix, K_DIM);
@@ -397,7 +404,7 @@ private:
         c.SetGlobalBuffer((__gm__ float *)(
             workspace_ + slotBase + tiling_.resultRegionOffset + tiling_.resultDqOffset));
 
-        const uint32_t m = 2 * kRowBlock;
+        const uint32_t m = 2 * kProcessRowBlock;
         auto layoutA = tla::MakeLayout<float, RowMajor>(m, prefix);
         auto layoutB = tla::MakeLayout<float, RowMajor>(prefix, K_DIM);
         auto layoutC = tla::MakeLayout<float, RowMajor>(m, K_DIM);
@@ -422,19 +429,21 @@ private:
             workspace_ + slotBase + tiling_.resultRegionOffset + tiling_.resultDkUpperOffset));
 
         const uint32_t reduction = 2 * future;
-        auto layoutA = tla::MakeLayout<float, ColumnMajor>(kRowBlock, reduction);
+        auto layoutA =
+            tla::MakeLayout<float, ColumnMajor>(kProcessRowBlock, reduction);
         auto layoutB = tla::MakeLayout<float, RowMajor>(reduction, K_DIM);
-        auto layoutC = tla::MakeLayout<float, RowMajor>(kRowBlock, K_DIM);
+        auto layoutC =
+            tla::MakeLayout<float, RowMajor>(kProcessRowBlock, K_DIM);
         auto tensorA = tla::MakeTensor(a, layoutA, Catlass::Arch::PositionGM{});
         auto tensorB = tla::MakeTensor(b, layoutB, Catlass::Arch::PositionGM{});
         auto tensorC = tla::MakeTensor(c, layoutC, Catlass::Arch::PositionGM{});
-        Catlass::GemmCoord shape{kRowBlock, K_DIM, reduction};
+        Catlass::GemmCoord shape{kProcessRowBlock, K_DIM, reduction};
         UpperMmad mma(resource);
         mma(tensorA, tensorB, tensorC, shape);
     }
 
-    static constexpr uint32_t kLowerRows = 2 * kRowBlock;
-    static constexpr uint32_t kUpperRows = kRowBlock;
+    static constexpr uint32_t kLowerRows = 2 * kProcessRowBlock;
+    static constexpr uint32_t kUpperRows = kProcessRowBlock;
     static constexpr uint32_t kLowerReduction = CHUNK_SIZE;
     static constexpr uint32_t kUpperReduction = 2 * CHUNK_SIZE;
     static constexpr uint32_t kLowerL1ABytes = kLowerRows * kLowerReduction * sizeof(Element);
