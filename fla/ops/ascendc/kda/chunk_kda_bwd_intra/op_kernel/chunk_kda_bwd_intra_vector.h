@@ -1009,49 +1009,68 @@ private:
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
             ownedRows, cols);
 
-        auto inputGrad = Plane(8);  // planes 8-9, after gate's last use
-        auto output = Plane(12);    // planes 12-13, after anchor/beta's last use
+        auto output = Plane(12);  // planes 12-13, after anchor/beta's last use
 
-        LoadRows(inputGrad,
-                 dqGm_[TensorOffset<VARLEN_TND>(
-                     tiling_, task.batchIdx, head, tokenBegin, 0)],
-                 ownedRows, cols, TensorRowElements());
+        // The original gradients are consumed once and do not need to remain
+        // in the arena.  Reuse the existing 8 KiB matrix ping/pong buffers as
+        // their final RegBase operands: issue dq/dk together, then refill the
+        // released dq slot with dg while dq is being copied out.  This removes
+        // three 16 x 128 FP32 UB-to-UB copies and overlaps the mandatory MTE2
+        // reads with the neighbouring Vector/MTE3 work without increasing UB.
+        const uint32_t dqSlot = CopyInMatrixRows(
+            dqGm_[TensorOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        const uint32_t dkSlot = CopyInMatrixRows(
+            dkGm_[TensorOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[dqSlot]);
         KdaRegbaseAdd2(
             (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)inputGrad.GetPhyAddr(),
+            (__ubuf__ float *)MatrixInput<float>(dqSlot).GetPhyAddr(),
             (__ubuf__ float *)rawDq.GetPhyAddr(),
             count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dqSlot]);
+
+        const uint32_t dgSlot = CopyInMatrixRows(
+            dgGm_[TensorOffset<VARLEN_TND>(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
         StoreRows(dqOutGm_[TensorOffset<VARLEN_TND>(
                       tiling_, task.batchIdx, head, tokenBegin, 0)],
                   output, ownedRows, cols, TensorRowElements());
 
-        LoadRows(inputGrad,
-                 dkGm_[TensorOffset<VARLEN_TND>(
-                     tiling_, task.batchIdx, head, tokenBegin, 0)],
-                 ownedRows, cols, TensorRowElements());
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[dkSlot]);
         KdaRegbaseAdd3(
             (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)inputGrad.GetPhyAddr(),
+            (__ubuf__ float *)MatrixInput<float>(dkSlot).GetPhyAddr(),
             (__ubuf__ float *)rawDkLower.GetPhyAddr(),
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
             count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dkSlot]);
         StoreRows(dkOutGm_[TensorOffset<VARLEN_TND>(
                       tiling_, task.batchIdx, head, tokenBegin, 0)],
                   output, ownedRows, cols, TensorRowElements());
 
-        LoadRows(inputGrad,
-                 dgGm_[TensorOffset<VARLEN_TND>(
-                     tiling_, task.batchIdx, head, tokenBegin, 0)],
-                 ownedRows, cols, TensorRowElements());
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[dgSlot]);
         KdaRegbaseDg(
             (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)inputGrad.GetPhyAddr(),
+            (__ubuf__ float *)MatrixInput<float>(dgSlot).GetPhyAddr(),
             (__ubuf__ float *)q.GetPhyAddr(),
             (__ubuf__ float *)rawDq.GetPhyAddr(),
             (__ubuf__ float *)k.GetPhyAddr(),
             (__ubuf__ float *)rawDkLower.GetPhyAddr(),
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
             count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dgSlot]);
         StoreRows(dgOutGm_[TensorOffset<VARLEN_TND>(
                       tiling_, task.batchIdx, head, tokenBegin, 0)],
                   output, ownedRows, cols, TensorRowElements());
