@@ -420,8 +420,7 @@ __aicore__ inline void GDRVec<DT, GT>::UpdateDh(const float gLastExp, uint64_t& 
     CrossCoreWaitFlag(CROSS_CORE_C2V_TERM2);
     {
         CopyIn(this->wv2CastLocal, this->wv2Local, this->wv2Gm[wV2Offset_], this->dhBufSize);
-        Muls(this->wv2CastLocal, this->wv2CastLocal, static_cast<float>(-1.0), this->dhBufSize);
-        Add(this->qdoCastLocal, this->qdoCastLocal, this->wv2CastLocal, this->dhBufSize);
+        Sub(this->qdoCastLocal, this->qdoCastLocal, this->wv2CastLocal, this->dhBufSize);
     }
     if (this->useGk) {
         CopyOut(this->dhResidentLocal, this->qdoCastLocal,
