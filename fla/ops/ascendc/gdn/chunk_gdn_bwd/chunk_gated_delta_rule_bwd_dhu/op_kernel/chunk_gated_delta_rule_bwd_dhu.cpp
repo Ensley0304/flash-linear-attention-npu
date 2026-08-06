@@ -33,7 +33,8 @@ namespace GDN {
 
 template <typename DT, typename GT>
 __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
-    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR cu_seqlens,
+    GM_ADDR chunk_indices,
     GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR userWS, const ChunkGatedDeltaRuleBwdDhuTilingData *tilingData)
 {
     (void)dh0;
@@ -44,7 +45,7 @@ __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
     }
     if ASCEND_IS_AIV {
         ChunkGDRBwdDhu::GDRVec<DT, GT> op;
-        op.Init(q, k, w, d_o, dv, g, cu_seqlens, dv2, dh, userWS, *tilingData);
+        op.Init(q, k, w, d_o, dv, g, gk, cu_seqlens, dv2, dh, userWS, *tilingData);
         op.Process();
     }
 }
@@ -56,7 +57,6 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR h0, GM_ADDR dht,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace, GM_ADDR tiling)
 {
-    (void)gk;
     (void)h0;
     (void)dht;
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
@@ -70,11 +70,11 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<DTYPE_Q, DTYPE_Q>(
-            q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+            q, k, w, d_o, dv, g, gk, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<DTYPE_Q, float>(
-            q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+            q, k, w, d_o, dv, g, gk, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
     }
 }
 #endif

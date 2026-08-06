@@ -47,8 +47,6 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 );
 ```
 
----
-
 ## 3. 参数说明
 
 ### 3.1 输入参数（Inputs）
@@ -61,7 +59,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `dO` | 输入 | 必选 | 前向输出 `o` 的梯度张量 | 即上游输出梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
+| `gkOptional` | 输入 | 可选 | KDA Key-wise Gate 张量 | base-2 log 空间；递推使用 `exp2(gk_last)` | `FLOAT` | `ND` | `[B, HV, T, K]` | 支持 |
 | `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时参与递推初始化 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
 | `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
@@ -93,13 +91,14 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - `dO`、`dv` 的形状必须为 `[B, HV, T, V]`。
 - `q` 与 `dO`/`dv` 的 `B`、`T` 必须一致，head 数允许不同（GVA）。
 - `gOptional` 的形状必须为 `[B, HV, T]`（若提供）。
-- `gkOptional` 的形状必须为 `[B, HV, T, K]`（若提供）。
+- `gOptional` 与 `gkOptional` 必须且只能提供一个。
+- `gkOptional` 的形状必须为 FP32 `[B, HV, T, K]`；P0 仅支持 dense、`HK=HV`，并要求调用方传入已经门控的 `qg/kg` 作为 `q/k`。
 - `h0Optional`、`dhtOptional` 的形状必须为 `[B, HV, K, V]`（若提供）。
 - `dhOut` 的形状必须为 `[B, HV, NT, K, V]`。
 - **GVA 约束**：`HV % HK == 0`；读 `q`/`k` 时使用 `hq = hv / (HV / HK)`，读/写 `w`/`dO`/`dv`/`g`/`dh`/`dv2` 使用 value head 索引 `hv`。
 - 当前实现要求 `K ≤ 128`。
 - 当前实现要求 `V ≤ 256`（Cube tile 原生按 `V` 上限 256 设计，**无**按 V 维切换的 TilingKey）。
-- **TilingKey**：`g` 与 `q` 同 dtype 时为 Key=1，`g` 为 FP32 时为 Key=2（与 V 维无关）。
+- **TilingKey**：标量 `g` 与 `q` 同 dtype 时为 Key=1；标量 `g` 为 FP32 或使用 FP32 key-wise `gk` 时为 Key=2（与 V 维无关）。
 - `chunkSize` 当前仅支持 `64` 或 `128`。
 - 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 须同时提供，且仅支持 `B = 1`。
 
@@ -117,6 +116,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - `gOptional`：
   - 数据类型可以为 `FLOAT16`、`BFLOAT16` 或 `FLOAT`
   - 数据类型需与 `q` 类型一致，或为 `FLOAT`（FP32）
+
+- `gkOptional`（KDA P0）：
+  - 与 `gOptional` 二选一
+  - 固定 FP32 `[B, HV, T, K]`，使用 `exp2` 约定
+  - 仅支持 dense、`HK=HV`；此时 `q/k` 的语义分别为正向保存的 `qg/kg`
 
 ---
 
@@ -342,3 +346,21 @@ chunk_gated_delta_rule_bwd_dhu/
 └── test/
     └── test_chunk_gated_delta_rule_bwd_dhu.py
 ```
+
+---
+
+## 7. KDA K2 A2 性能基点
+
+测量日期：2026-08-06。环境为 Ascend A2、CANN 9.1.0，BF16、`K=V=128`、
+`chunk_size=64`、dense BNSD、`HK=HV`、key-wise FP32 `gk`。耗时取 msprof
+`Task Duration` 的稳态样本。
+
+| 版本 | `B=1,H=32,T=8192` | `B=1,H=96,T=18432` |
+|---|---:|---:|
+| KDA `gk` 基线 | 1.3247 ms | 7.5591 ms |
+| term2 `dv2` GM→L1B 预取 | 1.3111 ms | 7.4032 ms |
+| 相对变化 | -1.0% | -2.1% |
+
+该基点保持一次 `MIX_AIC` device launch，不切分 `cu_sequence`，不增加 workspace。
+候选 K2 的 `dh`、`dv_scan` 与基线逐元素 bitwise 一致；完整 KDA BNSD 连续两次执行的
+`dq/dk/dv/db/dg` 均为 `max_diff=0`。
