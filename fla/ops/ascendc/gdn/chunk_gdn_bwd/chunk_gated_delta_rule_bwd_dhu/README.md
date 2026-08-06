@@ -360,10 +360,13 @@ chunk_gated_delta_rule_bwd_dhu/
 | KDA `gk` 基线 | 1.3247 ms | 7.5591 ms |
 | term2 `dv2` GM→L1B 预取 | 1.3111 ms | 7.4032 ms |
 | 预取 + 独立 BF16 `dh` UB residency | 1.3010 ms | 7.3102 ms |
-| 相对原始基线 | -1.8% | -3.3% |
+| 上述优化 + 精简两个无依赖 `PIPE_ALL` 屏障 | 1.2728 ms | 7.1118 ms |
+| 相对原始基线 | -3.9% | -5.9% |
 
 该基点保持一次 `MIX_AIC` device launch，不切分 `cu_sequence`，不增加 GM workspace。
 `dh` residency 仅在 KDA `gk` 路径为每个 AIV 增加 16 KB UB，用于保存已按原规则量化的
 BF16 reverse state，避免下一 chunk 从 GM 重复读取。
+最后一项仅移除 BDV stage 和 term stage 入口处两个已被上一 stage 完成屏障覆盖的
+`PipeBarrier<PIPE_ALL>()`，未删除真实数据依赖上的 wait/barrier，也不增加任何存储。
 候选 K2 的 `dh`、`dv_scan` 与基线逐元素 bitwise 一致；完整 KDA BNSD 连续两次执行的
 `dq/dk/dv/db/dg` 均为 `max_diff=0`。

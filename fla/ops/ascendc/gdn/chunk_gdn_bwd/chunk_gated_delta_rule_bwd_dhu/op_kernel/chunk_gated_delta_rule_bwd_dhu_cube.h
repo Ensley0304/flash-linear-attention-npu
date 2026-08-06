@@ -310,7 +310,6 @@ public:
                         CopyGmToL1B_Bdv copyGmToL1B_Bdv;
                         CopyL0CToGm_Bdv copyL0CToGm_Bdv;
 
-                        PipeBarrier<PIPE_ALL>();
                         // load L1A
                         auto tensorL1A = tla::MakeTensor(l1ATensorBdv, L1A_LAYOUT_BDV, Arch::PositionL1{});
                         auto tensorGmTileA = GetTile(tensorBlockK, tla::MakeCoord(0, 0), tla::MakeShape(curBT, params.K));
@@ -454,7 +453,6 @@ public:
                                                     tla::MakeShape(params.K, params.V));                        
                         // gatedQ @ do
                         // | bdv coreNum * K * V | gQ coreNum * BT * K | qDo coreNum * K * V | wDv2 coreNum * K * V | 
-                        PipeBarrier<PIPE_ALL>();
                         // load L1B
                         
                         copyGmToL1B_Dh1(tensorL1B1, tensorGmTileB1);
