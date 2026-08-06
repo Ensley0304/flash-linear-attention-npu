@@ -34,6 +34,7 @@ static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_W_IDX = 2;
 static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_DO_IDX = 3;
 static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_DV_IDX = 4;
 static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_G_IDX = 5;
+static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_GK_IDX = 6;
 
 static constexpr size_t CHUNK_GDR_BWD_DHU_DIM_0 = 0;
 static constexpr size_t CHUNK_GDR_BWD_DHU_DIM_1 = 1;
@@ -44,6 +45,7 @@ static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_64 = 64;
 static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_128 = 128;
 static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_2 = 2;
 static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_3 = 3;
+static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_4 = 4;
 static constexpr uint32_t CHUNK_GDR_BWD_DHU_BLOCK_SIZE = 32;
 
 static constexpr uint32_t CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE = 2;
@@ -55,6 +57,7 @@ static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_W_NAME = "w";
 static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_DO_NAME = "d_o";
 static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_DV_NAME = "dv";
 static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_G_NAME = "g";
+static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_GK_NAME = "gk";
 static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_CHUNK_INDICES_NAME = "chunk_indices";
 static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_SEQLENS_NAME = "cu_seqlens";
 
@@ -66,11 +69,14 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     const gert::StorageShape *doShape;
     const gert::StorageShape *dvShape;
     const gert::StorageShape *gShape;
+    const gert::StorageShape *gkShape;
     const gert::StorageShape *cuSeqlensShape;
     const gert::StorageShape *chunkIndicesShape;
     ge::DataType qDtype;
     ge::DataType gDtype;
+    ge::DataType gkDtype;
     bool hasG;
+    bool hasGk;
     bool hasScaleAttr;
     double scaleAttr;
     int32_t chunkSize;
@@ -199,6 +205,7 @@ public:
         tiling_.isScale = isScale ? 1 : 0;
         tiling_.scale = scale;
         tiling_.chunkSize = chunkSize_;
+        tiling_.useGk = ctx_.hasGk ? 1 : 0;
         return ge::GRAPH_SUCCESS;
     }
 
@@ -235,14 +242,35 @@ public:
         OP_CHECK_IF(isVariableLen_ && B_ != 1,
                     OP_LOGE(ctx_.nodeName, "B must be 1 when sequence is variable len, but got %lu.", B_),
                     return ge::GRAPH_FAILED);
+        if (ctx_.hasGk) {
+            OP_CHECK_IF(isVariableLen_, OP_LOGE(ctx_.nodeName, "key-wise gk P0 supports dense input only."),
+                        return ge::GRAPH_FAILED);
+            const gert::Shape gkShape = ctx_.gkShape->GetStorageShape();
+            OP_CHECK_IF(gkShape.GetDimNum() != CHUNK_GDR_BWD_DHU_NUM_4 ||
+                            gkShape.GetDim(0) != static_cast<int64_t>(B_) ||
+                            gkShape.GetDim(1) != static_cast<int64_t>(Hv_) ||
+                            gkShape.GetDim(2) != static_cast<int64_t>(T_) ||
+                            gkShape.GetDim(3) != static_cast<int64_t>(K_),
+                        OP_LOGE(ctx_.nodeName, "gk must be dense [B,Hv,T,K]."), return ge::GRAPH_FAILED);
+            OP_CHECK_IF(Hk_ != Hv_, OP_LOGE(ctx_.nodeName, "key-wise gk P0 requires Hk == Hv."),
+                        return ge::GRAPH_FAILED);
+        }
         return ge::GRAPH_SUCCESS;
     }
 
     ge::graphStatus CheckInputDtype()
     {
-        if (!ctx_.hasG) {
-            OP_LOGE(ctx_.nodeName, "Input g is required for chunk_gated_delta_rule_bwd_dhu kernel.");
+        if (ctx_.hasG == ctx_.hasGk) {
+            OP_LOGE(ctx_.nodeName, "Exactly one of scalar g or key-wise gk must be provided.");
             return ge::GRAPH_FAILED;
+        }
+        if (ctx_.hasGk) {
+            if (ctx_.gkDtype != ge::DT_FLOAT) {
+                OP_LOGE(ctx_.nodeName, "key-wise gk must be DT_FLOAT (base-2 log space).");
+                return ge::GRAPH_FAILED;
+            }
+            tilingKey_ = GDN::CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_KEY_G_FP32;
+            return ge::GRAPH_SUCCESS;
         }
         const ge::DataType qDtype = ctx_.qDtype;
         const ge::DataType gDtype = ctx_.gDtype;

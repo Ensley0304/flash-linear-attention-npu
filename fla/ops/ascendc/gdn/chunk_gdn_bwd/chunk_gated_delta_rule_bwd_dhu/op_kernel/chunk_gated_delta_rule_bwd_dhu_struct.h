@@ -43,6 +43,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     uint64_t qDoWs;
     uint64_t isVarLen;
     uint64_t isScale;
+    uint64_t useGk;
     uint32_t usedCoreNum;
     float scale;
 };

@@ -179,7 +179,7 @@ public:
         Params() {}
 
         CATLASS_HOST_DEVICE
-        Params(GM_ADDR k_, LayoutK layoutK_, GM_ADDR dh_, LayoutDh layoutDh_, GM_ADDR workspace_,  LayoutBdv layoutBdv_, 
+        Params(GM_ADDR k_, LayoutK layoutK_, GM_ADDR dh_, LayoutDh layoutDh_, GM_ADDR workspace_,  LayoutBdv layoutBdv_,
                LayoutGq layoutGq_, GM_ADDR dO_, LayoutDo layoutDo_,    
                GM_ADDR w_ , LayoutW layoutW_, GM_ADDR dv2_ , LayoutDv2 layoutDv2_, LayoutBdh layoutBdh_,
                GM_ADDR cu_seqlens_, uint64_t B_, uint64_t T_, uint64_t Hv_, uint64_t Hk_, uint64_t K_, uint64_t V_,
@@ -486,6 +486,10 @@ public:
 
 
                         tileMmadDh1(tensorTileL0C1, tensorL0A1, tensorL0B1, initC, unitFlag);
+                        // dv2 is already being produced by Vector after gatedQ. Prefetch it into the
+                        // independent term2 L1B slot while term1 MMAD is in flight.
+                        CrossCoreWaitFlag(CROSS_CORE_V2C_DV2);
+                        copyGmToL1B_Dh2(tensorL1B2, tensorGmTileB2);
                         PipeBarrier<PIPE_ALL>();
                         copyL0CToGm_Dh1(tensorBlockDh1, tensorL0C1);
                         PipeBarrier<PIPE_ALL>();
@@ -494,10 +498,6 @@ public:
                         // w @ dv2 -> bdh_term2
                         // PipeBarrier<PIPE_ALL>();
                         // load L1B
-                        CrossCoreWaitFlag(CROSS_CORE_V2C_DV2);
-                        copyGmToL1B_Dh2(tensorL1B2, tensorGmTileB2);
-                        PipeBarrier<PIPE_ALL>();
-
                         // copy L1B -> L0B
 
                         copyL1ToL0B_Dh2(tensorL0B2, tensorTileL1B2);
@@ -609,7 +609,7 @@ template <typename DT, typename GT>
 class GDRCube : public GDRBase<DT, GT>
 {
 public:
-    __aicore__ inline GDRCube(GM_ADDR k_, GM_ADDR w_, GM_ADDR dO_, GM_ADDR dh_, GM_ADDR dv2_, GM_ADDR cu_seqlens_, 
+    __aicore__ inline GDRCube(GM_ADDR k_, GM_ADDR w_, GM_ADDR dO_, GM_ADDR dh_, GM_ADDR dv2_, GM_ADDR cu_seqlens_,
                               GM_ADDR chunk_indices_, GM_ADDR workspace_);
     __aicore__ inline void Process();
     __aicore__ inline void Init(const ChunkGatedDeltaRuleBwdDhuTilingData& tilingData);
@@ -627,7 +627,7 @@ private:
 }; // class GDRCube
 
 template <typename DT, typename GT>
-__aicore__ inline GDRCube<DT, GT>::GDRCube(GM_ADDR k_, GM_ADDR w_, GM_ADDR dO_, GM_ADDR dh_, GM_ADDR dv2_, GM_ADDR cu_seqlens_, 
+__aicore__ inline GDRCube<DT, GT>::GDRCube(GM_ADDR k_, GM_ADDR w_, GM_ADDR dO_, GM_ADDR dh_, GM_ADDR dv2_, GM_ADDR cu_seqlens_,
                                        GM_ADDR chunk_indices_, GM_ADDR workspace_)
 :
     k(k_),
