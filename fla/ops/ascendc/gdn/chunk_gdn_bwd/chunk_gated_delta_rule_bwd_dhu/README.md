@@ -370,3 +370,16 @@ BF16 reverse state，避免下一 chunk 从 GM 重复读取。
 `PipeBarrier<PIPE_ALL>()`，未删除真实数据依赖上的 wait/barrier，也不增加任何存储。
 候选 K2 的 `dh`、`dv_scan` 与基线逐元素 bitwise 一致；完整 KDA BNSD 连续两次执行的
 `dq/dk/dv/db/dg` 均为 `max_diff=0`。
+
+在上述基点之上，将 `-term2` 的 `Muls(-1) + Add` 合并为单次 FP32 `Sub`。由于本次
+`msprof op` 在共享 A2 上卡在 replay/export，下面只记录同进程、同卡、相邻运行的 NPU
+device-event 中位数，不与上表的 msprof `Task Duration` 混用：
+
+| 配对版本 | `B=1,H=32,T=8192` | `B=1,H=96,T=18432` |
+|---|---:|---:|
+| 屏障精简基点 | 1.9449 ms | 7.9424 ms |
+| 基点 + `Sub` 合并 | 1.9278 ms | 7.9041 ms |
+| 配对提升 | -0.9% | -0.5% |
+
+该变化不修改 launch、同步、workspace 或 `cu_sequence` owner，K2 输出相对上一基点仍为
+bitwise 一致，连续两次执行的 `dh/dv_scan` 均为 `max_diff=0`。
