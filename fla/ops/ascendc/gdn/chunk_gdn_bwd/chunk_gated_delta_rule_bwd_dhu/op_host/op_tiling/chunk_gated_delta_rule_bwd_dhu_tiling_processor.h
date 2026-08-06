@@ -296,6 +296,8 @@ public:
         const uint32_t dqkBufByte = halfBT * static_cast<uint32_t>(K_) * CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE;
         const uint32_t dqkCastBufByte = halfBT * static_cast<uint32_t>(K_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE;
         const uint32_t dhCastBufByte = halfK * static_cast<uint32_t>(V_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE;
+        const uint32_t dhResidentBufByte =
+            halfK * static_cast<uint32_t>(V_) * CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE;
 
         const uint32_t dvPeak =
             static_cast<uint32_t>(chunkSize_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE + gBrcbBufByte + dvBufByte +
@@ -303,7 +305,8 @@ public:
         const uint32_t gatedQPeak = CHUNK_GDR_BWD_DHU_NUM_2 * static_cast<uint32_t>(chunkSize_) *
                                         CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE +
                                     dqkBufByte + dqkCastBufByte + gBrcbBufByte;
-        const uint32_t dhPeak = CHUNK_GDR_BWD_DHU_NUM_2 * dhCastBufByte;
+        const uint32_t dhPeak = CHUNK_GDR_BWD_DHU_NUM_2 * dhCastBufByte +
+                                (ctx_.hasGk ? dhResidentBufByte : 0U);
         const uint32_t tBufByte = std::max(dhPeak, std::max(dvPeak, gatedQPeak));
 
         OP_CHECK_IF(tBufByte > ctx_.ubSize,

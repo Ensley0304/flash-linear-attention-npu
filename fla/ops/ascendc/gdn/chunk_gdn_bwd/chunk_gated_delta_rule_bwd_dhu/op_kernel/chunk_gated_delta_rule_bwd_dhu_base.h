@@ -89,6 +89,7 @@ protected:
 
     // updated dh
     LocalTensor<DT> bdhLocal; // [K/2,V]
+    LocalTensor<DT> dhResidentLocal; // KDA-only persistent BF16 reverse state
     LocalTensor<float> bdhCastLocal;
     LocalTensor<DT> wv2Local; // [K/2,V]
     LocalTensor<float> wv2CastLocal;
