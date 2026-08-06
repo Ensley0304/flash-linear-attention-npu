@@ -118,6 +118,9 @@ __aicore__ inline void GDRVec<DT, GT>::InitUB()
     this->qdoCastLocal = this->vecTbuf.template GetWithOffset<float>(this->dhBufSize, offsetDh);
     this->qdoLocal = this->vecTbuf.template GetWithOffset<DT>(this->dhBufSize, offsetDh + halfDhBufByte);
     offsetDh += this->dhBufSize * FLOAT_DTYPE_SIZE;
+    if (this->useGk) {
+        this->dhResidentLocal = this->vecTbuf.template GetWithOffset<DT>(this->dhBufSize, offsetDh);
+    }
 }
 
 template <typename DT, typename GT>
@@ -382,7 +385,11 @@ __aicore__ inline void GDRVec<DT, GT>::UpdateDh(const float gLastExp, uint64_t& 
         // 初始化全零 dh_chunkIdx
         InitOutput<DT>(this->dhGm[curGmOffsetH], this->dhBufSize, 0); // 兩個vec核各初始化一半
     } else {
-        CopyIn(this->bdhCastLocal, this->bdhLocal, this->dhGm[curGmOffsetH], this->dhBufSize);
+        if (this->useGk) {
+            Cast(this->bdhCastLocal, this->dhResidentLocal, RoundMode::CAST_NONE, this->dhBufSize);
+        } else {
+            CopyIn(this->bdhCastLocal, this->bdhLocal, this->dhGm[curGmOffsetH], this->dhBufSize);
+        }
         if (this->useGk) {
             const uint64_t gkLastOffset = gmOffsetGk_ + (bos_ + this->curBT - 1) * this->K;
             CopyIn(this->gCastLocal, this->gCastLocal, this->gkGm[gkLastOffset], this->halfK, false);
@@ -416,7 +423,13 @@ __aicore__ inline void GDRVec<DT, GT>::UpdateDh(const float gLastExp, uint64_t& 
         Muls(this->wv2CastLocal, this->wv2CastLocal, static_cast<float>(-1.0), this->dhBufSize);
         Add(this->qdoCastLocal, this->qdoCastLocal, this->wv2CastLocal, this->dhBufSize);
     }
-    CopyOut(this->bdhLocal, this->qdoCastLocal, this->dhGm[curGmOffsetH - dhBlockSize_], this->dhBufSize);
+    if (this->useGk) {
+        CopyOut(this->dhResidentLocal, this->qdoCastLocal,
+                this->dhGm[curGmOffsetH - dhBlockSize_], this->dhBufSize);
+    } else {
+        CopyOut(this->bdhLocal, this->qdoCastLocal,
+                this->dhGm[curGmOffsetH - dhBlockSize_], this->dhBufSize);
+    }
     CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_BDH);
 }
 
