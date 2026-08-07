@@ -64,6 +64,12 @@ public:
         pipe_->InitBuffer(arena_, kArenaBytes);
         pipe_->InitBuffer(reduceTmp_, kReduceTmpBytes);
         InitMatrixInputEvents();
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+        if constexpr (!VARLEN_TND) {
+            anchorMte2ToVEvent_ = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+        }
+#endif
         if constexpr (VARLEN_TND) {
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
             auto offsets = ScalarGatherOffsets();
@@ -103,33 +109,57 @@ public:
                 GetChunkTask<VARLEN_TND>(tiling_, chunkMetadataGm_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
             const uint32_t rowBlockCount = (validLen + kRowBlock - 1) / kRowBlock;
-            for (uint32_t rowBlock = 0; rowBlock < rowBlockCount; ++rowBlock) {
-                const uint32_t rowStart = rowBlock * kRowBlock;
-                const uint32_t validRows =
-                    rowStart + kRowBlock <= validLen ? kRowBlock : validLen - rowStart;
+            for (uint32_t rowBlock = 0; rowBlock < rowBlockCount; rowBlock += 2) {
+                const uint32_t windows =
+                    !VARLEN_TND && rowBlock + 1 < rowBlockCount ? 2 : 1;
 
-                // PR190-style two-head stage ordering: finish Vector-Pre for
-                // head0 then head1 before entering Vector-Post.  This lets
-                // Cube(head0) overlap Vector-Pre(head1).
-                for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
-                    const uint32_t slot = WorkspaceSlot(windowIdx, headInWindow);
-                    PrepareHead(task, headBase + headInWindow, rowStart, validRows, slot);
+                // Keep two consecutive row windows in flight.  Window 0 uses
+                // slot0/1 and window 1 uses slot2/3, so Vector can prepare the
+                // next row block while Cube consumes the current one.
+                for (uint32_t window = 0; window < windows; ++window) {
+                    const uint32_t currentRowBlock = rowBlock + window;
+                    const uint32_t rowStart = currentRowBlock * kRowBlock;
+                    const uint32_t validRows =
+                        rowStart + kRowBlock <= validLen ?
+                        kRowBlock : validLen - rowStart;
+                    for (uint32_t headInWindow = 0; headInWindow < headCount;
+                         ++headInWindow) {
+                        const uint32_t slot =
+                            WorkspaceSlot(windowIdx + window, headInWindow);
+                        PrepareHead(
+                            task, headBase + headInWindow, rowStart, validRows,
+                            slot);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeReadyFlag_);
+                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                            vecToCubeReadyFlag_);
 #else
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(kVecToCubeReadyFlag);
+                        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                            kVecToCubeReadyFlag);
 #endif
+                    }
                 }
-                for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
+
+                for (uint32_t window = 0; window < windows; ++window) {
+                    const uint32_t currentRowBlock = rowBlock + window;
+                    const uint32_t rowStart = currentRowBlock * kRowBlock;
+                    const uint32_t validRows =
+                        rowStart + kRowBlock <= validLen ?
+                        kRowBlock : validLen - rowStart;
+                    for (uint32_t headInWindow = 0; headInWindow < headCount;
+                         ++headInWindow) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+                        Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
 #else
-                    AscendC::CrossCoreWaitFlag(kCubeToVecReadyFlag);
+                        AscendC::CrossCoreWaitFlag(kCubeToVecReadyFlag);
 #endif
-                    const uint32_t slot = WorkspaceSlot(windowIdx, headInWindow);
-                    FinishHead(task, headBase + headInWindow, rowStart, validRows, slot);
+                        const uint32_t slot =
+                            WorkspaceSlot(windowIdx + window, headInWindow);
+                        FinishHead(
+                            task, headBase + headInWindow, rowStart, validRows,
+                            slot);
+                    }
                 }
-                ++windowIdx;
+                windowIdx += windows;
             }
             taskIdx += taskStride;
             headWindowIdx += headWindowStride;
@@ -138,6 +168,12 @@ public:
                 ++taskIdx;
             }
         }
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+        if constexpr (!VARLEN_TND) {
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(
+                anchorMte2ToVEvent_);
+        }
+#endif
         ReleaseMatrixInputEvents();
     }
 
@@ -633,6 +669,29 @@ private:
 #endif
     }
 
+    template <bool ANCHOR_MINUS_MATRIX>
+    __aicore__ inline void SubRowsWithAnchor(
+        AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<float> matrix,
+        AscendC::LocalTensor<float> anchor,
+        uint32_t rows, uint32_t cols)
+    {
+        const uint8_t rowStride =
+            static_cast<uint8_t>(cols * sizeof(float) / 32);
+        for (uint32_t offset = 0; offset < cols; offset += 64) {
+            const uint32_t mask = offset + 64 <= cols ? 64 : cols - offset;
+            if constexpr (ANCHOR_MINUS_MATRIX) {
+                AscendC::Sub(
+                    dst[offset], anchor[offset], matrix[offset], mask, rows,
+                    {1, 1, 1, rowStride, 0, rowStride});
+            } else {
+                AscendC::Sub(
+                    dst[offset], matrix[offset], anchor[offset], mask, rows,
+                    {1, 1, 1, rowStride, rowStride, 0});
+            }
+        }
+    }
+
     __aicore__ inline void PrepareHead(
         const ChunkTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
         uint32_t slot)
@@ -641,10 +700,39 @@ private:
         const uint32_t prefix = rowStart + validRows;
         const uint32_t future = task.end - task.begin - rowStart;
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
+        // The gate anchor is consumed by Lower-B, Upper-B and FinishHead.
+        // Keep one full anchor per head in the 2-head window resident in UB,
+        // rather than issuing three independent GM reads on each AIV.
+        auto anchorBase = Plane(
+            20 + (VARLEN_TND ? (slot & 1U) : (slot & 3U)));
+        const uint32_t anchorLocal =
+            rowStart + 8 < task.end - task.begin ?
+            rowStart + 8 : task.end - task.begin - 1;
+        auto anchorSrc = gkGm_[TensorOffset<VARLEN_TND>(
+            tiling_, task.batchIdx, head, task.begin + anchorLocal)];
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        Load(anchorBase, anchorSrc, K_DIM);
+#else
+        if constexpr (VARLEN_TND) {
+            Load(anchorBase, anchorSrc, K_DIM);
+        } else {
+            AscendC::DataCopyPad(
+                anchorBase, anchorSrc,
+                {1, static_cast<uint32_t>(K_DIM * sizeof(float)), 0, 0, 0},
+                {false, 0, 0, 0});
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+                anchorMte2ToVEvent_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+                anchorMte2ToVEvent_);
+        }
+#endif
         PackLowerA(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
-        PackLowerB(task, head, rowStart, validRows, prefix, subBlock, slotBase);
-        PackUpperB(task, head, rowStart, future, subBlock, slotBase);
+        PackLowerB(
+            task, head, rowStart, validRows, prefix, subBlock, slotBase,
+            anchorBase);
+        PackUpperB(
+            task, head, rowStart, future, subBlock, slotBase, anchorBase);
     }
 
     __aicore__ inline void PackLowerA(
@@ -754,26 +842,14 @@ private:
 
     __aicore__ inline void PackLowerB(
         const ChunkTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
-        uint32_t prefix, uint32_t subBlock, uint64_t slotBase)
+        uint32_t prefix, uint32_t subBlock, uint64_t slotBase,
+        AscendC::LocalTensor<float> anchorBase)
     {
         auto data = Plane(0);
         auto gate = Plane(1);
-        auto anchor = Plane(2);
         auto exponent = Plane(3);
         const uint32_t cols = K_DIM / 2;
         const uint32_t col = subBlock * cols;
-        const uint32_t anchorRow =
-            task.begin + rowStart + (validRows > 8 ? 8 : validRows - 1);
-        Load(anchor,
-             gkGm_[TensorOffset<VARLEN_TND>(
-                 tiling_, task.batchIdx, head, anchorRow, col)],
-             cols);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-        for (uint32_t row = 1; row < kLowerPackRows; ++row) {
-            AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
-        }
-        AscendC::PipeBarrier<PIPE_V>();
-#endif
         for (uint32_t sourceRow = 0; sourceRow < prefix; sourceRow += kLowerPackRows) {
             const uint32_t rows =
                 sourceRow + kLowerPackRows <= prefix ? kLowerPackRows : prefix - sourceRow;
@@ -792,10 +868,11 @@ private:
             KdaRegbaseGateScale<true, false>(
                 (__ubuf__ float *)data.GetPhyAddr(),
                 (__ubuf__ float *)gate.GetPhyAddr(),
-                (__ubuf__ float *)anchor.GetPhyAddr(),
+                (__ubuf__ float *)anchorBase[col].GetPhyAddr(),
                 (__ubuf__ float *)0, rows, cols);
 #else
-            AscendC::Sub(exponent, anchor, gate, count);
+            SubRowsWithAnchor<true>(
+                exponent, gate, anchorBase[col], rows, cols);
             Exp2(exponent, exponent, count);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(data, data, exponent, count);
@@ -809,32 +886,26 @@ private:
 
     __aicore__ inline void PackUpperB(
         const ChunkTask &task, uint32_t head, uint32_t rowStart, uint32_t future,
-        uint32_t subBlock, uint64_t slotBase)
+        uint32_t subBlock, uint64_t slotBase,
+        AscendC::LocalTensor<float> anchorBase)
     {
         // data/gate/anchor/exponent may each contain 16 x 128 FP32 values.
         // Give every matrix two adjacent 4 KiB planes; beta temporaries start
         // after those non-overlapping 8 KiB regions.
         auto data = Plane(0);
         auto gate = Plane(2);
-        auto anchor = Plane(4);
         auto exponent = Plane(6);
         auto beta = Plane(8);
         auto betaBroadcast = Plane(9);
-        const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
-                                     rowStart + 8 : task.end - task.begin - 1;
-        const uint32_t anchorRow = task.begin + anchorLocal;
+        if (subBlock != 0) {
+            LoadScalarRows(
+                beta,
+                betaGm_[ScalarOffset<VARLEN_TND>(
+                    tiling_, task.batchIdx, head, task.begin + rowStart)],
+                future);
+        }
         for (uint32_t col = 0; col < K_DIM; col += 128) {
             const uint32_t cols = col + 128 <= K_DIM ? 128 : K_DIM - col;
-            Load(anchor,
-                 gkGm_[TensorOffset<VARLEN_TND>(
-                     tiling_, task.batchIdx, head, anchorRow, col)],
-                 cols);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-            for (uint32_t row = 1; row < kUpperPackRows; ++row) {
-                AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
-            }
-            AscendC::PipeBarrier<PIPE_V>();
-#endif
             for (uint32_t sourceRow = 0; sourceRow < future; sourceRow += kUpperPackRows) {
                 const uint32_t rows =
                     sourceRow + kUpperPackRows <= future ? kUpperPackRows : future - sourceRow;
@@ -852,37 +923,29 @@ private:
                     rows, cols, TensorRowElements());
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 if (subBlock != 0) {
-                    LoadScalarRows(
-                        beta,
-                        betaGm_[ScalarOffset<VARLEN_TND>(
-                            tiling_, task.batchIdx, head, token)],
-                        rows);
                     KdaRegbaseGateScale<false, true>(
                         (__ubuf__ float *)data.GetPhyAddr(),
                         (__ubuf__ float *)gate.GetPhyAddr(),
-                        (__ubuf__ float *)anchor.GetPhyAddr(),
-                        (__ubuf__ float *)beta.GetPhyAddr(),
+                        (__ubuf__ float *)anchorBase[col].GetPhyAddr(),
+                        (__ubuf__ float *)beta[sourceRow].GetPhyAddr(),
                         rows, cols);
                 } else {
                     KdaRegbaseGateScale<false, false>(
                         (__ubuf__ float *)data.GetPhyAddr(),
                         (__ubuf__ float *)gate.GetPhyAddr(),
-                        (__ubuf__ float *)anchor.GetPhyAddr(),
+                        (__ubuf__ float *)anchorBase[col].GetPhyAddr(),
                         (__ubuf__ float *)0, rows, cols);
                 }
 #else
-                AscendC::Sub(exponent, gate, anchor, count);
+                SubRowsWithAnchor<false>(
+                    exponent, gate, anchorBase[col], rows, cols);
                 Exp2(exponent, exponent, count);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(data, data, exponent, count);
                 if (subBlock != 0) {
-                    LoadScalarRows(
-                        beta,
-                        betaGm_[ScalarOffset<VARLEN_TND>(
-                            tiling_, task.batchIdx, head, token)],
-                        rows);
                     AscendC::Brcb(
-                        betaBroadcast, beta, static_cast<uint8_t>((rows + 7) / 8), {1, 8});
+                        betaBroadcast, beta[sourceRow],
+                        static_cast<uint8_t>((rows + 7) / 8), {1, 8});
                     AscendC::PipeBarrier<PIPE_V>();
                     const uint8_t rowStride =
                         static_cast<uint8_t>(cols * sizeof(float) / 32);
@@ -922,7 +985,6 @@ private:
         auto q = Plane(3);
         auto k = Plane(4);
         auto gate = Plane(5);
-        auto anchor = Plane(6);
         auto posScale = Plane(7);
         auto negScale = Plane(8);
         auto beta = Plane(9);
@@ -940,9 +1002,8 @@ private:
         AscendC::Duplicate(dbAcc, 0.0f, ownedRows);
 #endif
 
-        const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
-                                     rowStart + 8 : task.end - task.begin - 1;
-        const uint32_t anchorRow = task.begin + anchorLocal;
+        auto anchorBase = Plane(
+            20 + (VARLEN_TND ? (slot & 1U) : (slot & 3U)));
         LoadScalarRows(
             beta,
             betaGm_[ScalarOffset<VARLEN_TND>(
@@ -955,15 +1016,6 @@ private:
         for (uint32_t col = 0; col < K_DIM; col += 128) {
             const uint32_t cols = col + 128 <= K_DIM ? 128 : K_DIM - col;
             const uint32_t count = ownedRows * cols;
-            Load(anchor,
-                 gkGm_[TensorOffset<VARLEN_TND>(
-                     tiling_, task.batchIdx, head, anchorRow, col)],
-                 cols);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-            for (uint32_t row = 1; row < ownedRows; ++row) {
-                AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
-            }
-#endif
             const uint64_t resultBase =
                 slotBase / sizeof(float) + tiling_.resultRegionOffset / sizeof(float);
             LoadMatrixRowsPair(
@@ -1001,13 +1053,15 @@ private:
                 (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
                 (__ubuf__ float *)k.GetPhyAddr(),
                 (__ubuf__ float *)gate.GetPhyAddr(),
-                (__ubuf__ float *)anchor.GetPhyAddr(),
+                (__ubuf__ float *)anchorBase[col].GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
                 ownedRows, cols);
 #else
-            AscendC::Sub(posScale, gate, anchor, count);
-            AscendC::Sub(negScale, anchor, gate, count);
+            SubRowsWithAnchor<false>(
+                posScale, gate, anchorBase[col], ownedRows, cols);
+            SubRowsWithAnchor<true>(
+                negScale, gate, anchorBase[col], ownedRows, cols);
             Exp2(posScale, posScale, count);
             Exp2(negScale, negScale, count);
             AscendC::PipeBarrier<PIPE_V>();
@@ -1032,10 +1086,24 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
 #endif
 
-            LoadRows(inputGrad,
-                     dqGm_[TensorOffset<VARLEN_TND>(
-                         tiling_, task.batchIdx, head, tokenBegin, col)],
-                     ownedRows, cols, TensorRowElements());
+            // dq/dk are independent FP32 inputs.  Issue both MTE2 transfers
+            // before consuming either one, then prefetch dg while their
+            // Vector adds and MTE3 stores are in flight.  This preserves the
+            // same live values but removes three serialized queue round trips
+            // from the A2/A3 hot path.
+            LoadMatrixRowsPair(
+                inputGrad,
+                dqGm_[TensorOffset<VARLEN_TND>(
+                    tiling_, task.batchIdx, head, tokenBegin, col)],
+                ownedRows, cols, TensorRowElements(),
+                product,
+                dkGm_[TensorOffset<VARLEN_TND>(
+                    tiling_, task.batchIdx, head, tokenBegin, col)],
+                ownedRows, cols, TensorRowElements());
+            const uint32_t dgInputSlot = CopyInMatrixRows(
+                dgGm_[TensorOffset<VARLEN_TND>(
+                    tiling_, task.batchIdx, head, tokenBegin, col)],
+                ownedRows, cols, TensorRowElements());
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseAdd2(
                 (__ubuf__ float *)output.GetPhyAddr(),
@@ -1049,30 +1117,24 @@ private:
                           tiling_, task.batchIdx, head, tokenBegin, col)],
                       output, ownedRows, cols, TensorRowElements());
 
-            LoadRows(inputGrad,
-                     dkGm_[TensorOffset<VARLEN_TND>(
-                         tiling_, task.batchIdx, head, tokenBegin, col)],
-                     ownedRows, cols, TensorRowElements());
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseAdd3(
                 (__ubuf__ float *)output.GetPhyAddr(),
-                (__ubuf__ float *)inputGrad.GetPhyAddr(),
+                (__ubuf__ float *)product.GetPhyAddr(),
                 (__ubuf__ float *)rawDkLower.GetPhyAddr(),
                 (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
                 count);
 #else
             AscendC::Add(temp, rawDkLower, rawDkUpper, count);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(output, inputGrad, temp, count);
+            AscendC::Add(output, product, temp, count);
 #endif
             StoreRows(dkOutGm_[TensorOffset<VARLEN_TND>(
                           tiling_, task.batchIdx, head, tokenBegin, col)],
                       output, ownedRows, cols, TensorRowElements());
 
-            LoadRows(inputGrad,
-                     dgGm_[TensorOffset<VARLEN_TND>(
-                         tiling_, task.batchIdx, head, tokenBegin, col)],
-                     ownedRows, cols, TensorRowElements());
+            ConsumeMatrixRows(
+                inputGrad, MatrixInput<float>(dgInputSlot), dgInputSlot, count);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseDg(
                 (__ubuf__ float *)output.GetPhyAddr(),
@@ -1147,6 +1209,7 @@ private:
     uint32_t currentMatrixInputSlot_ = 0;
     event_t matrixMte2ToVEvent_[kMatrixInputBufferCount]{};
     event_t matrixVToMte2Event_[kMatrixInputBufferCount]{};
+    event_t anchorMte2ToVEvent_{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
