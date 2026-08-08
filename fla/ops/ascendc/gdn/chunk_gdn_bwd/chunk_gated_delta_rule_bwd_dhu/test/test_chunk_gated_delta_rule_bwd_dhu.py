@@ -583,6 +583,42 @@ def test_variable(
 
     # print(f"test_variable 被调用了第 {test_variable.call_count} 次")
 
+def test_kda_keywise_gk_path():
+    """KDA P0: q/k are already qg/kg and gk is FP32 base-2 log space."""
+    B, H, T, K, V, BT = 1, 4, 145, 128, 128, 64
+    scale = 1.0 / math.sqrt(K)
+    torch.manual_seed(20260805)
+    qg = (torch.randn(B, H, T, K) * 0.01).to(torch.bfloat16)
+    kg = (torch.randn(B, H, T, K) * 0.01).to(torch.bfloat16)
+    w = (torch.randn(B, H, T, K) * 0.01).to(torch.bfloat16)
+    d_o = (torch.randn(B, H, T, V) * 0.01).to(torch.bfloat16)
+    dv = (torch.randn(B, H, T, V) * 0.01).to(torch.bfloat16)
+    gk = -torch.rand(B, H, T, K, dtype=torch.float32) * 0.05
+
+    nt = (T + BT - 1) // BT
+    dh_ref = torch.empty(B, H, nt, K, V, dtype=torch.bfloat16)
+    dv_ref = torch.empty_like(dv)
+    d_next = torch.zeros(B, H, K, V, dtype=torch.float32)
+    for chunk in range(nt - 1, -1, -1):
+        begin, end = chunk * BT, min((chunk + 1) * BT, T)
+        dh_ref[:, :, chunk] = d_next.to(torch.bfloat16)
+        d_next_q = dh_ref[:, :, chunk].float()
+        dv_scan = torch.matmul(kg[:, :, begin:end].float(), d_next_q) + dv[:, :, begin:end].float()
+        dv_ref[:, :, begin:end] = dv_scan.to(torch.bfloat16)
+        carry = d_next_q * torch.exp2(gk[:, :, end - 1]).unsqueeze(-1)
+        term_q = torch.matmul(qg[:, :, begin:end].float().transpose(-1, -2),
+                              d_o[:, :, begin:end].float()) * scale
+        term_w = torch.matmul(w[:, :, begin:end].float().transpose(-1, -2), dv_scan)
+        d_next = (carry + term_q - term_w).to(torch.bfloat16).float()
+
+    dh_npu, _, dv_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+        qg.npu(), kg.npu(), w.npu(), d_o.npu(), dv.npu(),
+        scale=scale, chunk_size=BT, g=None, gK=gk.npu(), h0=None, dht=None,
+        cu_seqlens=None, chunk_indices=None)
+    torch.testing.assert_close(dh_npu.cpu(), dh_ref, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(dv_npu.cpu(), dv_ref, rtol=2e-2, atol=2e-2)
+
+
 if __name__ == "__main__":
     import os
     torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
@@ -596,3 +632,4 @@ if __name__ == "__main__":
     test_fix(B=1, Hk=4, Hv=4, T=128, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.bfloat16, gtype=torch.bfloat16)
     # GVA varlen smoke
     test_variable(B=1, Hk=4, Hv=8, T=512, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    test_kda_keywise_gk_path()

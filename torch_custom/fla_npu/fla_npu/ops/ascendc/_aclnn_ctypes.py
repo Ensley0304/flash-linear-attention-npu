@@ -77,6 +77,20 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkKdaBwd": [
+        *([ctypes.c_void_p] * 20),
+        ctypes.c_char_p,
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_double,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_char_p,
+        *([ctypes.c_void_p] * 17),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnChunkKdaBwdIntra": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -965,6 +979,198 @@ def npu_chunk_kda_fwd(
     )
     initial_state_out = initial_state
     return (*outputs, initial_state_out)
+
+
+def npu_chunk_kda_bwd(
+    q,
+    k,
+    v,
+    beta,
+    gk,
+    Aqk,
+    Akk,
+    w,
+    qg,
+    kg,
+    v_new,
+    h,
+    do,
+    scale,
+    chunk_size=64,
+    *,
+    layout="BSND",
+    raw_g=None,
+    A_log=None,
+    dt_bias=None,
+    initial_state=None,
+    dht=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+    safe_gate=True,
+    lower_bound=-5.0,
+    use_gate_in_kernel=False,
+    state_v_first=False,
+    recompute_policy="NONE",
+):
+    """Run the dense no-recompute KDA backward P0 executor.
+
+    The public tensors follow ``layout`` while saved forward tensors are the
+    fixed head-major/sequence-major exports of ``npu_chunk_kda_fwd``.
+    Unsupported P1 inputs are rejected explicitly instead of selecting an
+    unvalidated kernel key.
+    """
+
+    import torch
+
+    layout = str(layout)
+    if layout not in {"BSND", "BNSD"}:
+        raise RuntimeError("npu_chunk_kda_bwd: P0 layout must be BSND or BNSD.")
+    chunk_size = int(chunk_size)
+    if chunk_size != 64:
+        raise RuntimeError("npu_chunk_kda_bwd: P0 requires chunk_size=64.")
+    safe_gate = _optional_bool(safe_gate, True)
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
+    state_v_first = _optional_bool(state_v_first, False)
+    recompute_policy = str(recompute_policy)
+    if not safe_gate or use_gate_in_kernel or state_v_first or recompute_policy != "NONE":
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: P0 requires safe_gate=True, "
+            "use_gate_in_kernel=False, state_v_first=False and recompute_policy='NONE'."
+        )
+    if any(value is not None for value in (
+        raw_g, A_log, dt_bias, initial_state, dht, cu_seqlens, chunk_indices
+    )):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: raw gate, state and varlen inputs are reserved for later keys."
+        )
+
+    q_shape = _shape(q)
+    k_shape = _shape(k)
+    v_shape = _shape(v)
+    beta_shape = _shape(beta)
+    if len(q_shape) != 4 or q_shape != k_shape:
+        raise RuntimeError("npu_chunk_kda_bwd: q/k must be equal dense rank-4 tensors.")
+    if layout == "BSND":
+        batch, seqlen, heads, key_dim = q_shape
+        expected_v = (batch, seqlen, heads, 128)
+        expected_beta = (batch, seqlen, heads)
+    else:
+        batch, heads, seqlen, key_dim = q_shape
+        expected_v = (batch, heads, seqlen, 128)
+        expected_beta = (batch, heads, seqlen)
+    if key_dim != 128 or v_shape != expected_v or beta_shape != expected_beta:
+        raise RuntimeError("npu_chunk_kda_bwd: P0 requires H=HV and K=V=128.")
+    if q.dtype != torch.bfloat16 or k.dtype != q.dtype or v.dtype != q.dtype:
+        raise RuntimeError("npu_chunk_kda_bwd: P0 q/k/v must be BF16.")
+    if beta.dtype not in {torch.bfloat16, torch.float32}:
+        raise RuntimeError("npu_chunk_kda_bwd: beta must be BF16 or FP32.")
+    if gk.dtype != torch.float32:
+        raise RuntimeError("npu_chunk_kda_bwd: saved gk must be FP32.")
+
+    head_shape = (batch, heads, seqlen, 128)
+    matrix_shape = (batch, heads, seqlen, 64)
+    chunks = _kda_ceil_div(seqlen, chunk_size)
+    saved_bf16 = (Aqk, Akk, w, qg, kg, v_new, h, do)
+    if any(tensor.dtype != torch.bfloat16 for tensor in saved_bf16):
+        raise RuntimeError("npu_chunk_kda_bwd: saved tensors and do must be BF16.")
+    if _shape(gk) != head_shape:
+        raise RuntimeError("npu_chunk_kda_bwd: gk must be [B,H,T,128].")
+    if _shape(Aqk) != matrix_shape or _shape(Akk) != matrix_shape:
+        raise RuntimeError("npu_chunk_kda_bwd: Aqk/Akk must be [B,H,T,64].")
+    if any(_shape(tensor) != head_shape for tensor in (w, qg, kg, v_new)):
+        raise RuntimeError("npu_chunk_kda_bwd: w/qg/kg/v_new must be [B,H,T,128].")
+    if _shape(h) != (batch, chunks, heads, 128, 128):
+        raise RuntimeError("npu_chunk_kda_bwd: h must be [B,NT,H,128,128].")
+    if _shape(do) != (batch, seqlen, heads, 128):
+        raise RuntimeError("npu_chunk_kda_bwd: do is always sequence-major BSND.")
+
+    dq = _empty_like(q, dtype=torch.float32)
+    dk = _empty_like(k, dtype=torch.float32)
+    dv = _empty_like(v)
+    db = _empty_like(beta, dtype=torch.float32)
+    dg = _empty_like(q, dtype=torch.float32)
+    outputs = (dq, dk, dv, db, dg, None, None, None)
+    scratch = (
+        _empty(matrix_shape, q, dtype=torch.float32),
+        _empty(head_shape, q),
+        _empty((batch, heads, chunks, 128, 128), q),
+        _empty(head_shape, q),
+        _empty(head_shape, q, dtype=torch.float32),
+        _empty(head_shape, q, dtype=torch.float32),
+        _empty((batch, heads, seqlen), q, dtype=torch.float32),
+        _empty(head_shape, q, dtype=torch.float32),
+        _empty(matrix_shape, q, dtype=torch.float32),
+    )
+    layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
+    recompute_buffer = ctypes.create_string_buffer(recompute_policy.encode("utf-8"))
+
+    # ChunkKdaBwd passes the public tensors directly to its internal L0 chain.
+    # Preserve their logical dense shape in the aclTensor storage metadata;
+    # the default ctypes descriptor exposes only the flat allocation capacity,
+    # which makes the L0 tiling callbacks observe rank-1 inputs.  These tensors
+    # were checked contiguous above, so the ND logical shape describes the
+    # actual row-major storage without a conversion or copy.
+    def nd_tensor(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(None, name)
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
+    _call_aclnn(
+        "aclnnChunkKdaBwd",
+        lambda ctx: [
+            nd_tensor(ctx, q, "q"),
+            nd_tensor(ctx, k, "k"),
+            nd_tensor(ctx, v, "v"),
+            nd_tensor(ctx, beta, "beta"),
+            nd_tensor(ctx, gk, "gk"),
+            nd_tensor(ctx, Aqk, "Aqk"),
+            nd_tensor(ctx, Akk, "Akk"),
+            nd_tensor(ctx, w, "w"),
+            nd_tensor(ctx, qg, "qg"),
+            nd_tensor(ctx, kg, "kg"),
+            nd_tensor(ctx, v_new, "v_new"),
+            nd_tensor(ctx, h, "h"),
+            nd_tensor(ctx, do, "do"),
+            nd_tensor(ctx, raw_g, "raw_g"),
+            nd_tensor(ctx, A_log, "A_log"),
+            nd_tensor(ctx, dt_bias, "dt_bias"),
+            nd_tensor(ctx, initial_state, "initial_state"),
+            nd_tensor(ctx, dht, "dht"),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.cast(layout_buffer, ctypes.c_char_p),
+            ctypes.c_double(float(scale)),
+            ctypes.c_int64(chunk_size),
+            ctypes.c_bool(safe_gate),
+            ctypes.c_double(float(lower_bound)),
+            ctypes.c_bool(use_gate_in_kernel),
+            ctypes.c_bool(state_v_first),
+            ctypes.cast(recompute_buffer, ctypes.c_char_p),
+            *(nd_tensor(ctx, tensor, name) for tensor, name in zip(
+                scratch,
+                (
+                    "dAqk_scratch", "dv0_scratch", "dh_scratch",
+                    "dv_scan_scratch", "dq_base_scratch", "dk_base_scratch",
+                    "db_base_scratch", "dg_base_scratch", "dAkk_scratch",
+                ),
+            )),
+            nd_tensor(ctx, dq, "dq"),
+            nd_tensor(ctx, dk, "dk"),
+            nd_tensor(ctx, dv, "dv"),
+            nd_tensor(ctx, db, "db"),
+            nd_tensor(ctx, dg, "dg"),
+            nd_tensor(ctx, None, "dh0"),
+            nd_tensor(ctx, None, "dA"),
+            nd_tensor(ctx, None, "dbias"),
+        ],
+        outputs,
+    )
+    return outputs
 
 
 def npu_kda_gate_cumsum(
