@@ -140,6 +140,15 @@ def test_kernel_c_a5_gate_partitions_head_window_across_subblocks():
     assert gate.count("laneBegin < headCount ? laneBegin + 1U : laneBegin") == 2
 
 
+def test_kernel_c_a5_gate_uses_single_pass_register_reverse_scan():
+    gate = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_gate.h")
+    assert "KdaBwdCGateReverseScanA5" in gate
+    scan = gate.split("KdaBwdCGateReverseScanA5(", 1)[1]
+    scan = scan.split("template <bool SAFE_GATE", 1)[0]
+    assert "for (uint32_t row = rows; row > 0; --row)" in scan
+    assert "Add(accumulator, accumulator, value, mask)" in scan
+
+
 def test_kernel_c_wy_preserves_vector_raw_dependencies():
     vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_vector.h")
     dq_stage = vector.split("if (stage == 0)", 1)[1].split(

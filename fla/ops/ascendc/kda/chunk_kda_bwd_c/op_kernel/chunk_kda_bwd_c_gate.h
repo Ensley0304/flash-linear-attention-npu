@@ -2,8 +2,38 @@
 #define CHUNK_KDA_BWD_C_GATE_H
 
 #include "chunk_kda_bwd_c_common.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "kernel_utils/vector/regbase.hpp"
+#endif
 
 namespace KDA {
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+using namespace AscendC::MicroAPI;
+
+// Reverse inclusive scan over [rows, 128].  Two 64-column register blocks
+// keep the running sum resident while walking rows once.  This replaces the
+// six full-tile Hillis-Steele passes used by the portable path.
+static __simd_vf__ inline void KdaBwdCGateReverseScanA5(
+    __ubuf__ float *dst, __ubuf__ float *src, uint16_t rows)
+{
+    constexpr uint32_t kCols = 128;
+    constexpr uint32_t kRegCols =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    RegTensor<float> value;
+    RegTensor<float> accumulator;
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    for (uint32_t col = 0; col < kCols; col += kRegCols) {
+        Duplicate(accumulator, 0.0f, mask);
+        for (uint32_t row = rows; row > 0; --row) {
+            const uint32_t offset = (row - 1U) * kCols + col;
+            DataCopy(value, src + offset);
+            Add(accumulator, accumulator, value, mask);
+            DataCopy(dst + offset, accumulator, mask);
+        }
+    }
+}
+#endif
 
 template <bool SAFE_GATE, typename RawGateT>
 class ChunkKdaBwdCGateProcess {
@@ -191,6 +221,13 @@ private:
             {false, 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        KdaBwdCGateReverseScanA5(
+            (__ubuf__ float *)dst.GetPhyAddr(),
+            (__ubuf__ float *)src.GetPhyAddr(),
+            static_cast<uint16_t>(validC));
+        auto upstream = dst;
+#else
         bool srcIsInput = true;
         for (uint32_t step = 1; step < validC; step <<= 1U) {
             auto in = srcIsInput ? src : dst;
@@ -205,6 +242,7 @@ private:
             srcIsInput = !srcIsInput;
         }
         auto upstream = srcIsInput ? src : dst;
+#endif
         if (applyRaw) {
             ApplyRawGate(task, head, validC, upstream, *dAAcc, *dbAcc);
         } else {
