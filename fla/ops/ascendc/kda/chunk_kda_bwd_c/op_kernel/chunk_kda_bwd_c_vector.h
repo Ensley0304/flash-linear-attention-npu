@@ -114,14 +114,26 @@ private:
 
             // kE has no AIC dependency.  Build it while AIC produces the
             // independent base GEMMs instead of serializing it behind S2.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // S0 is published before AIC starts S1.  Consume it here so kE
+            // and dq share the same resident exp2(gk) tile instead of
+            // loading gk and evaluating exp twice.
+            AscendC::CrossCoreWaitFlag(kS0Ready);
+#endif
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
-                BuildKE(task, headBase + lane, validLen, slot,
-                        subBlockIdx, subBlockNum);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                BuildKE<true>(task, headBase + lane, validLen, slot,
+                              subBlockIdx, subBlockNum);
+#else
+                BuildKE<false>(task, headBase + lane, validLen, slot,
+                               subBlockIdx, subBlockNum);
+#endif
             }
 
             // S0: consume dq_raw and finish dq_base.
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             AscendC::CrossCoreWaitFlag(kS0Ready);
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
@@ -129,6 +141,7 @@ private:
                 FinishBaseStage(task, headBase + lane, validLen, slot,
                                 subBlockIdx, subBlockNum, 0);
             }
+#endif
             // S1: consume dk_raw and finish dk_state.
             AscendC::CrossCoreWaitFlag(kS1Ready);
             for (uint32_t lane = 0; lane < headCount; ++lane) {
@@ -412,6 +425,7 @@ private:
         end = validLen * (subBlockIdx + 1U) / subBlockNum;
     }
 
+    template <bool FINISH_DQ>
     __aicore__ inline void BuildKE(
         const WyChunkTask &task, uint32_t head, uint32_t validLen, uint64_t slot,
         uint32_t subBlockIdx, uint32_t subBlockNum)
@@ -434,6 +448,16 @@ private:
             AscendC::Mul(out, k, e, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             Store(wsBf16_[ws + row * 128], out, rows * 128);
+            if constexpr (FINISH_DQ) {
+                // e still contains exp2(gk).  Finish dq before this tile is
+                // reused, eliminating one gk GM load and one Exp2 pass.
+                Load(k, dqRawGm_[tokenBase + row * 128], rows * 128);
+                AscendC::Mul(out, k, e, rows * 128);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Muls(out, out, tiling_.scale, rows * 128);
+                AscendC::PipeBarrier<PIPE_V>();
+                Store(dqGm_[tokenBase + row * 128], out, rows * 128);
+            }
         }
     }
 

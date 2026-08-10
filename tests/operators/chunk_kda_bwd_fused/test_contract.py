@@ -154,6 +154,17 @@ def test_kernel_c_wy_preserves_vector_raw_dependencies():
         "PipeBarrier<PIPE_V>()") < gate_stage.index("Sub(qk, qk, acc")
 
 
+def test_kernel_c_a5_reuses_resident_gate_for_ke_and_dq():
+    vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_vector.h")
+    assert "BuildKE<true>" in vector
+    build_ke = vector.split("__aicore__ inline void BuildKE(", 1)[1]
+    build_ke = build_ke.split(
+        "__aicore__ inline void FinishBaseStage(", 1)[0]
+    assert "e still contains exp2(gk)" in build_ke
+    assert "dqRawGm_" in build_ke
+    assert "dqGm_" in build_ke
+
+
 def test_source_files_have_balanced_braces():
     # This deliberately simple guard catches accidental truncation while
     # porting the large fused headers before a CANN compiler is available.
