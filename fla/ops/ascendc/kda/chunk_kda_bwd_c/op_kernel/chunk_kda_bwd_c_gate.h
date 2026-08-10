@@ -50,13 +50,16 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
     for (uint32_t col = 0; col < kCols; col += kRegCols) {
         RegTensor<float> dbReg;
         RegTensor<float> dASum;
+        RegTensor<float> upstreamAcc;
         DataCopy(dbReg, dbAcc + col);
         Duplicate(dASum, 0.0f, mask);
+        Duplicate(upstreamAcc, 0.0f, mask);
         RegTensor<float> biasReg;
         if constexpr (HAS_BIAS) {
             DataCopy(biasReg, bias + col);
         }
-        for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t rowIter = rows; rowIter > 0; --rowIter) {
+            const uint32_t row = rowIter - 1U;
             const uint32_t offset = row * kCols + col;
             RegTensor<float> raw;
             RegTensor<float> denominator;
@@ -77,7 +80,8 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             Adds(oneMinus, oneMinus, 1.0f, mask);
             Mul(gradient, oneMinus, sigmoid, mask);
             DataCopy(upstreamReg, upstream + offset);
-            Mul(gradient, gradient, upstreamReg, mask);
+            Add(upstreamAcc, upstreamAcc, upstreamReg, mask);
+            Mul(gradient, gradient, upstreamAcc, mask);
             Muls(gradient, gradient, chainScale, mask);
             Mul(dAReg, gradient, raw, mask);
             Add(dbReg, dbReg, gradient, mask);
@@ -283,11 +287,16 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        KdaBwdCGateReverseScanA5(
-            (__ubuf__ float *)dst.GetPhyAddr(),
-            (__ubuf__ float *)src.GetPhyAddr(),
-            static_cast<uint16_t>(validC));
-        auto upstream = dst;
+        // The safe raw-gate path folds the reverse scan into the gate
+        // register pass.  Other paths still materialize the scan result.
+        auto upstream = src;
+        if (!applyRaw || !SAFE_GATE) {
+            KdaBwdCGateReverseScanA5(
+                (__ubuf__ float *)dst.GetPhyAddr(),
+                (__ubuf__ float *)src.GetPhyAddr(),
+                static_cast<uint16_t>(validC));
+            upstream = dst;
+        }
 #else
         bool srcIsInput = true;
         for (uint32_t step = 1; step < validC; step <<= 1U) {
