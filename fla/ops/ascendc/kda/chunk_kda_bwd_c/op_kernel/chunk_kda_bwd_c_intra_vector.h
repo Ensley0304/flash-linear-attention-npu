@@ -59,13 +59,15 @@ public:
         }
         workspaceGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_));
 
-        pipe_->InitBuffer(inputQueue_, 2, kIoBufferBytes);
+        pipe_->InitBuffer(inputPing_, kIoBufferBytes);
+        pipe_->InitBuffer(inputPong_, kIoBufferBytes);
         pipe_->InitBuffer(outputPing_, kIoBufferBytes);
         pipe_->InitBuffer(outputPong_, kIoBufferBytes);
         pipe_->InitBuffer(matrixInputPing_, kIoBufferBytes);
         pipe_->InitBuffer(matrixInputPong_, kIoBufferBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
         pipe_->InitBuffer(reduceTmp_, kReduceTmpBytes);
+        InitInputEvents();
         InitMatrixInputEvents();
         InitOutputEvents();
         if constexpr (VARLEN_TND) {
@@ -145,6 +147,7 @@ public:
                 ++windowIdx;
             }
         }
+        ReleaseInputEvents();
         ReleaseMatrixInputEvents();
         ReleaseOutputEvents();
     }
@@ -260,6 +263,36 @@ private:
         return slot == 0 ? outputPing_.Get<float>() : outputPong_.Get<float>();
     }
 
+    __aicore__ inline void InitInputEvents()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            inputMte2ToVEvent_[slot] = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+            inputVToMte2Event_[slot] = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+                inputVToMte2Event_[slot]);
+        }
+    }
+
+    __aicore__ inline void ReleaseInputEvents()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+                inputVToMte2Event_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(
+                inputMte2ToVEvent_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
+                inputVToMte2Event_[slot]);
+        }
+    }
+
+    template <typename T>
+    __aicore__ inline AscendC::LocalTensor<T> InputBuffer(uint32_t slot)
+    {
+        return slot == 0 ? inputPing_.Get<T>() : inputPong_.Get<T>();
+    }
+
     template <typename SrcT>
     __aicore__ inline void ConvertToFp32(
         AscendC::LocalTensor<float> dst,
@@ -360,21 +393,28 @@ private:
     __aicore__ inline void Load(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src, uint32_t count)
     {
-        auto input = inputQueue_.AllocTensor<float>();
+        const uint32_t slot = currentInputSlot_;
+        auto input = InputBuffer<float>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::DataCopyPad(
             input, src, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
-        inputQueue_.EnQue(input);
-        auto ready = inputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        currentInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseCopy(
             (__ubuf__ float *)dst.GetPhyAddr(),
-            (__ubuf__ float *)ready.GetPhyAddr(),
+            (__ubuf__ float *)input.GetPhyAddr(),
             count);
 #else
-        AscendC::Adds(dst, ready, 0.0f, count);
+        AscendC::Adds(dst, input, 0.0f, count);
         AscendC::PipeBarrier<PIPE_V>();
 #endif
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
     }
 
     template <typename SrcT>
@@ -382,14 +422,21 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<SrcT> src,
         uint32_t count)
     {
-        auto input = inputQueue_.AllocTensor<SrcT>();
+        const uint32_t slot = currentInputSlot_;
+        auto input = InputBuffer<SrcT>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::DataCopyPad(
             input, src, {1, static_cast<uint32_t>(count * sizeof(SrcT)), 0, 0, 0},
             {false, 0, 0, 0});
-        inputQueue_.EnQue(input);
-        auto ready = inputQueue_.DeQue<SrcT>();
-        ConvertToFp32(dst, ready, count);
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        currentInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        ConvertToFp32(dst, input, count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
     }
 
     __aicore__ inline void Store(
@@ -423,7 +470,10 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src,
         uint32_t rows, uint32_t cols, uint32_t srcRowElements)
     {
-        auto input = inputQueue_.AllocTensor<float>();
+        const uint32_t slot = currentInputSlot_;
+        auto input = InputBuffer<float>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(float)),
@@ -432,25 +482,32 @@ private:
             0
         };
         AscendC::DataCopyPad(input, src, copyParams, {false, 0, 0, 0});
-        inputQueue_.EnQue(input);
-        auto ready = inputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        currentInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseCopy(
             (__ubuf__ float *)dst.GetPhyAddr(),
-            (__ubuf__ float *)ready.GetPhyAddr(),
+            (__ubuf__ float *)input.GetPhyAddr(),
             rows * cols);
 #else
-        AscendC::Adds(dst, ready, 0.0f, rows * cols);
+        AscendC::Adds(dst, input, 0.0f, rows * cols);
         AscendC::PipeBarrier<PIPE_V>();
 #endif
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
     }
 
     __aicore__ inline void LoadRows(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<DataT> src,
         uint32_t rows, uint32_t cols, uint32_t srcRowElements)
     {
-        auto input = inputQueue_.AllocTensor<DataT>();
+        const uint32_t slot = currentInputSlot_;
+        auto input = InputBuffer<DataT>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(DataT)),
@@ -459,10 +516,14 @@ private:
             0
         };
         AscendC::DataCopyPad(input, src, copyParams, {false, 0, 0, 0});
-        inputQueue_.EnQue(input);
-        auto ready = inputQueue_.DeQue<DataT>();
-        ConvertToFp32(dst, ready, rows * cols);
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        currentInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        ConvertToFp32(dst, input, rows * cols);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
     }
 
     __aicore__ inline void StoreRows(
@@ -530,7 +591,10 @@ private:
     {
         constexpr uint32_t kLocalRowElements = 32 / sizeof(float);
         const uint32_t stagedElements = rows * kLocalRowElements;
-        auto input = inputQueue_.AllocTensor<float>();
+        const uint32_t slot = currentInputSlot_;
+        auto input = InputBuffer<float>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(sizeof(float)),
@@ -539,23 +603,28 @@ private:
             0
         };
         AscendC::DataCopyPad(input, src, copyParams, {false, 0, 0, 0});
-        inputQueue_.EnQue(input);
-        auto ready = inputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        currentInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
         auto stage = ScalarStage();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseCopy(
             (__ubuf__ float *)stage.GetPhyAddr(),
-            (__ubuf__ float *)ready.GetPhyAddr(),
+            (__ubuf__ float *)input.GetPhyAddr(),
             stagedElements);
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         KdaRegbaseGatherScalars(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)stage.GetPhyAddr(),
             rows, kLocalRowElements);
 #else
-        AscendC::Adds(stage, ready, 0.0f, stagedElements);
+        AscendC::Adds(stage, input, 0.0f, stagedElements);
         AscendC::PipeBarrier<PIPE_V>();
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::Gather(
             dst, stage, ScalarGatherOffsets(), static_cast<uint32_t>(0), rows);
         AscendC::PipeBarrier<PIPE_V>();
@@ -570,7 +639,10 @@ private:
     {
         constexpr uint32_t kLocalRowElements = 32 / sizeof(SrcT);
         const uint32_t stagedElements = rows * kLocalRowElements;
-        auto input = inputQueue_.AllocTensor<SrcT>();
+        const uint32_t slot = currentInputSlot_;
+        auto input = InputBuffer<SrcT>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(sizeof(SrcT)),
@@ -579,20 +651,25 @@ private:
             0
         };
         AscendC::DataCopyPad(input, src, copyParams, {false, 0, 0, 0});
-        inputQueue_.EnQue(input);
-        auto ready = inputQueue_.DeQue<SrcT>();
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
+        currentInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[slot]);
         auto stage = ScalarStage();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        ConvertToFp32(stage, ready, stagedElements);
-        inputQueue_.FreeTensor(ready);
+        ConvertToFp32(stage, input, stagedElements);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         KdaRegbaseGatherScalars(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)stage.GetPhyAddr(),
             rows, kLocalRowElements);
 #else
-        AscendC::Cast(stage, ready, AscendC::RoundMode::CAST_NONE, stagedElements);
+        AscendC::Cast(stage, input, AscendC::RoundMode::CAST_NONE, stagedElements);
         AscendC::PipeBarrier<PIPE_V>();
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[slot]);
         AscendC::Gather(
             dst, stage, ScalarGatherOffsets()[kProcessRowBlock],
             static_cast<uint32_t>(0), rows);
@@ -1430,7 +1507,8 @@ private:
 
     ChunkKdaBwdCTilingData tiling_{};
     AscendC::TPipe *pipe_ = nullptr;
-    AscendC::TQue<AscendC::QuePosition::VECIN, 1> inputQueue_;
+    AscendC::TBuf<AscendC::QuePosition::VECCALC> inputPing_;
+    AscendC::TBuf<AscendC::QuePosition::VECCALC> inputPong_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> outputPing_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> outputPong_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> matrixInputPing_;
@@ -1443,6 +1521,9 @@ private:
     uint32_t currentOutputSlot_ = 0;
     event_t outputVToMte3Event_[2]{};
     event_t outputMte3ToVEvent_[2]{};
+    uint32_t currentInputSlot_ = 0;
+    event_t inputMte2ToVEvent_[2]{};
+    event_t inputVToMte2Event_[2]{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
