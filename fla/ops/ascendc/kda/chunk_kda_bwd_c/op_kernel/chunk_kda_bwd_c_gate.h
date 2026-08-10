@@ -87,7 +87,19 @@ private:
             const uint32_t headCount =
                 headBase + 1U < static_cast<uint32_t>(tiling_.headNum) ?
                     2U : 1U;
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // A5 launches two AIV sub-blocks for every logical AIC owner.
+            // Intra partitions its 32-row tile across those sub-blocks, but
+            // Gate owns a two-head window.  Give one head to each sub-block
+            // instead of redundantly scanning and storing both heads twice.
+            const uint32_t laneBegin = AscendC::GetSubBlockIdx();
+            const uint32_t laneEnd =
+                laneBegin < headCount ? laneBegin + 1U : laneBegin;
+#else
+            const uint32_t laneBegin = 0;
+            const uint32_t laneEnd = headCount;
+#endif
+            for (uint32_t lane = laneBegin; lane < laneEnd; ++lane) {
                 ProcessChunk(
                     taskIdx, headBase + lane, false, nullptr, nullptr);
             }
@@ -106,7 +118,15 @@ private:
           const uint32_t headCount =
               headBase + 1U < static_cast<uint32_t>(tiling_.headNum) ?
                   2U : 1U;
-          for (uint32_t lane = 0; lane < headCount; ++lane) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+          const uint32_t laneBegin = AscendC::GetSubBlockIdx();
+          const uint32_t laneEnd =
+              laneBegin < headCount ? laneBegin + 1U : laneBegin;
+#else
+          const uint32_t laneBegin = 0;
+          const uint32_t laneEnd = headCount;
+#endif
+          for (uint32_t lane = laneBegin; lane < laneEnd; ++lane) {
             const uint32_t head = headBase + lane;
             auto dbAcc = reduce_.Get<float>();
             auto dAAcc = dbAcc[128];

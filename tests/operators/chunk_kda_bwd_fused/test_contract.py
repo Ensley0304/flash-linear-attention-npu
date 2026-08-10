@@ -134,6 +134,12 @@ def test_kernel_c_intra_waits_for_both_vector_subblocks():
         "CrossCoreSetFlag<0x2, PIPE_MTE3>")
 
 
+def test_kernel_c_a5_gate_partitions_head_window_across_subblocks():
+    gate = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_gate.h")
+    assert gate.count("const uint32_t laneBegin = AscendC::GetSubBlockIdx();") == 2
+    assert gate.count("laneBegin < headCount ? laneBegin + 1U : laneBegin") == 2
+
+
 def test_kernel_c_wy_preserves_vector_raw_dependencies():
     vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_vector.h")
     dq_stage = vector.split("if (stage == 0)", 1)[1].split(
