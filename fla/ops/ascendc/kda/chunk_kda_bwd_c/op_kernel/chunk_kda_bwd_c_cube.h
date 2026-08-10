@@ -309,12 +309,12 @@ public:
                     tiling_, task.batchIdx, head, task.begin, 128);
                 const uint64_t dhOffset = WyDhOffset(
                     tiling_, task.batchIdx, head, task.chunkIdx);
+                // dk_base is one [C,128] result.  A5 can retain the complete
+                // right operand and FP32 accumulator, so issue one N=128 MMAD
+                // instead of two adjacent N=64 contractions.
                 RunTransposeBToOutput<Fp32C64Mmad, RowMajor, ColumnMajor>(
                     resource, vNew_, tokenV, dh_, dhOffset,
-                    dk_, tokenK, validLen, 64, 128, V_DIM);
-                RunTransposeBToOutput<Fp32C64Mmad, RowMajor, ColumnMajor>(
-                    resource, vNew_, tokenV, dh_, dhOffset + 64U * V_DIM,
-                    dk_, tokenK + 64U, validLen, 64, 128, V_DIM);
+                    dk_, tokenK, validLen, 128, 128, V_DIM);
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS1Ready);
 
