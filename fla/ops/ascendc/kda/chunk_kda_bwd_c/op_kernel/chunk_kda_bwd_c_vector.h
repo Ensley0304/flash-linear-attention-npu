@@ -50,15 +50,18 @@ public:
         // plane, so the full 96 KiB UB budget remains available to IO ping-pong.
         pipe_->InitBuffer(inputPing_, kIoBytes);
         pipe_->InitBuffer(inputPong_, kIoBytes);
-        pipe_->InitBuffer(outputQueue_, 2, kIoBytes);
+        pipe_->InitBuffer(outputPing_, kIoBytes);
+        pipe_->InitBuffer(outputPong_, kIoBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
         InitInputEvents();
+        InitOutputEvents();
     }
 
     __aicore__ inline void Process()
     {
         ProcessFused();
         ReleaseInputEvents();
+        ReleaseOutputEvents();
     }
 
 
@@ -264,6 +267,36 @@ private:
         return idx == 0 ? inputPing_.Get<T>() : inputPong_.Get<T>();
     }
 
+    __aicore__ inline void InitOutputEvents()
+    {
+        for (uint32_t idx = 0; idx < 2; ++idx) {
+            outputVToMte3Event_[idx] =
+                pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
+            outputMte3ToVEvent_[idx] =
+                pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+                outputMte3ToVEvent_[idx]);
+        }
+    }
+
+    __aicore__ inline void ReleaseOutputEvents()
+    {
+        for (uint32_t idx = 0; idx < 2; ++idx) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+                outputMte3ToVEvent_[idx]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(
+                outputVToMte3Event_[idx]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(
+                outputMte3ToVEvent_[idx]);
+        }
+    }
+
+    template <typename T>
+    __aicore__ inline AscendC::LocalTensor<T> OutputBuffer(uint32_t idx)
+    {
+        return idx == 0 ? outputPing_.Get<T>() : outputPong_.Get<T>();
+    }
+
     __aicore__ inline void Load(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src,
         uint32_t count)
@@ -314,13 +347,20 @@ private:
         AscendC::GlobalTensor<float> dst, AscendC::LocalTensor<float> src,
         uint32_t count)
     {
-        auto out = outputQueue_.AllocTensor<float>();
+        const uint32_t idx = currentOutput_;
+        auto out = OutputBuffer<float>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[idx]);
         AscendC::Adds(out, src, 0.0f, count);
-        outputQueue_.EnQue(out);
-        auto ready = outputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[idx]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[idx]);
         AscendC::DataCopyPad(
-            dst, ready, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0});
-        outputQueue_.FreeTensor(ready);
+            dst, out, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0});
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[idx]);
+        currentOutput_ ^= 1U;
     }
 
     __aicore__ inline void LoadRows(
@@ -380,14 +420,21 @@ private:
         AscendC::GlobalTensor<DataT> dst, AscendC::LocalTensor<float> src,
         uint32_t count)
     {
-        auto out = outputQueue_.AllocTensor<DataT>();
+        const uint32_t idx = currentOutput_;
+        auto out = OutputBuffer<DataT>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[idx]);
         AscendC::Cast(out, src, AscendC::RoundMode::CAST_RINT, count);
-        outputQueue_.EnQue(out);
-        auto ready = outputQueue_.DeQue<DataT>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[idx]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[idx]);
         AscendC::DataCopyPad(
-            dst, ready,
+            dst, out,
             {1, static_cast<uint32_t>(count * sizeof(DataT)), 0, 0, 0});
-        outputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[idx]);
+        currentOutput_ ^= 1U;
     }
 
     __aicore__ inline void StoreStrided(
@@ -395,11 +442,16 @@ private:
         AscendC::LocalTensor<float> src, uint32_t rows, uint32_t cols,
         uint32_t physicalCols)
     {
-        auto out = outputQueue_.AllocTensor<DataT>();
+        const uint32_t idx = currentOutput_;
+        auto out = OutputBuffer<DataT>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[idx]);
         AscendC::Cast(
             out, src, AscendC::RoundMode::CAST_RINT, rows * cols);
-        outputQueue_.EnQue(out);
-        auto ready = outputQueue_.DeQue<DataT>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[idx]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[idx]);
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(DataT)),
@@ -407,8 +459,10 @@ private:
             static_cast<uint32_t>((physicalCols - cols) * sizeof(DataT)),
             0
         };
-        AscendC::DataCopyPad(dst, ready, copyParams);
-        outputQueue_.FreeTensor(ready);
+        AscendC::DataCopyPad(dst, out, copyParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[idx]);
+        currentOutput_ ^= 1U;
     }
 
     __aicore__ inline void Exp2(
@@ -931,11 +985,15 @@ private:
     AscendC::GlobalTensor<DataT> wsBf16_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> inputPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> inputPong_;
-    AscendC::TQue<AscendC::TPosition::VECOUT, 1> outputQueue_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> outputPing_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> outputPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> arena_;
     AscendC::TEventID inputMte2ToVEvent_[2];
     AscendC::TEventID inputVToMte2Event_[2];
+    AscendC::TEventID outputVToMte3Event_[2];
+    AscendC::TEventID outputMte3ToVEvent_[2];
     uint32_t currentInput_ = 0;
+    uint32_t currentOutput_ = 0;
 };
 
 } // namespace KDA
