@@ -60,12 +60,14 @@ public:
         workspaceGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_));
 
         pipe_->InitBuffer(inputQueue_, 2, kIoBufferBytes);
-        pipe_->InitBuffer(outputQueue_, 2, kIoBufferBytes);
+        pipe_->InitBuffer(outputPing_, kIoBufferBytes);
+        pipe_->InitBuffer(outputPong_, kIoBufferBytes);
         pipe_->InitBuffer(matrixInputPing_, kIoBufferBytes);
         pipe_->InitBuffer(matrixInputPong_, kIoBufferBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
         pipe_->InitBuffer(reduceTmp_, kReduceTmpBytes);
         InitMatrixInputEvents();
+        InitOutputEvents();
         if constexpr (VARLEN_TND) {
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
             auto offsets = ScalarGatherOffsets();
@@ -144,6 +146,7 @@ public:
             }
         }
         ReleaseMatrixInputEvents();
+        ReleaseOutputEvents();
     }
 
 private:
@@ -226,6 +229,35 @@ private:
     __aicore__ inline AscendC::LocalTensor<T> MatrixInput(uint32_t slot)
     {
         return slot == 0 ? matrixInputPing_.Get<T>() : matrixInputPong_.Get<T>();
+    }
+
+    __aicore__ inline void InitOutputEvents()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            outputVToMte3Event_[slot] = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>());
+            outputMte3ToVEvent_[slot] = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>());
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+                outputMte3ToVEvent_[slot]);
+        }
+    }
+
+    __aicore__ inline void ReleaseOutputEvents()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+                outputMte3ToVEvent_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(
+                outputVToMte3Event_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(
+                outputMte3ToVEvent_[slot]);
+        }
+    }
+
+    __aicore__ inline AscendC::LocalTensor<float> OutputBuffer(uint32_t slot)
+    {
+        return slot == 0 ? outputPing_.Get<float>() : outputPong_.Get<float>();
     }
 
     template <typename SrcT>
@@ -364,7 +396,10 @@ private:
         AscendC::GlobalTensor<float> dst, AscendC::LocalTensor<float> src, uint32_t count)
     {
         AscendC::PipeBarrier<PIPE_V>();
-        auto output = outputQueue_.AllocTensor<float>();
+        const uint32_t slot = currentOutputSlot_;
+        auto output = OutputBuffer(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[slot]);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseCopy(
             (__ubuf__ float *)output.GetPhyAddr(),
@@ -373,11 +408,15 @@ private:
 #else
         AscendC::Adds(output, src, 0.0f, count);
 #endif
-        outputQueue_.EnQue(output);
-        auto ready = outputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[slot]);
         AscendC::DataCopyPad(
-            dst, ready, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0});
-        outputQueue_.FreeTensor(ready);
+            dst, output, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0});
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[slot]);
+        currentOutputSlot_ ^= 1U;
     }
 
     __aicore__ inline void LoadRows(
@@ -431,7 +470,10 @@ private:
         uint32_t rows, uint32_t cols, uint32_t dstRowElements)
     {
         AscendC::PipeBarrier<PIPE_V>();
-        auto output = outputQueue_.AllocTensor<float>();
+        const uint32_t slot = currentOutputSlot_;
+        auto output = OutputBuffer(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[slot]);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseCopy(
             (__ubuf__ float *)output.GetPhyAddr(),
@@ -440,8 +482,10 @@ private:
 #else
         AscendC::Adds(output, src, 0.0f, rows * cols);
 #endif
-        outputQueue_.EnQue(output);
-        auto ready = outputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[slot]);
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(float)),
@@ -449,8 +493,10 @@ private:
             static_cast<uint32_t>((dstRowElements - cols) * sizeof(float)),
             0
         };
-        AscendC::DataCopyPad(dst, ready, copyParams);
-        outputQueue_.FreeTensor(ready);
+        AscendC::DataCopyPad(dst, output, copyParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[slot]);
+        currentOutputSlot_ ^= 1U;
     }
 
     __aicore__ inline uint32_t TensorRowElements() const
@@ -587,8 +633,11 @@ private:
         }
         constexpr uint32_t kLocalRowElements = 32 / sizeof(float);
         AscendC::PipeBarrier<PIPE_V>();
+        const uint32_t slot = currentOutputSlot_;
+        auto output = OutputBuffer(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[slot]);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        auto output = outputQueue_.AllocTensor<float>();
         KdaRegbaseScatterScalars(
             (__ubuf__ float *)output.GetPhyAddr(),
             (__ubuf__ float *)src.GetPhyAddr(),
@@ -596,14 +645,15 @@ private:
 #else
         AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
         AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
-        auto output = outputQueue_.AllocTensor<float>();
         for (uint32_t row = 0; row < rows; ++row) {
             AscendC::Duplicate(
                 output[row * kLocalRowElements], src.GetValue(row), 1);
         }
 #endif
-        outputQueue_.EnQue(output);
-        auto ready = outputQueue_.DeQue<float>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
+            outputVToMte3Event_[slot]);
         // For VECOUT->GM DataCopyPad, a non-aligned local block is rounded to
         // one 32-byte data block.  Adjacent staged rows therefore use
         // srcStride=0; GM dstStride remains byte-based.
@@ -614,8 +664,10 @@ private:
             static_cast<uint32_t>((ScalarRowElements() - 1) * sizeof(float)),
             0
         };
-        AscendC::DataCopyPad(dst, ready, copyParams);
-        outputQueue_.FreeTensor(ready);
+        AscendC::DataCopyPad(dst, output, copyParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+            outputMte3ToVEvent_[slot]);
+        currentOutputSlot_ ^= 1U;
     }
 
     __aicore__ inline uint64_t SlotBase(uint32_t slot) const
@@ -1379,7 +1431,8 @@ private:
     ChunkKdaBwdCTilingData tiling_{};
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::TQue<AscendC::QuePosition::VECIN, 1> inputQueue_;
-    AscendC::TQue<AscendC::QuePosition::VECOUT, 1> outputQueue_;
+    AscendC::TBuf<AscendC::QuePosition::VECCALC> outputPing_;
+    AscendC::TBuf<AscendC::QuePosition::VECCALC> outputPong_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> matrixInputPing_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> matrixInputPong_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> arena_;
@@ -1387,6 +1440,9 @@ private:
     uint32_t currentMatrixInputSlot_ = 0;
     event_t matrixMte2ToVEvent_[kMatrixInputBufferCount]{};
     event_t matrixVToMte2Event_[kMatrixInputBufferCount]{};
+    uint32_t currentOutputSlot_ = 0;
+    event_t outputVToMte3Event_[2]{};
+    event_t outputMte3ToVEvent_[2]{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
