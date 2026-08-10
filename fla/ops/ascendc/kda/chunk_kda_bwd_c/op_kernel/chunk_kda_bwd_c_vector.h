@@ -40,6 +40,39 @@ static __simd_vf__ inline void KdaBwdCRowDotAccA5(
             dst + row, sum, fullMask);
     }
 }
+
+static __simd_vf__ inline void KdaBwdCMulRowDotSubA5(
+    __ubuf__ float *productDst, __ubuf__ float *rowAcc,
+    __ubuf__ float *lhs, __ubuf__ float *rhs,
+    uint16_t rows, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    for (uint32_t row = 0; row < rows; ++row) {
+        RegTensor<float> acc;
+        Duplicate(acc, 0.0f, fullMask);
+        for (uint32_t col = 0; col < cols; col += kRegElements) {
+            const uint32_t offset = row * cols + col;
+            RegTensor<float> lhsReg;
+            RegTensor<float> rhsReg;
+            RegTensor<float> product;
+            DataCopy(lhsReg, lhs + offset);
+            DataCopy(rhsReg, rhs + offset);
+            Mul(product, lhsReg, rhsReg, fullMask);
+            Add(acc, acc, product, fullMask);
+            DataCopy(productDst + offset, product, fullMask);
+        }
+        RegTensor<float> sum;
+        RegTensor<float> current;
+        ReduceSum(sum, acc, fullMask);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(current, rowAcc + row);
+        Sub(current, current, sum, fullMask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            rowAcc + row, current, fullMask);
+    }
+}
 #endif
 
 template <typename DataT, uint32_t V_DIM, typename BetaT>
@@ -668,12 +701,21 @@ private:
             // dKgb_raw has the opposite sign of mathematical dKgb, so fold
             // the minus sign into each consumer instead of materializing a
             // second full matrix.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            KdaBwdCMulRowDotSubA5(
+                (__ubuf__ float *)tmp.GetPhyAddr(),
+                (__ubuf__ float *)dbRows[row - begin].GetPhyAddr(),
+                (__ubuf__ float *)dkg.GetPhyAddr(),
+                (__ubuf__ float *)ke.GetPhyAddr(),
+                static_cast<uint16_t>(rows), 128);
+#else
             AscendC::Mul(tmp, dkg, ke, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             RowReduce128(scalar, tmp, rows);
             AscendC::Sub(
                 dbRows[row - begin], dbRows[row - begin], scalar, rows);
             AscendC::PipeBarrier<PIPE_V>();
+#endif
 
             BroadcastRows(brcb, betaRows[row - begin], rows);
 

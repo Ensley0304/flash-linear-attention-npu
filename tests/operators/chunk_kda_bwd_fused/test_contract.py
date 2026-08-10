@@ -208,6 +208,19 @@ def test_kernel_c_a5_reduces_state_gate_dot_products_in_registers():
     assert vector.count("KdaBwdCRowDotAccA5(") == 3
 
 
+def test_kernel_c_a5_fuses_dkgb_product_and_db_reduction():
+    vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_vector.h")
+    assert "KdaBwdCMulRowDotSubA5" in vector
+    helper = vector.split("KdaBwdCMulRowDotSubA5(", 1)[1]
+    helper = helper.split("template <typename DataT", 1)[0]
+    for operation in (
+        "Mul(product", "DataCopy(productDst", "ReduceSum(sum",
+        "Sub(current", "StoreDist::DIST_FIRST_ELEMENT_B32",
+    ):
+        assert operation in helper
+    assert vector.count("KdaBwdCMulRowDotSubA5(") == 2
+
+
 def test_source_files_have_balanced_braces():
     # This deliberately simple guard catches accidental truncation while
     # porting the large fused headers before a CANN compiler is available.
