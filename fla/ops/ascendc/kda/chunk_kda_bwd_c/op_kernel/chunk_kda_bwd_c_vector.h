@@ -395,12 +395,18 @@ private:
         // dead during the reduction and provides aligned 8-float partial
         // slots for every row, avoiding a dedicated 512-byte TBuf.
         auto partial = dst[kRows];
-        for (uint32_t row = 0; row < rows; ++row) {
-            AscendC::WholeReduceSum(
-                partial[row * 8], src[row * 128], 64, 2, 1, 1, 8);
-        }
+        // Reduce all row-first-halves and row-second-halves as two batches.
+        // WholeReduceSum packs one scalar per repeat contiguously, so keep the
+        // two output vectors in disjoint aligned regions and add them.  This
+        // preserves (sum first64) + (sum second64) while eliminating the
+        // per-row API loop.
+        auto upperPartial = partial[64];
+        AscendC::WholeReduceSum(
+            partial, src, 64, static_cast<uint8_t>(rows), 1, 1, 16);
+        AscendC::WholeReduceSum(
+            upperPartial, src[64], 64, static_cast<uint8_t>(rows), 1, 1, 16);
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::WholeReduceSum(dst, partial, 2, rows, 1, 1, 1);
+        AscendC::Add(dst, partial, upperPartial, rows);
         AscendC::PipeBarrier<PIPE_V>();
     }
 
