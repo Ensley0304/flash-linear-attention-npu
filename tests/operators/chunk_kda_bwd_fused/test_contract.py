@@ -191,6 +191,21 @@ def test_kernel_c_a5_reuses_resident_gate_for_ke_and_dq():
     assert "dqGm_" in build_ke
 
 
+def test_kernel_c_a5_reduces_state_gate_dot_products_in_registers():
+    vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_vector.h")
+    assert "KdaBwdCRowDotAccA5" in vector
+    helper = vector.split("KdaBwdCRowDotAccA5(", 1)[1]
+    helper = helper.split("template <typename DataT", 1)[0]
+    for operation in (
+        "Mul(product", "Add(acc", "ReduceSum(sum",
+        "StoreDist::DIST_FIRST_ELEMENT_B32",
+    ):
+        assert operation in helper
+    state_gate = vector.split("__aicore__ inline void PrepareStateGate", 1)[1]
+    state_gate = state_gate.split("__aicore__ inline void AddPreparedStateGate", 1)[0]
+    assert "KdaBwdCRowDotAccA5(" in state_gate
+
+
 def test_source_files_have_balanced_braces():
     # This deliberately simple guard catches accidental truncation while
     # porting the large fused headers before a CANN compiler is available.

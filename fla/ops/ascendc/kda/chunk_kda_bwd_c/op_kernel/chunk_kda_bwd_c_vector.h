@@ -4,8 +4,43 @@
 #include "kernel_operator.h"
 #include "catlass/arch/cross_core_sync.hpp"
 #include "chunk_kda_bwd_c_common.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "kernel_utils/vector/regbase.hpp"
+#endif
 
 namespace KDA {
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+static __simd_vf__ inline void KdaBwdCRowDotAccA5(
+    __ubuf__ float *dst, __ubuf__ float *lhs, __ubuf__ float *rhs,
+    uint16_t rows, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    for (uint32_t row = 0; row < rows; ++row) {
+        RegTensor<float> acc;
+        Duplicate(acc, 0.0f, fullMask);
+        for (uint32_t col = 0; col < cols; col += kRegElements) {
+            RegTensor<float> lhsReg;
+            RegTensor<float> rhsReg;
+            RegTensor<float> product;
+            DataCopy(lhsReg, lhs + row * cols + col);
+            DataCopy(rhsReg, rhs + row * cols + col);
+            Mul(product, lhsReg, rhsReg, fullMask);
+            Add(acc, acc, product, fullMask);
+        }
+        RegTensor<float> sum;
+        RegTensor<float> current;
+        ReduceSum(sum, acc, fullMask);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(current, dst + row);
+        Add(sum, sum, current, fullMask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            dst + row, sum, fullMask);
+    }
+}
+#endif
 
 template <typename DataT, uint32_t V_DIM, typename BetaT>
 class ChunkKdaBwdCVectorProcess {
@@ -741,9 +776,13 @@ private:
         for (uint32_t col = 0; col < 128; col += kRows) {
             auto x = Plane(2);
             auto y = Plane(3);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             auto product = Plane(4);
+#endif
             auto reduced = Plane(5);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             auto tileReduced = Plane(6);
+#endif
             AscendC::Duplicate(reduced, 0.0f, kRows);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
@@ -753,11 +792,19 @@ private:
                 LoadRows(
                     y, dhGm_[dhBase + col * V_DIM + v0],
                     kRows, 128, V_DIM);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                KdaBwdCRowDotAccA5(
+                    (__ubuf__ float *)reduced.GetPhyAddr(),
+                    (__ubuf__ float *)x.GetPhyAddr(),
+                    (__ubuf__ float *)y.GetPhyAddr(),
+                    static_cast<uint16_t>(kRows), 128);
+#else
                 AscendC::Mul(product, x, y, kRows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
                 RowReduce128(tileReduced, product, kRows);
                 AscendC::Add(reduced, reduced, tileReduced, kRows);
                 AscendC::PipeBarrier<PIPE_V>();
+#endif
             }
             AscendC::Mul(reduced, reduced, gateAnchor[col], kRows);
             AscendC::PipeBarrier<PIPE_V>();
