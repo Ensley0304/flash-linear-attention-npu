@@ -204,6 +204,8 @@ def test_kernel_c_a5_reduces_state_gate_dot_products_in_registers():
     state_gate = vector.split("__aicore__ inline void PrepareStateGate", 1)[1]
     state_gate = state_gate.split("__aicore__ inline void AddPreparedStateGate", 1)[0]
     assert "KdaBwdCRowDotAccA5(" in state_gate
+    # Definition + state-gate h*dh + token db dot product.
+    assert vector.count("KdaBwdCRowDotAccA5(") == 3
 
 
 def test_source_files_have_balanced_braces():

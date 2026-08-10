@@ -598,6 +598,13 @@ private:
                     LoadRows(
                         y, vGm_[tokenBaseV + row * V_DIM + v0],
                         rows, 128, V_DIM);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    KdaBwdCRowDotAccA5(
+                        (__ubuf__ float *)Plane(7)[row - begin].GetPhyAddr(),
+                        (__ubuf__ float *)x.GetPhyAddr(),
+                        (__ubuf__ float *)y.GetPhyAddr(),
+                        static_cast<uint16_t>(rows), 128);
+#else
                     AscendC::Mul(aux, x, y, rows * 128);
                     AscendC::PipeBarrier<PIPE_V>();
                     RowReduce128(z, aux, rows);
@@ -605,6 +612,7 @@ private:
                         Plane(7)[row - begin],
                         Plane(7)[row - begin], z, rows);
                     AscendC::PipeBarrier<PIPE_V>();
+#endif
                     MulRowsByScalar(z, x, brcb, rows, 128);
                     StoreStrided(
                         dvGm_[tokenBaseV + row * V_DIM + v0],
