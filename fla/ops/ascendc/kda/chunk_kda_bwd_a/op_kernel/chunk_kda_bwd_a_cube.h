@@ -63,10 +63,10 @@ private:
         KDA_BWD_A_K * V_DIM * sizeof(float);
     static_assert(L1_USED_BYTES <= 512 * 1024,
                   "Kernel A L1 resident/scratch exceeds 512 KiB.");
-    static_assert(L0A_BYTES <= ArchTag::L0A_SIZE,
-                  "Kernel A L0A tile exceeds capacity.");
-    static_assert(L0B_BYTES <= ArchTag::L0B_SIZE,
-                  "Kernel A L0B tile exceeds capacity.");
+    static_assert(2 * L0A_BYTES <= ArchTag::L0A_SIZE,
+                  "Kernel A ping-pong L0A tiles exceed capacity.");
+    static_assert(2 * L0B_BYTES <= ArchTag::L0B_SIZE,
+                  "Kernel A ping-pong L0B tiles exceed capacity.");
     static_assert(L0C_BYTES <= ArchTag::L0C_SIZE,
                   "Kernel A FP32 L0C tile exceeds capacity.");
 
@@ -74,7 +74,10 @@ private:
     static constexpr int32_t EVENT_SCRATCH = 1;
     static constexpr int32_t EVENT_L0A = 0;
     static constexpr int32_t EVENT_L0B = 1;
+    static constexpr int32_t EVENT_L0A_PONG = 2;
+    static constexpr int32_t EVENT_L0B_PONG = 3;
     static constexpr int32_t EVENT_L0_READY = 0;
+    static constexpr int32_t EVENT_L0_READY_PONG = 1;
     static constexpr int32_t EVENT_L0C = 0;
 
 public:
@@ -96,6 +99,8 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PONG);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
     }
 
@@ -145,6 +150,8 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PONG);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
 
         // Drain the final one or two producer-first generations only after
@@ -408,8 +415,12 @@ private:
         Catlass::Arch::Resource<ArchTag> resource;
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
         auto l1B = resource.l1Buf.template GetBufferByByte<T>(SCRATCH_OFFSET);
-        auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
-        auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
+        AscendC::LocalTensor<T> l0A[2] = {
+            resource.l0ABuf.template GetBufferByByte<T>(0),
+            resource.l0ABuf.template GetBufferByByte<T>(L0A_BYTES)};
+        AscendC::LocalTensor<T> l0B[2] = {
+            resource.l0BBuf.template GetBufferByByte<T>(0),
+            resource.l0BBuf.template GetBufferByByte<T>(L0B_BYTES)};
         auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
 
         AscendC::GlobalTensor<T> gmRight;
@@ -443,11 +454,20 @@ private:
         Mmad mmad;
         for (uint32_t k0 = 0; k0 < V_DIM; k0 += 64) {
             const bool lastK = k0 + 64 >= V_DIM;
+            const uint32_t l0Slot = (k0 / 64) & 1U;
+            const int32_t l0AEvent =
+                l0Slot == 0 ? EVENT_L0A : EVENT_L0A_PONG;
+            const int32_t l0BEvent =
+                l0Slot == 0 ? EVENT_L0B : EVENT_L0B_PONG;
+            const int32_t l0ReadyEvent =
+                l0Slot == 0 ? EVENT_L0_READY : EVENT_L0_READY_PONG;
             auto l0ATensor = tla::MakeTensor(
-                l0A, tla::MakeLayout<T, typename Copy::LayoutTagL0A>(m, 64),
+                l0A[l0Slot],
+                tla::MakeLayout<T, typename Copy::LayoutTagL0A>(m, 64),
                 Catlass::Arch::PositionL0A{});
             auto l0BTensor = tla::MakeTensor(
-                l0B, tla::MakeLayout<T, typename Copy::LayoutTagL0B>(
+                l0B[l0Slot],
+                tla::MakeLayout<T, typename Copy::LayoutTagL0B>(
                          64, outCols),
                 Catlass::Arch::PositionL0B{});
             auto tileA = GetTile(
@@ -456,7 +476,7 @@ private:
             auto tileB = GetTile(
                 l1BTensor, tla::MakeCoord(k0, 0),
                 tla::MakeShape(64, outCols));
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
             copyA(l0ATensor, tileA);
             if (releaseDo && lastK) {
                 // This flag is issued by MTE1 after the final resident-do
@@ -468,18 +488,18 @@ private:
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
                     EVENT_SCRATCH);
             }
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
             copyB(l0BTensor, tileB);
             if (lastK) {
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
                     EVENT_SCRATCH);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
             const uint8_t unitFlag = lastK ? 0b11 : 0b10;
             mmad(l0CTensor, l0ATensor, l0BTensor, k0 == 0, unitFlag);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
 
