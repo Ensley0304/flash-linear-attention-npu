@@ -410,6 +410,35 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
     }
 
+    __aicore__ inline void ReduceRows128InPlace(
+        AscendC::LocalTensor<float> values, uint32_t rows)
+    {
+        // Preserve the original pairwise tree, but issue all independent row
+        // pairs at one tree level through repeat strides.  Two calls cover the
+        // 128 columns because a repeat mask spans 64 FP32 elements.
+        for (uint32_t stride = 1; stride < rows; stride <<= 1U) {
+            const uint32_t pairCount =
+                (rows + stride - 1U) / (stride << 1U);
+            if (pairCount == 1U) {
+                AscendC::Add(
+                    values, values, values[stride * 128U], 128);
+            } else {
+                const uint8_t repeatStride =
+                    static_cast<uint8_t>(stride * 32U);
+                AscendC::Add(
+                    values, values, values[stride * 128U], 64,
+                    static_cast<uint8_t>(pairCount),
+                    {1, 1, 1, repeatStride, repeatStride, repeatStride});
+                AscendC::Add(
+                    values[64], values[64],
+                    values[stride * 128U + 64U], 64,
+                    static_cast<uint8_t>(pairCount),
+                    {1, 1, 1, repeatStride, repeatStride, repeatStride});
+            }
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+    }
+
     __aicore__ inline void NormalRows(
         uint32_t validLen, uint32_t subBlockIdx, uint32_t subBlockNum,
         uint32_t &begin, uint32_t &end)
@@ -525,15 +554,7 @@ private:
                 Load(x, kGm_[tokenBase + row * 128], rows * 128);
                 AscendC::Mul(y, x, z, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
-                for (uint32_t stride = 1; stride < rows; stride <<= 1U) {
-                    for (uint32_t r = 0; r + stride < rows;
-                         r += stride << 1U) {
-                        AscendC::Add(
-                            y[r * 128], y[r * 128],
-                            y[(r + stride) * 128], 128);
-                    }
-                    AscendC::PipeBarrier<PIPE_V>();
-                }
+                ReduceRows128InPlace(y, rows);
                 AscendC::Add(statePartial, statePartial, y, 128);
                 AscendC::PipeBarrier<PIPE_V>();
             } else {
