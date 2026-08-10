@@ -168,29 +168,23 @@ private:
     __aicore__ inline void WaitSlotFree(
         uint32_t slot, uint32_t fallbackFlag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        (void)fallbackFlag;
         if (slot == 0) {
             Catlass::Arch::CrossCoreWaitFlag(freeFlag0_);
         } else {
             Catlass::Arch::CrossCoreWaitFlag(freeFlag1_);
         }
-#else
-        AscendC::CrossCoreWaitFlag(fallbackFlag);
-#endif
     }
 
     __aicore__ inline void PublishSlotReady(
         uint32_t slot, uint32_t fallbackFlag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        (void)fallbackFlag;
         if (slot == 0) {
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(readyFlag0_);
         } else {
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(readyFlag1_);
         }
-#else
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(fallbackFlag);
-#endif
     }
 
     __aicore__ inline void LoadDo(
@@ -307,7 +301,11 @@ private:
         auto blockOut = GetTile(
             outTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(task.validC, V_DIM));
+#if (defined(CATLASS_ARCH) && CATLASS_ARCH == 3510)
         typename DvCopy::template CopyL0CToDst<decltype(blockOut)> fix;
+#else
+        typename DvCopy::template CopyL0CToGm<decltype(blockOut)> fix;
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -390,7 +388,11 @@ private:
         auto blockOut = GetTile(
             outTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(KDA_BWD_A_K, V_DIM));
+#if (defined(CATLASS_ARCH) && CATLASS_ARCH == 3510)
         typename Q0Copy::template CopyL0CToDst<decltype(blockOut)> fix;
+#else
+        typename Q0Copy::template CopyL0CToGm<decltype(blockOut)> fix;
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -490,7 +492,11 @@ private:
         auto blockOut = GetTile(
             outTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(validC, outCols));
+#if (defined(CATLASS_ARCH) && CATLASS_ARCH == 3510)
         typename Copy::template CopyL0CToDst<decltype(blockOut)> fix;
+#else
+        typename Copy::template CopyL0CToGm<decltype(blockOut)> fix;
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -542,12 +548,10 @@ private:
     GM_ADDR dAqk_ = nullptr;
     GM_ADDR workspace_ = nullptr;
     ChunkKdaBwdATilingData tiling_{};
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     Catlass::Arch::CrossCoreFlag readyFlag0_{KDA_BWD_A_READY_FLAG0};
     Catlass::Arch::CrossCoreFlag readyFlag1_{KDA_BWD_A_READY_FLAG1};
     Catlass::Arch::CrossCoreFlag freeFlag0_{KDA_BWD_A_FREE_FLAG0};
     Catlass::Arch::CrossCoreFlag freeFlag1_{KDA_BWD_A_FREE_FLAG1};
-#endif
 };
 
 } // namespace KDA

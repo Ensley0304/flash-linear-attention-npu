@@ -100,13 +100,18 @@ struct WyTileGemmDirect {
             typename TileCopy::template CopyGmToL1A<TensorA>;
         using CopyGmToL1B =
             typename TileCopy::template CopyGmToL1B<TensorB>;
-        using CopyL0CToDst =
+#if (defined(CATLASS_ARCH) && CATLASS_ARCH == 3510)
+        using CopyL0CToOutput =
             typename TileCopy::template CopyL0CToDst<TensorC>;
+#else
+        using CopyL0CToOutput =
+            typename TileCopy::template CopyL0CToGm<TensorC>;
+#endif
         CopyGmToL1A copyGmA;
         CopyGmToL1B copyGmB;
         CopyL1ToL0A copyL0A;
         CopyL1ToL0B copyL0B;
-        CopyL0CToDst copyC;
+        CopyL0CToOutput copyC;
         TileMmad mm;
 
         const uint32_t m = shape.m() == 1 ? 16 : shape.m();

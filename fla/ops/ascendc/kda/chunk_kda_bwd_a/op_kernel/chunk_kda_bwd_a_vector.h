@@ -3,8 +3,8 @@
 
 #include "kernel_operator.h"
 #include "chunk_kda_bwd_a_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "catlass/arch/cross_core_sync.hpp"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/chunk_kda_bwd_a_regbase.h"
 #endif
 
@@ -82,29 +82,23 @@ private:
     __aicore__ inline void WaitSlotReady(
         uint32_t slot, uint32_t fallbackFlag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        (void)fallbackFlag;
         if (slot == 0) {
             Catlass::Arch::CrossCoreWaitFlag(readyFlag0_);
         } else {
             Catlass::Arch::CrossCoreWaitFlag(readyFlag1_);
         }
-#else
-        AscendC::CrossCoreWaitFlag(fallbackFlag);
-#endif
     }
 
     __aicore__ inline void PublishSlotFree(
         uint32_t slot, uint32_t fallbackFlag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        (void)fallbackFlag;
         if (slot == 0) {
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(freeFlag0_);
         } else {
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(freeFlag1_);
         }
-#else
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(fallbackFlag);
-#endif
     }
 
     __aicore__ inline void ProcessQ0(
@@ -242,12 +236,10 @@ private:
     AscendC::TEventID vToMte3_;
     AscendC::TEventID mte3ToMte2_;
     AscendC::TEventID mte3ToV_;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     Catlass::Arch::CrossCoreFlag readyFlag0_{KDA_BWD_A_READY_FLAG0};
     Catlass::Arch::CrossCoreFlag readyFlag1_{KDA_BWD_A_READY_FLAG1};
     Catlass::Arch::CrossCoreFlag freeFlag0_{KDA_BWD_A_FREE_FLAG0};
     Catlass::Arch::CrossCoreFlag freeFlag1_{KDA_BWD_A_FREE_FLAG1};
-#endif
 };
 
 } // namespace KDA

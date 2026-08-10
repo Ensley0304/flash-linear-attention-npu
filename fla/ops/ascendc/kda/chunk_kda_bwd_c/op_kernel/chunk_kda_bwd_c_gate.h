@@ -72,8 +72,9 @@ public:
 private:
     __aicore__ inline void ProcessAccumulatedGate()
     {
-        const uint32_t core =
-            AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
+        const uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        const uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+        const uint32_t core = AscendC::GetBlockIdx() / subBlockNum;
         const uint32_t headWindows =
             (static_cast<uint32_t>(tiling_.headNum) + 1U) / 2U;
         const uint64_t groups =
@@ -87,7 +88,8 @@ private:
             const uint32_t headCount =
                 headBase + 1U < static_cast<uint32_t>(tiling_.headNum) ?
                     2U : 1U;
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = subBlockIdx; lane < headCount;
+                 lane += subBlockNum) {
                 ProcessChunk(
                     taskIdx, headBase + lane, false, nullptr, nullptr);
             }
@@ -96,8 +98,9 @@ private:
 
     __aicore__ inline void ProcessRawGate()
     {
-        const uint32_t core =
-            AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
+        const uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        const uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+        const uint32_t core = AscendC::GetBlockIdx() / subBlockNum;
         const uint32_t headWindows =
             (static_cast<uint32_t>(tiling_.headNum) + 1U) / 2U;
         for (uint32_t headWindow = core; headWindow < headWindows;
@@ -106,7 +109,8 @@ private:
           const uint32_t headCount =
               headBase + 1U < static_cast<uint32_t>(tiling_.headNum) ?
                   2U : 1U;
-          for (uint32_t lane = 0; lane < headCount; ++lane) {
+          for (uint32_t lane = subBlockIdx; lane < headCount;
+               lane += subBlockNum) {
             const uint32_t head = headBase + lane;
             auto dbAcc = reduce_.Get<float>();
             auto dAAcc = dbAcc[128];

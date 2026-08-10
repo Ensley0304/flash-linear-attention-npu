@@ -48,6 +48,14 @@ public:
         TensorA &a, TensorB &b, TensorC &c,
         const Catlass::GemmCoord &shape)
     {
+        // Lower and upper contractions reuse the same physical L1/L0
+        // buffers.  Give every direct contraction a complete event lifetime
+        // so the next one cannot consume a stale free credit on A2/A3.
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kEventL0C);
         constexpr uint32_t kL1PlaneBytes = 128 * 128 * sizeof(float);
         auto l1AStorage =
             resource_.l1Buf.template GetBufferByByte<float>(0);
@@ -127,10 +135,19 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kEventL0C);
 
+#if (defined(CATLASS_ARCH) && CATLASS_ARCH == 3510)
         typename Copy::template CopyL0CToDst<TensorC> fix;
+#else
+        typename Copy::template CopyL0CToGm<TensorC> fix;
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kEventL0C);
         fix(c, l0C, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kEventL0C);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kEventL0C);
     }
 
 private:
@@ -154,11 +171,6 @@ public:
     {
         tiling_ = tiling;
         AscendC::SetHF32Mode(false);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(0);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(1);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(0);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(1);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(0);
     }
 
     __aicore__ inline void Process()
@@ -170,11 +182,13 @@ public:
 #endif
         using RowMajor = Catlass::layout::RowMajor;
         using ColumnMajor = Catlass::layout::ColumnMajor;
+        using LowerMmad =
+            CIntraSingleTileMmad<RowMajor, 64, kCIntraChunkSize>;
+        using UpperMmad =
+            CIntraSingleTileMmad<ColumnMajor, 32, 2 * kCIntraChunkSize>;
         Catlass::Arch::Resource<ArchTag> resource;
-        CIntraSingleTileMmad<RowMajor, 64, kCIntraChunkSize>
-            lower(resource);
-        CIntraSingleTileMmad<ColumnMajor, 32, 2 * kCIntraChunkSize>
-            upper(resource);
+        LowerMmad lower(resource);
+        UpperMmad upper(resource);
 
         const uint32_t core = AscendC::GetBlockIdx();
         const uint32_t headWindows =

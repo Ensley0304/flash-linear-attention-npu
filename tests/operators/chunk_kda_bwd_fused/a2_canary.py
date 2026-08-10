@@ -189,17 +189,26 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
     q0_ref = torch.empty((batch, chunks, heads, key_dim, value_dim))
     dq_ref = torch.empty((batch, heads, seqlen, key_dim))
     da_ref = torch.zeros((batch, heads, seqlen, chunk))
+    # Copy the quantized operands back once.  Calling ``.cpu()`` on five NPU
+    # slices inside every (chunk, head) iteration serializes hundreds of tiny
+    # D2H transfers and makes the medium-shape precision gate take minutes.
+    # The bulk copies preserve the exact BF16/FP16 values consumed by Cube.
+    aqk_quant = aqk.detach().cpu().float()
+    qg_quant = qg.detach().cpu().float()
+    vnew_quant = vnew.detach().cpu().float()
+    h_quant = h.detach().cpu().float()
+    do_quant = d_o.detach().cpu().float()
     for c in range(chunks):
         begin, end = c * chunk, min((c + 1) * chunk, seqlen)
         valid = end - begin
         for head in range(heads):
             do_c = do_cpu[0, head, begin:end]
             # Cube operands are BF16/FP16 views, so reference the quantized inputs.
-            aqk_c = aqk[0, head, begin:end].cpu().float()
-            qg_c = qg[0, head, begin:end].cpu().float()
-            vn_c = vnew[0, head, begin:end].cpu().float()
-            h_c = h[0, c, head].cpu().float()
-            do_q = d_o[0, head, begin:end].cpu().float()
+            aqk_c = aqk_quant[0, head, begin:end]
+            qg_c = qg_quant[0, head, begin:end]
+            vn_c = vnew_quant[0, head, begin:end]
+            h_c = h_quant[0, c, head]
+            do_q = do_quant[0, head, begin:end]
             # dv0 is [C,V]; Aqk is the saved [C,C] triangular matrix.
             dv_ref[0, head, begin:end] = aqk_c.transpose(0, 1).matmul(do_q)[:valid]
             q0_ref[0, c, head] = scale * qg_c.transpose(0, 1).matmul(do_q)
@@ -273,9 +282,13 @@ def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
     torch.manual_seed(20260808)
 
     def zeros(shape, dtype=data):
+        if perf_only:
+            return torch.empty(shape, dtype=dtype, device=device)
         return torch.zeros(shape, dtype=dtype, device=device)
 
     def random_fp16(shape, gain=0.05):
+        if perf_only:
+            return torch.empty(shape, dtype=data, device=device)
         return (torch.randn(shape, dtype=torch.float32) * gain).to(data).to(device)
 
     token_prefix = (heads, seqlen) if varlen else (batch, heads, seqlen)
@@ -316,14 +329,24 @@ def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
     a_log = zeros((heads,), torch.float32)
     dt_bias = zeros((heads, key_dim), torch.float32)
 
-    dq = torch.full_like(q, float("nan"), dtype=torch.float32)
-    dk = torch.full_like(k, float("nan"), dtype=torch.float32)
-    dv = torch.full_like(v, float("nan"))
-    db = torch.full(token_prefix, float("nan"), dtype=torch.float32, device=device)
-    dg = torch.full_like(gk, float("nan"))
-    dakk = torch.full_like(daqk, float("nan"))
-    da = torch.full((heads,), float("nan"), dtype=torch.float32, device=device)
-    dbias = torch.full((heads, key_dim), float("nan"), dtype=torch.float32, device=device)
+    if perf_only:
+        dq = torch.empty_like(q, dtype=torch.float32)
+        dk = torch.empty_like(k, dtype=torch.float32)
+        dv = torch.empty_like(v)
+        db = torch.empty(token_prefix, dtype=torch.float32, device=device)
+        dg = torch.empty_like(gk)
+        dakk = torch.empty_like(daqk)
+        da = torch.empty((heads,), dtype=torch.float32, device=device)
+        dbias = torch.empty((heads, key_dim), dtype=torch.float32, device=device)
+    else:
+        dq = torch.full_like(q, float("nan"), dtype=torch.float32)
+        dk = torch.full_like(k, float("nan"), dtype=torch.float32)
+        dv = torch.full_like(v, float("nan"))
+        db = torch.full(token_prefix, float("nan"), dtype=torch.float32, device=device)
+        dg = torch.full_like(gk, float("nan"))
+        dakk = torch.full_like(daqk, float("nan"))
+        da = torch.full((heads,), float("nan"), dtype=torch.float32, device=device)
+        dbias = torch.full((heads, key_dim), float("nan"), dtype=torch.float32, device=device)
     required = [q, k, v, vnew, gk, beta, akk, h, dh, dv_scan, dq_raw, daqk]
     if varlen:
         cu_seqlens = torch.tensor([0, seqlen], dtype=torch.int64, device=device)
