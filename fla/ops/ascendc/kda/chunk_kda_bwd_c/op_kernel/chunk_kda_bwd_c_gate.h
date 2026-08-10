@@ -36,7 +36,7 @@ static __simd_vf__ inline void KdaBwdCGateReverseScanA5(
 
 template <bool HAS_BIAS>
 static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
-    __ubuf__ float *dg, __ubuf__ float *dAElement,
+    __ubuf__ float *dg, __ubuf__ float *dbAcc, __ubuf__ float *dAAcc,
     __ubuf__ float *rawGate, __ubuf__ float *upstream,
     __ubuf__ float *bias, uint16_t rows, float expA, float lowerBound)
 {
@@ -48,6 +48,10 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
     Duplicate(one, 1.0f, mask);
     const float chainScale = lowerBound * expA;
     for (uint32_t col = 0; col < kCols; col += kRegCols) {
+        RegTensor<float> dbReg;
+        RegTensor<float> dASum;
+        DataCopy(dbReg, dbAcc + col);
+        Duplicate(dASum, 0.0f, mask);
         RegTensor<float> biasReg;
         if constexpr (HAS_BIAS) {
             DataCopy(biasReg, bias + col);
@@ -76,9 +80,18 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             Mul(gradient, gradient, upstreamReg, mask);
             Muls(gradient, gradient, chainScale, mask);
             Mul(dAReg, gradient, raw, mask);
+            Add(dbReg, dbReg, gradient, mask);
+            Add(dASum, dASum, dAReg, mask);
             DataCopy(dg + offset, gradient, mask);
-            DataCopy(dAElement + offset, dAReg, mask);
         }
+        DataCopy(dbAcc + col, dbReg, mask);
+        RegTensor<float> dABlock;
+        RegTensor<float> dATotal;
+        ReduceSum(dABlock, dASum, mask);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(dATotal, dAAcc);
+        Add(dATotal, dATotal, dABlock, mask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            dAAcc, dATotal, mask);
     }
 }
 #endif
@@ -360,7 +373,8 @@ private:
                 auto bias = reduce_.Get<float>()[144];
                 KdaBwdCSafeGateBackwardA5<true>(
                     (__ubuf__ float *)tmp.GetPhyAddr(),
-                    (__ubuf__ float *)aux.GetPhyAddr(),
+                    (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                    (__ubuf__ float *)dAAcc.GetPhyAddr(),
                     (__ubuf__ float *)x.GetPhyAddr(),
                     (__ubuf__ float *)upstream.GetPhyAddr(),
                     (__ubuf__ float *)bias.GetPhyAddr(),
@@ -368,7 +382,8 @@ private:
             } else {
                 KdaBwdCSafeGateBackwardA5<false>(
                     (__ubuf__ float *)tmp.GetPhyAddr(),
-                    (__ubuf__ float *)aux.GetPhyAddr(),
+                    (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                    (__ubuf__ float *)dAAcc.GetPhyAddr(),
                     (__ubuf__ float *)x.GetPhyAddr(),
                     (__ubuf__ float *)upstream.GetPhyAddr(),
                     (__ubuf__ float *)x.GetPhyAddr(),
@@ -409,8 +424,15 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
         }
 
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
         AccumulateColumns(dbAcc, tmp, rows);
         AccumulateScalar(dAAcc, aux, rows);
+#else
+        if constexpr (!SAFE_GATE) {
+            AccumulateColumns(dbAcc, tmp, rows);
+            AccumulateScalar(dAAcc, aux, rows);
+        }
+#endif
         StoreDg(offset, tmp, count);
     }
 

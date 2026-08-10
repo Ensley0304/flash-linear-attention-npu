@@ -154,7 +154,10 @@ def test_kernel_c_a5_fuses_safe_gate_backward_in_registers():
     assert "KdaBwdCSafeGateBackwardA5" in gate
     fused = gate.split("KdaBwdCSafeGateBackwardA5(", 1)[1]
     fused = fused.split("template <bool SAFE_GATE", 1)[0]
-    for operation in ("Exp(", "Div(", "Mul(", "DataCopy(dg", "DataCopy(dAElement"):
+    for operation in (
+        "Exp(", "Div(", "Mul(", "Add(dbReg", "ReduceSum(dABlock",
+        "DataCopy(dg", "DataCopy(dbAcc", "StoreDist::DIST_FIRST_ELEMENT_B32",
+    ):
         assert operation in fused
     a5_path = gate.split("if constexpr (SAFE_GATE)", 1)[1]
     assert "KdaBwdCSafeGateBackwardA5<true>" in a5_path
