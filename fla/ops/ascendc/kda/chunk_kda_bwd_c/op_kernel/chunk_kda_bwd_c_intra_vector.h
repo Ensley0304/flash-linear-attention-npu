@@ -1378,8 +1378,8 @@ private:
 
     ChunkKdaBwdCTilingData tiling_{};
     AscendC::TPipe *pipe_ = nullptr;
-    AscendC::TQue<AscendC::QuePosition::VECIN, 2> inputQueue_;
-    AscendC::TQue<AscendC::QuePosition::VECOUT, 2> outputQueue_;
+    AscendC::TQue<AscendC::QuePosition::VECIN, 1> inputQueue_;
+    AscendC::TQue<AscendC::QuePosition::VECOUT, 1> outputQueue_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> matrixInputPing_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> matrixInputPong_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> arena_;
