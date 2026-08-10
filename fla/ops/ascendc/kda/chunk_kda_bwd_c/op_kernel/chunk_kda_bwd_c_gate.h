@@ -33,6 +33,54 @@ static __simd_vf__ inline void KdaBwdCGateReverseScanA5(
         }
     }
 }
+
+template <bool HAS_BIAS>
+static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
+    __ubuf__ float *dg, __ubuf__ float *dAElement,
+    __ubuf__ float *rawGate, __ubuf__ float *upstream,
+    __ubuf__ float *bias, uint16_t rows, float expA, float lowerBound)
+{
+    constexpr uint32_t kCols = 128;
+    constexpr uint32_t kRegCols =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> one;
+    Duplicate(one, 1.0f, mask);
+    const float chainScale = lowerBound * expA;
+    for (uint32_t col = 0; col < kCols; col += kRegCols) {
+        RegTensor<float> biasReg;
+        if constexpr (HAS_BIAS) {
+            DataCopy(biasReg, bias + col);
+        }
+        for (uint32_t row = 0; row < rows; ++row) {
+            const uint32_t offset = row * kCols + col;
+            RegTensor<float> raw;
+            RegTensor<float> denominator;
+            RegTensor<float> sigmoid;
+            RegTensor<float> oneMinus;
+            RegTensor<float> upstreamReg;
+            RegTensor<float> gradient;
+            RegTensor<float> dAReg;
+            DataCopy(raw, rawGate + offset);
+            if constexpr (HAS_BIAS) {
+                Add(raw, raw, biasReg, mask);
+            }
+            Muls(denominator, raw, -expA, mask);
+            Exp(denominator, denominator, mask);
+            Adds(denominator, denominator, 1.0f, mask);
+            Div(sigmoid, one, denominator, mask);
+            Muls(oneMinus, sigmoid, -1.0f, mask);
+            Adds(oneMinus, oneMinus, 1.0f, mask);
+            Mul(gradient, oneMinus, sigmoid, mask);
+            DataCopy(upstreamReg, upstream + offset);
+            Mul(gradient, gradient, upstreamReg, mask);
+            Muls(gradient, gradient, chainScale, mask);
+            Mul(dAReg, gradient, raw, mask);
+            DataCopy(dg + offset, gradient, mask);
+            DataCopy(dAElement + offset, dAReg, mask);
+        }
+    }
+}
 #endif
 
 template <bool SAFE_GATE, typename RawGateT>
@@ -295,16 +343,38 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
         if (tiling_.hasDtBias != 0) {
             auto bias = reduce_.Get<float>()[144];
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             for (uint32_t row = 0; row < rows; ++row) {
                 AscendC::Add(x[row * 128], x[row * 128], bias, 128);
             }
             AscendC::PipeBarrier<PIPE_V>();
+#endif
         }
 
         if constexpr (SAFE_GATE) {
             AscendC::Exp(scalar, scalar, 1);
             AscendC::PipeBarrier<PIPE_V>();
             const float a = ReadScalar(scalar);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (tiling_.hasDtBias != 0) {
+                auto bias = reduce_.Get<float>()[144];
+                KdaBwdCSafeGateBackwardA5<true>(
+                    (__ubuf__ float *)tmp.GetPhyAddr(),
+                    (__ubuf__ float *)aux.GetPhyAddr(),
+                    (__ubuf__ float *)x.GetPhyAddr(),
+                    (__ubuf__ float *)upstream.GetPhyAddr(),
+                    (__ubuf__ float *)bias.GetPhyAddr(),
+                    static_cast<uint16_t>(rows), a, tiling_.lowerBound);
+            } else {
+                KdaBwdCSafeGateBackwardA5<false>(
+                    (__ubuf__ float *)tmp.GetPhyAddr(),
+                    (__ubuf__ float *)aux.GetPhyAddr(),
+                    (__ubuf__ float *)x.GetPhyAddr(),
+                    (__ubuf__ float *)upstream.GetPhyAddr(),
+                    (__ubuf__ float *)x.GetPhyAddr(),
+                    static_cast<uint16_t>(rows), a, tiling_.lowerBound);
+            }
+#else
             AscendC::Muls(tmp, x, a, count);
             AscendC::PipeBarrier<PIPE_V>();
             Sigmoid(aux, tmp, count);
@@ -316,6 +386,7 @@ private:
             AscendC::Muls(tmp, tmp, tiling_.lowerBound * a, count);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(aux, tmp, x, count);
+#endif
         } else {
             AscendC::Exp(scalar, scalar, 1);
             AscendC::PipeBarrier<PIPE_V>();

@@ -149,6 +149,18 @@ def test_kernel_c_a5_gate_uses_single_pass_register_reverse_scan():
     assert "Add(accumulator, accumulator, value, mask)" in scan
 
 
+def test_kernel_c_a5_fuses_safe_gate_backward_in_registers():
+    gate = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_gate.h")
+    assert "KdaBwdCSafeGateBackwardA5" in gate
+    fused = gate.split("KdaBwdCSafeGateBackwardA5(", 1)[1]
+    fused = fused.split("template <bool SAFE_GATE", 1)[0]
+    for operation in ("Exp(", "Div(", "Mul(", "DataCopy(dg", "DataCopy(dAElement"):
+        assert operation in fused
+    a5_path = gate.split("if constexpr (SAFE_GATE)", 1)[1]
+    assert "KdaBwdCSafeGateBackwardA5<true>" in a5_path
+    assert "KdaBwdCSafeGateBackwardA5<false>" in a5_path
+
+
 def test_kernel_c_wy_preserves_vector_raw_dependencies():
     vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_vector.h")
     dq_stage = vector.split("if (stage == 0)", 1)[1].split(
