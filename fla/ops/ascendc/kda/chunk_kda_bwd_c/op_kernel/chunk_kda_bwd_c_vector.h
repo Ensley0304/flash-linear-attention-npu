@@ -206,7 +206,16 @@ private:
         }
     }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    // Ascend950's larger per-AIV UB allows a 32-row WY tile.  This halves
+    // row-loop, queue and event overhead on the scalar-heavy A5 path while
+    // retaining the proven 16-row footprint on A2/A3.
+    static constexpr uint32_t kRows = 32;
+    static constexpr uint32_t kUbBudgetBytes = 192 * 1024;
+#else
     static constexpr uint32_t kRows = 16;
+    static constexpr uint32_t kUbBudgetBytes = 96 * 1024;
+#endif
     static constexpr uint32_t kPlaneElements = kRows * kWyKeyDim;
     static constexpr uint32_t kIoBytes = kPlaneElements * sizeof(float);
     // FinishGradients has the largest live set and uses Plane(0)..Plane(7).
@@ -214,8 +223,8 @@ private:
     // 1AIC:2AIV MIX kernel without providing any reusable live storage.
     static constexpr uint32_t kArenaBytes = 8 * kPlaneElements * sizeof(float);
     static constexpr float kLn2 = 0.69314718055994530942f;
-    static_assert(4 * kIoBytes + kArenaBytes <= 96 * 1024,
-                   "ChunkKdaBwdC AIV buffers exceed the A2/A3 UB budget");
+    static_assert(4 * kIoBytes + kArenaBytes <= kUbBudgetBytes,
+                   "ChunkKdaBwdC AIV buffers exceed the architecture UB budget");
 
     __aicore__ inline AscendC::LocalTensor<float> Plane(uint32_t idx)
     {
