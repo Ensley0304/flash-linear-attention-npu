@@ -81,7 +81,6 @@ private:
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 4;
         constexpr uint32_t kS3aReady = 5;
-        constexpr uint32_t kNegDwReady = 2;
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kTaskDone = 7;
 
@@ -149,15 +148,6 @@ private:
                 FinishBaseStage(task, headBase + lane, validLen, slot,
                                 subBlockIdx, subBlockNum, 2);
             }
-
-            // S3a: consume dW and publish the negated tile required by the
-            // dependent zW GEMM.
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
-                const uint64_t slot = WyWorkspaceSlotBase(
-                    tiling_, coreIdx, localGeneration, lane);
-                NegateDW(validLen, slot, subBlockIdx, subBlockNum);
-            }
-            SignalVectorDependency(kNegDwReady);
 
             // The S1 state partials are now complete on both AIV sub-blocks.
             // Build the expensive h*dh state-gate term while AIC executes the
@@ -564,24 +554,6 @@ private:
         }
     }
 
-    __aicore__ inline void NegateDW(
-        uint32_t validLen, uint64_t slot, uint32_t subBlockIdx,
-        uint32_t subBlockNum)
-    {
-        uint32_t begin = 0;
-        uint32_t end = 0;
-        NormalRows(validLen, subBlockIdx, subBlockNum, begin, end);
-        const uint64_t dW = (slot + tiling_.dWOffset) / sizeof(DataT);
-        for (uint32_t row = begin; row < end; row += kRows) {
-            const uint32_t rows = row + kRows <= end ? kRows : end - row;
-            auto value = Plane(0);
-            Load(value, wsBf16_[dW + row * 128], rows * 128);
-            AscendC::Muls(value, value, -1.0f, rows * 128);
-            AscendC::PipeBarrier<PIPE_V>();
-            Store(wsBf16_[dW + row * 128], value, rows * 128);
-        }
-    }
-
     __aicore__ inline void FinishGradientRows(
         const WyChunkTask &task, uint32_t head, uint32_t validLen, uint64_t slot,
         uint32_t begin, uint32_t end)
@@ -617,17 +589,19 @@ private:
             Load(dkg, wsFp32_[dKgb + row * 128], rows * 128);
             Load(ke, wsBf16_[kE + row * 128], rows * 128);
 
-            // db_k and db_base.
+            // dKgb_raw has the opposite sign of mathematical dKgb, so fold
+            // the minus sign into each consumer instead of materializing a
+            // second full matrix.
             AscendC::Mul(tmp, dkg, ke, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             RowReduce128(scalar, tmp, rows);
-            AscendC::Add(
+            AscendC::Sub(
                 dbRows[row - begin], dbRows[row - begin], scalar, rows);
             AscendC::PipeBarrier<PIPE_V>();
 
             BroadcastRows(brcb, betaRows[row - begin], rows);
 
-            // dk_base = dk_state + dKgb * beta * exp2(gk).
+            // dk_base = dk_state - dKgb_raw * beta * exp2(gk).
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
             Exp2(e, e, rows * 128);
             // qk is dead until the gate expression below.  Use it here so
@@ -636,11 +610,12 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
             MulRowsByScalar(qk, qk, brcb, rows, 128);
             Load(acc, dkGm_[tokenBase + row * 128], rows * 128);
-            AscendC::Add(e, acc, qk, rows * 128);
+            AscendC::Sub(e, acc, qk, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             Store(dkGm_[tokenBase + row * 128], e, rows * 128);
 
-            // gate_qk + gate_w.  Keep dk_state resident in acc while e is
+            // gate_qk + gate_w algebraically; dKgb_raw carries the opposite
+            // sign, so subtract its contribution.  Keep dk_state resident in acc while e is
             // used for the final-dk writeback; no subtractive reconstruction.
             Load(qk, qGm_[tokenBase + row * 128], rows * 128);
             Load(e, dqGm_[tokenBase + row * 128], rows * 128);
@@ -652,7 +627,7 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
             // tmp still contains kE*dKgb from the db reduction above.
             MulRowsByScalar(tmp, tmp, brcb, rows, 128);
-            AscendC::Add(qk, qk, tmp, rows * 128);
+            AscendC::Sub(qk, qk, tmp, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             Store(dgGm_[tokenBase + row * 128], qk, rows * 128);
         }
@@ -678,7 +653,9 @@ private:
             auto out = Plane(3);
             Load(zv, wsBf16_[zV + row * 64], rows * 64);
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
-            AscendC::Add(out, zv, zw, rows * 64);
+            // zW was formed from dW_raw; subtracting it is equivalent to
+            // adding the original zW formed from -dW_raw.
+            AscendC::Sub(out, zv, zw, rows * 64);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(
                 out, out, beta, 64, static_cast<uint8_t>(rows),

@@ -261,7 +261,6 @@ public:
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 4;
         constexpr uint32_t kS3aReady = 5;
-        constexpr uint32_t kNegDwReady = 2;
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kTaskDone = 7;
         // The fused path is task-serial: S7 waits for the final AIV writeback
@@ -338,8 +337,10 @@ public:
             EndFusedMmadPhase();
             BeginFusedMmadPhase();
 
-            // S3a: dW/zV.  AIV independently builds kE, consumes dW, and
-            // publishes the negated BF16 dW required by S3b.
+            // S3a: dW_raw/zV.  Keep the shared dW operand unnegated so S3b
+            // and S5 can consume it immediately.  Their downstream Vector
+            // epilogues fold in the mathematical minus sign, eliminating an
+            // AIV GM read/write and the corresponding AIC wait.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint32_t head = headBase + lane;
                 const uint64_t tokenV = WyTokenOffset(
@@ -361,9 +362,9 @@ public:
                     slot + tiling_.zVOffset, validLen, validLen, 64, V_DIM);
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
-            AscendC::CrossCoreWaitFlag(kNegDwReady);
 
-            // S3b: zW = (-dW) @ kE^T; AIV forms and stores Zb.
+            // S3b produces zW_raw = dW_raw @ kE^T; AIV forms
+            // Zb = tril(zV - zW_raw) * beta.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
@@ -380,9 +381,9 @@ public:
             EndFusedMmadPhase();
             BeginFusedMmadPhase();
 
-            // S5: A^T @ (-dW), then the gradient/gate vector stage.  S3a's
-            // negated dW remains live in the slot, so the fused path avoids
-            // the former S4 recompute and temporary dg round-trip.
+            // S5 produces dKgb_raw = A^T @ dW_raw.  The gradient/gate Vector
+            // stage consumes it with a negative sign, avoiding a materialized
+            // negated dW while preserving the original formulas.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint32_t head = headBase + lane;
                 const uint64_t token64 = WyTokenOffset(
