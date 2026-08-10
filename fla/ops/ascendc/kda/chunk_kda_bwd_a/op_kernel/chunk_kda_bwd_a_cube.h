@@ -56,7 +56,8 @@ private:
     static constexpr uint32_t SCRATCH_BYTES =
         V_DIM * KDA_BWD_A_K * sizeof(T);
     static constexpr uint32_t SCRATCH_OFFSET = DO_BYTES;
-    static constexpr uint32_t L1_USED_BYTES = SCRATCH_OFFSET + SCRATCH_BYTES;
+    static constexpr uint32_t L1_USED_BYTES =
+        SCRATCH_OFFSET + 2 * SCRATCH_BYTES;
     static constexpr uint32_t L0A_BYTES = KDA_BWD_A_K * 64 * sizeof(T);
     static constexpr uint32_t L0B_BYTES = 64 * V_DIM * sizeof(T);
     static constexpr uint32_t L0C_BYTES =
@@ -72,6 +73,7 @@ private:
 
     static constexpr int32_t EVENT_DO = 0;
     static constexpr int32_t EVENT_SCRATCH = 1;
+    static constexpr int32_t EVENT_SCRATCH_PONG = 2;
     static constexpr int32_t EVENT_L0A = 0;
     static constexpr int32_t EVENT_L0B = 1;
     static constexpr int32_t EVENT_L0A_PONG = 2;
@@ -97,6 +99,7 @@ public:
         AscendC::SetHF32Mode(false);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH_PONG);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
@@ -148,6 +151,7 @@ public:
         // required for all outstanding MTE1/MMAD/Fixpipe work to retire.
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH_PONG);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
@@ -410,11 +414,15 @@ private:
     __aicore__ inline void RunDoLeft(
         GM_ADDR rightBase, uint32_t rightCols,
         GM_ADDR outBase, uint32_t outStride, uint32_t outCols,
-        uint32_t validC, bool releaseDo)
+        uint32_t validC, bool releaseDo, uint32_t scratchSlot,
+        bool rightReady, GM_ADDR prefetchRightBase)
     {
         Catlass::Arch::Resource<ArchTag> resource;
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
-        auto l1B = resource.l1Buf.template GetBufferByByte<T>(SCRATCH_OFFSET);
+        auto l1B = resource.l1Buf.template GetBufferByByte<T>(
+            SCRATCH_OFFSET + scratchSlot * SCRATCH_BYTES);
+        const int32_t scratchEvent =
+            scratchSlot == 0 ? EVENT_SCRATCH : EVENT_SCRATCH_PONG;
         AscendC::LocalTensor<T> l0A[2] = {
             resource.l0ABuf.template GetBufferByByte<T>(0),
             resource.l0ABuf.template GetBufferByByte<T>(L0A_BYTES)};
@@ -436,9 +444,11 @@ private:
                      V_DIM, rightCols),
             Catlass::Arch::PositionL1{});
         typename Copy::template CopyGmToL1B<decltype(rightBlock)> loadRight;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
-        loadRight(l1BTensor, rightBlock);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_SCRATCH);
+        if (!rightReady) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(scratchEvent);
+            loadRight(l1BTensor, rightBlock);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(scratchEvent);
+        }
 
         auto l1ATensor = tla::MakeTensor(
             l1A, tla::MakeLayout<T, typename Copy::LayoutTagL1A>(
@@ -486,13 +496,46 @@ private:
             }
             if (k0 == 0) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
-                    EVENT_SCRATCH);
+                    scratchEvent);
             }
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
             copyB(l0BTensor, tileB);
             if (lastK) {
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
-                    EVENT_SCRATCH);
+                    scratchEvent);
+                if (prefetchRightBase != nullptr) {
+                    const uint32_t prefetchSlot = scratchSlot ^ 1U;
+                    const int32_t prefetchEvent = prefetchSlot == 0 ?
+                        EVENT_SCRATCH : EVENT_SCRATCH_PONG;
+                    auto l1Prefetch =
+                        resource.l1Buf.template GetBufferByByte<T>(
+                            SCRATCH_OFFSET +
+                            prefetchSlot * SCRATCH_BYTES);
+                    AscendC::GlobalTensor<T> gmPrefetch;
+                    gmPrefetch.SetGlobalBuffer(
+                        reinterpret_cast<__gm__ T *>(prefetchRightBase));
+                    auto gmPrefetchTensor = tla::MakeTensor(
+                        gmPrefetch,
+                        tla::MakeLayout<T, ColumnMajor>(
+                            V_DIM, KDA_BWD_A_C),
+                        Catlass::Arch::PositionGM{});
+                    auto prefetchBlock = GetTile(
+                        gmPrefetchTensor, tla::MakeCoord(0, 0),
+                        tla::MakeShape(V_DIM, KDA_BWD_A_C));
+                    auto l1PrefetchTensor = tla::MakeTensor(
+                        l1Prefetch,
+                        tla::MakeLayout<
+                            T, typename DACopy::LayoutTagL1B>(
+                                V_DIM, KDA_BWD_A_C),
+                        Catlass::Arch::PositionL1{});
+                    typename DACopy::template CopyGmToL1B<
+                        decltype(prefetchBlock)> prefetch;
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(
+                        prefetchEvent);
+                    prefetch(l1PrefetchTensor, prefetchBlock);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+                        prefetchEvent);
+                }
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
@@ -527,6 +570,8 @@ private:
     {
         const uint64_t hOffset = KdaBwdAChunkHeadOffset(
             tiling_, task, taskIdx, head, KDA_BWD_A_K * V_DIM);
+        const uint64_t vOffset =
+            KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM);
         const uint64_t outOffset =
             KdaBwdAHeadTokenOffset(tiling_, task, head, KDA_BWD_A_K);
         RunDoLeft<DqCopy, DqMmad>(
@@ -535,7 +580,9 @@ private:
             KDA_BWD_A_K,
             reinterpret_cast<GM_ADDR>(
                 reinterpret_cast<__gm__ float *>(dqRaw_) + outOffset),
-            KDA_BWD_A_K, KDA_BWD_A_K, task.validC, false);
+            KDA_BWD_A_K, KDA_BWD_A_K, task.validC, false, 0, false,
+            reinterpret_cast<GM_ADDR>(
+                reinterpret_cast<__gm__ T *>(vNew_) + vOffset));
     }
 
 
@@ -553,7 +600,8 @@ private:
             KDA_BWD_A_C,
             reinterpret_cast<GM_ADDR>(
                 reinterpret_cast<__gm__ float *>(dAqk_) + outOffset),
-            KDA_BWD_A_C, task.validC, task.validC, true);
+            KDA_BWD_A_C, task.validC, task.validC, true, 1, true,
+            nullptr);
     }
 
     GM_ADDR aqk_ = nullptr;
