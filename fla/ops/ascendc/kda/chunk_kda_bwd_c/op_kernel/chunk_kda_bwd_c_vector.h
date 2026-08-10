@@ -48,14 +48,17 @@ public:
         // Two entries let MTE2/MTE3 alternate buffers while Vector consumes
         // the preceding tile.  RowReduce uses the unused tail of its output
         // plane, so the full 96 KiB UB budget remains available to IO ping-pong.
-        pipe_->InitBuffer(inputQueue_, 2, kIoBytes);
+        pipe_->InitBuffer(inputPing_, kIoBytes);
+        pipe_->InitBuffer(inputPong_, kIoBytes);
         pipe_->InitBuffer(outputQueue_, 2, kIoBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
+        InitInputEvents();
     }
 
     __aicore__ inline void Process()
     {
         ProcessFused();
+        ReleaseInputEvents();
     }
 
 
@@ -231,19 +234,56 @@ private:
         return arena_.Get<float>()[idx * kPlaneElements];
     }
 
+    __aicore__ inline void InitInputEvents()
+    {
+        for (uint32_t idx = 0; idx < 2; ++idx) {
+            inputMte2ToVEvent_[idx] =
+                pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
+            inputVToMte2Event_[idx] =
+                pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+                inputVToMte2Event_[idx]);
+        }
+    }
+
+    __aicore__ inline void ReleaseInputEvents()
+    {
+        for (uint32_t idx = 0; idx < 2; ++idx) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+                inputVToMte2Event_[idx]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(
+                inputMte2ToVEvent_[idx]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
+                inputVToMte2Event_[idx]);
+        }
+    }
+
+    template <typename T>
+    __aicore__ inline AscendC::LocalTensor<T> InputBuffer(uint32_t idx)
+    {
+        return idx == 0 ? inputPing_.Get<T>() : inputPong_.Get<T>();
+    }
+
     __aicore__ inline void Load(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src,
         uint32_t count)
     {
-        auto in = inputQueue_.AllocTensor<float>();
+        const uint32_t idx = currentInput_;
+        auto in = InputBuffer<float>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
         AscendC::DataCopyPad(
             in, src, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
             {false, 0, 0, 0});
-        inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<float>();
-        AscendC::Adds(dst, ready, 0.0f, count);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        currentInput_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        AscendC::Adds(dst, in, 0.0f, count);
         AscendC::PipeBarrier<PIPE_V>();
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
     }
 
     template <typename SrcT>
@@ -251,16 +291,23 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<SrcT> src,
         uint32_t count)
     {
-        auto in = inputQueue_.AllocTensor<SrcT>();
+        const uint32_t idx = currentInput_;
+        auto in = InputBuffer<SrcT>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
         AscendC::DataCopyPad(
             in, src,
             {1, static_cast<uint32_t>(count * sizeof(SrcT)), 0, 0, 0},
             {false, 0, 0, 0});
-        inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<SrcT>();
-        AscendC::Cast(dst, ready, AscendC::RoundMode::CAST_NONE, count);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        currentInput_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        AscendC::Cast(dst, in, AscendC::RoundMode::CAST_NONE, count);
         AscendC::PipeBarrier<PIPE_V>();
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
     }
 
     __aicore__ inline void Store(
@@ -281,18 +328,25 @@ private:
         AscendC::GlobalTensor<float> src, uint32_t rows,
         uint32_t cols, uint32_t physicalCols)
     {
-        auto in = inputQueue_.AllocTensor<float>();
+        const uint32_t idx = currentInput_;
+        auto in = InputBuffer<float>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
         AscendC::DataCopyExtParams params{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(float)),
             static_cast<uint32_t>((physicalCols - cols) * sizeof(float)),
             0, 0};
         AscendC::DataCopyPad(in, src, params, {false, 0, 0, 0});
-        inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<float>();
-        AscendC::Adds(dst, ready, 0.0f, rows * cols);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        currentInput_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        AscendC::Adds(dst, in, 0.0f, rows * cols);
         AscendC::PipeBarrier<PIPE_V>();
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
     }
 
     __aicore__ inline void LoadRows(
@@ -300,19 +354,26 @@ private:
         AscendC::GlobalTensor<DataT> src, uint32_t rows,
         uint32_t cols, uint32_t physicalCols)
     {
-        auto in = inputQueue_.AllocTensor<DataT>();
+        const uint32_t idx = currentInput_;
+        auto in = InputBuffer<DataT>(idx);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
         AscendC::DataCopyExtParams params{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(DataT)),
             static_cast<uint32_t>((physicalCols - cols) * sizeof(DataT)),
             0, 0};
         AscendC::DataCopyPad(in, src, params, {false, 0, 0, 0});
-        inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<DataT>();
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
+        currentInput_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            inputMte2ToVEvent_[idx]);
         AscendC::Cast(
-            dst, ready, AscendC::RoundMode::CAST_NONE, rows * cols);
+            dst, in, AscendC::RoundMode::CAST_NONE, rows * cols);
         AscendC::PipeBarrier<PIPE_V>();
-        inputQueue_.FreeTensor(ready);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            inputVToMte2Event_[idx]);
     }
 
     __aicore__ inline void Store(
@@ -868,9 +929,13 @@ private:
     AscendC::GlobalTensor<DataT> dAkkBf16Gm_;
     AscendC::GlobalTensor<float> wsFp32_;
     AscendC::GlobalTensor<DataT> wsBf16_;
-    AscendC::TQue<AscendC::TPosition::VECIN, 1> inputQueue_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> inputPing_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> inputPong_;
     AscendC::TQue<AscendC::TPosition::VECOUT, 1> outputQueue_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> arena_;
+    AscendC::TEventID inputMte2ToVEvent_[2];
+    AscendC::TEventID inputVToMte2Event_[2];
+    uint32_t currentInput_ = 0;
 };
 
 } // namespace KDA
