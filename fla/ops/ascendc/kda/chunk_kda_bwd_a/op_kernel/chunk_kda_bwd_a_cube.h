@@ -48,9 +48,14 @@ private:
         ArchTag, T, typename DACopy::LayoutTagL1A>;
 
     static constexpr uint32_t DO_BYTES = KDA_BWD_A_C * V_DIM * sizeof(T);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    static constexpr uint32_t DO_SLOT_COUNT = 2;
+#else
+    static constexpr uint32_t DO_SLOT_COUNT = 1;
+#endif
     static constexpr uint32_t RIGHT0_BYTES =
         V_DIM * KDA_BWD_A_K * sizeof(T);
-    static constexpr uint32_t SCRATCH_OFFSET = DO_BYTES;
+    static constexpr uint32_t SCRATCH_OFFSET = DO_SLOT_COUNT * DO_BYTES;
     static constexpr uint32_t RIGHT1_OFFSET = SCRATCH_OFFSET + RIGHT0_BYTES;
     static constexpr uint32_t RIGHT1_BYTES =
         V_DIM * KDA_BWD_A_C * sizeof(T);
@@ -69,6 +74,7 @@ private:
                   "Kernel A FP32 L0C tile exceeds capacity.");
 
     static constexpr int32_t EVENT_DO = 0;
+    static constexpr int32_t EVENT_DO1 = 3;
     static constexpr int32_t EVENT_SCRATCH = 1;
     static constexpr int32_t EVENT_SCRATCH1 = 2;
     static constexpr int32_t EVENT_L0A = 0;
@@ -93,6 +99,9 @@ public:
         tiling_ = tiling;
         AscendC::SetHF32Mode(false);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH1);
@@ -110,6 +119,20 @@ public:
         const uint32_t core = AscendC::GetBlockIdx();
         const uint64_t ownerCount =
             static_cast<uint64_t>(tiling_.chunkNum) * tiling_.headNum;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Keep two owners' do tiles in independent L1 regions.  The next
+        // owner's MTE2 transfer is issued after the current h/v_new operands,
+        // so it overlaps the current dual-output MMAD without delaying those
+        // operands on the MTE2 critical path.
+        uint32_t doSlot = 0;
+        if (core < ownerCount) {
+            const uint32_t firstTaskIdx = core / tiling_.headNum;
+            const uint32_t firstHead = core % tiling_.headNum;
+            ChunkKdaBwdATask firstTask;
+            GetChunkKdaBwdATask(
+                cuSeqlens_, chunkIndices_, tiling_, firstTaskIdx, firstTask);
+            LoadDo(firstTask, firstHead, doSlot);
+        }
         for (uint64_t owner = core; owner < ownerCount;
              owner += tiling_.usedCoreNum) {
             const uint32_t taskIdx =
@@ -119,20 +142,48 @@ public:
             ChunkKdaBwdATask task;
             GetChunkKdaBwdATask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
-            LoadDo(task, head);
-            RunDv(task, taskIdx, head, true);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            RunDqDAqk(task, taskIdx, head);
+            RunDv(task, taskIdx, head, doSlot, true);
+
+            const uint64_t nextOwner = owner + tiling_.usedCoreNum;
+            ChunkKdaBwdATask nextTask{};
+            uint32_t nextHead = 0;
+            const bool hasNext = nextOwner < ownerCount;
+            if (hasNext) {
+                const uint32_t nextTaskIdx =
+                    static_cast<uint32_t>(nextOwner / tiling_.headNum);
+                nextHead = static_cast<uint32_t>(nextOwner % tiling_.headNum);
+                GetChunkKdaBwdATask(
+                    cuSeqlens_, chunkIndices_, tiling_, nextTaskIdx, nextTask);
+            }
+            RunDqDAqk(
+                task, taskIdx, head, doSlot,
+                hasNext, nextTask, nextHead, doSlot ^ 1U);
+            doSlot ^= 1U;
+        }
 #else
+        for (uint64_t owner = core; owner < ownerCount;
+             owner += tiling_.usedCoreNum) {
+            const uint32_t taskIdx =
+                static_cast<uint32_t>(owner / tiling_.headNum);
+            const uint32_t head =
+                static_cast<uint32_t>(owner % tiling_.headNum);
+            ChunkKdaBwdATask task;
+            GetChunkKdaBwdATask(
+                cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
+            LoadDo(task, head, 0);
+            RunDv(task, taskIdx, head, 0, true);
             RunDq(task, taskIdx, head);
             RunDAqk(task, head);
-#endif
         }
+#endif
 
         // PR190-style pipeline drain.  The final generation leaves the
         // reusable L1/L0 credits set; consuming them before kernel return is
         // required for all outstanding MTE1/MMAD/Fixpipe work to retire.
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH1);
@@ -147,11 +198,64 @@ public:
     }
 
 private:
+    __aicore__ inline void WaitDoWritable(uint32_t slot)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (slot != 0) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
+            return;
+        }
+#else
+        (void)slot;
+#endif
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+    }
+
+    __aicore__ inline void SetDoReady(uint32_t slot)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (slot != 0) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO1);
+            return;
+        }
+#else
+        (void)slot;
+#endif
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO);
+    }
+
+    __aicore__ inline void WaitDoReady(uint32_t slot)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (slot != 0) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO1);
+            return;
+        }
+#else
+        (void)slot;
+#endif
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO);
+    }
+
+    __aicore__ inline void SetDoWritable(uint32_t slot)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (slot != 0) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
+            return;
+        }
+#else
+        (void)slot;
+#endif
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+    }
+
     __aicore__ inline void LoadDo(
-        const ChunkKdaBwdATask &task, uint32_t head)
+        const ChunkKdaBwdATask &task, uint32_t head, uint32_t slot)
     {
         Catlass::Arch::Resource<ArchTag> resource;
-        auto resident = resource.l1Buf.template GetBufferByByte<T>(0);
+        auto resident = resource.l1Buf.template GetBufferByByte<T>(
+            slot * DO_BYTES);
         auto l1Layout = tla::MakeLayout<T, typename DvCopy::LayoutTagL1B>(
             KDA_BWD_A_C, V_DIM);
         auto l1Tensor =
@@ -167,19 +271,20 @@ private:
             gmTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(task.validC, V_DIM));
         typename DvCopy::template CopyGmToL1B<decltype(block)> copy;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+        WaitDoWritable(slot);
         copy(l1Tensor, block);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO);
+        SetDoReady(slot);
     }
 
     __aicore__ inline void RunDv(
         const ChunkKdaBwdATask &task, uint32_t taskIdx, uint32_t head,
-        bool waitDoReady)
+        uint32_t doSlot, bool waitDoReady)
     {
         (void)taskIdx;
         Catlass::Arch::Resource<ArchTag> resource;
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(SCRATCH_OFFSET);
-        auto l1B = resource.l1Buf.template GetBufferByByte<T>(0);
+        auto l1B = resource.l1Buf.template GetBufferByByte<T>(
+            doSlot * DO_BYTES);
         auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
         auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
         auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
@@ -232,7 +337,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         copyA(l0ATensor, tileL1A);
         if (waitDoReady) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO);
+            WaitDoReady(doSlot);
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         copyB(l0BTensor, tileL1B);
@@ -461,10 +566,14 @@ private:
     // both MMADs before L0A is released.  Independent L0C accumulators keep
     // the two outputs live across the V=128/256 reduction loop.
     __aicore__ inline void RunDqDAqk(
-        const ChunkKdaBwdATask &task, uint32_t taskIdx, uint32_t head)
+        const ChunkKdaBwdATask &task, uint32_t taskIdx, uint32_t head,
+        uint32_t doSlot, bool prefetchNext,
+        const ChunkKdaBwdATask &nextTask, uint32_t nextHead,
+        uint32_t nextDoSlot)
     {
         Catlass::Arch::Resource<ArchTag> resource;
-        auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
+        auto l1A = resource.l1Buf.template GetBufferByByte<T>(
+            doSlot * DO_BYTES);
         auto l1B0 = resource.l1Buf.template GetBufferByByte<T>(SCRATCH_OFFSET);
         auto l1B1 = resource.l1Buf.template GetBufferByByte<T>(RIGHT1_OFFSET);
         auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
@@ -516,6 +625,13 @@ private:
         loadV(l1B1Tensor, vBlock);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_SCRATCH1);
 
+        // H and v_new are ahead of the speculative transfer in the MTE2
+        // stream.  The next do tile can therefore progress while MTE1/MMAD
+        // consumes the current owner's already-resident operands.
+        if (prefetchNext) {
+            LoadDo(nextTask, nextHead, nextDoSlot);
+        }
+
         auto l1ATensor = tla::MakeTensor(
             l1A, tla::MakeLayout<T, typename DqCopy::LayoutTagL1A>(
                      KDA_BWD_A_C, V_DIM),
@@ -557,7 +673,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
             copyA(l0ATensor, tileA);
             if (lastK) {
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+                SetDoWritable(doSlot);
             }
 
             if (k0 == 0) {
