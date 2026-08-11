@@ -578,15 +578,14 @@ private:
         auto l1B1 = resource.l1Buf.template GetBufferByByte<T>(RIGHT1_OFFSET);
         auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
         auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
-        auto l0C0 = resource.l0CBuf.template GetBufferByByte<float>(0);
-        constexpr uint32_t kDqL0CBytes =
-            KDA_BWD_A_C * KDA_BWD_A_K * sizeof(float);
-        auto l0C1 = resource.l0CBuf.template GetBufferByByte<float>(
-            kDqL0CBytes);
+        auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
+        constexpr uint32_t kPackedN = KDA_BWD_A_K + KDA_BWD_A_C;
         static_assert(
-            kDqL0CBytes + KDA_BWD_A_C * KDA_BWD_A_C * sizeof(float) <=
-                ArchTag::L0C_SIZE,
-            "Kernel A dual-output FP32 L0C exceeds capacity.");
+            KDA_BWD_A_C * kPackedN * sizeof(float) <= ArchTag::L0C_SIZE,
+            "Kernel A packed N=192 FP32 L0C exceeds capacity.");
+        static_assert(
+            64 * kPackedN * sizeof(T) <= ArchTag::L0B_SIZE,
+            "Kernel A packed N=192 L0B exceeds capacity.");
 
         const uint64_t hOffset = KdaBwdAChunkHeadOffset(
             tiling_, task, taskIdx, head, KDA_BWD_A_K * V_DIM);
@@ -637,29 +636,31 @@ private:
                      KDA_BWD_A_C, V_DIM),
             Catlass::Arch::PositionL1{});
         const uint32_t m = task.validC == 1 ? 16 : task.validC;
-        auto l0C0Tensor = tla::MakeTensor(
-            l0C0, tla::MakeLayoutL0C(m, KDA_BWD_A_K),
+        auto l0CTensor = tla::MakeTensor(
+            l0C, tla::MakeLayoutL0C(m, kPackedN),
             Catlass::Arch::PositionL0C{});
-        auto l0C1Tensor = tla::MakeTensor(
-            l0C1, tla::MakeLayoutL0C(m, task.validC),
-            Catlass::Arch::PositionL0C{});
+        const uint32_t packedN = KDA_BWD_A_K + task.validC;
+        auto tileL0C = GetTile(
+            l0CTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(m, packedN));
+        auto tileL0CDq = GetTile(
+            l0CTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(m, KDA_BWD_A_K));
+        auto tileL0CDA = GetTile(
+            l0CTensor, tla::MakeCoord(0, KDA_BWD_A_K),
+            tla::MakeShape(m, task.validC));
         typename DqCopy::CopyL1ToL0A copyA;
         typename DqCopy::CopyL1ToL0B copyB;
         DqMmad mm;
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
         for (uint32_t k0 = 0; k0 < V_DIM; k0 += 64) {
             const bool lastK = k0 + 64 >= V_DIM;
             auto l0ATensor = tla::MakeTensor(
                 l0A, tla::MakeLayout<T, typename DqCopy::LayoutTagL0A>(m, 64),
                 Catlass::Arch::PositionL0A{});
-            auto l0B0Tensor = tla::MakeTensor(
+            auto l0BTensor = tla::MakeTensor(
                 l0B, tla::MakeLayout<T, typename DqCopy::LayoutTagL0B>(
-                         64, KDA_BWD_A_K),
-                Catlass::Arch::PositionL0B{});
-            auto l0B1Tensor = tla::MakeTensor(
-                l0B, tla::MakeLayout<T, typename DqCopy::LayoutTagL0B>(
-                         64, task.validC),
+                         64, kPackedN),
                 Catlass::Arch::PositionL0B{});
             auto tileA = GetTile(
                 l1ATensor, tla::MakeCoord(0, k0), tla::MakeShape(m, 64));
@@ -669,6 +670,15 @@ private:
             auto tileB1 = GetTile(
                 l1B1Tensor, tla::MakeCoord(k0, 0),
                 tla::MakeShape(64, task.validC));
+            auto tileL0B0 = GetTile(
+                l0BTensor, tla::MakeCoord(0, 0),
+                tla::MakeShape(64, KDA_BWD_A_K));
+            auto tileL0B1 = GetTile(
+                l0BTensor, tla::MakeCoord(0, KDA_BWD_A_K),
+                tla::MakeShape(64, task.validC));
+            auto tileL0B = GetTile(
+                l0BTensor, tla::MakeCoord(0, 0),
+                tla::MakeShape(64, packedN));
 
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
             copyA(l0ATensor, tileA);
@@ -681,36 +691,26 @@ private:
                     EVENT_SCRATCH);
             }
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
-            copyB(l0B0Tensor, tileB0);
-            if (lastK) {
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
-                    EVENT_SCRATCH);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
-            mm(l0C0Tensor, l0ATensor, l0B0Tensor, k0 == 0,
-               lastK ? 0b11 : 0b10);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
-
             if (k0 == 0) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
                     EVENT_SCRATCH1);
             }
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
-            copyB(l0B1Tensor, tileB1);
+            copyB(tileL0B0, tileB0);
+            copyB(tileL0B1, tileB1);
             if (lastK) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
+                    EVENT_SCRATCH);
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
                     EVENT_SCRATCH1);
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
-            mm(l0C1Tensor, l0ATensor, l0B1Tensor, k0 == 0,
+            mm(tileL0C, l0ATensor, tileL0B, k0 == 0,
                lastK ? 0b11 : 0b10);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C1);
 
         const uint64_t dqOffset = KdaBwdAHeadTokenOffset(
             tiling_, task, head, KDA_BWD_A_K);
@@ -739,11 +739,9 @@ private:
         typename DqCopy::template CopyL0CToDst<decltype(dqBlock)> fixDq;
         typename DqCopy::template CopyL0CToDst<decltype(dABlock)> fixDA;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-        fixDq(dqBlock, l0C0Tensor, 0b11);
+        fixDq(dqBlock, tileL0CDq, 0b11);
+        fixDA(dABlock, tileL0CDA, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C1);
-        fixDA(dABlock, l0C1Tensor, 0b11);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
     }
 #endif
 
