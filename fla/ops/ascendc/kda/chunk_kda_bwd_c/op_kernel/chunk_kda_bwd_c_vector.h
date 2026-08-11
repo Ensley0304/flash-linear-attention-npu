@@ -73,6 +73,55 @@ static __simd_vf__ inline void KdaBwdCMulRowDotSubA5(
             rowAcc + row, current, fullMask);
     }
 }
+
+static __simd_vf__ inline void KdaBwdCFinishDkDgA5(
+    __ubuf__ float *dkDst, __ubuf__ float *dgDst,
+    __ubuf__ float *dkg, __ubuf__ float *expG,
+    __ubuf__ float *beta, __ubuf__ float *dkState,
+    __ubuf__ float *q, __ubuf__ float *dq,
+    __ubuf__ float *k, __ubuf__ float *gateW,
+    uint16_t rows, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    for (uint32_t row = 0; row < rows; ++row) {
+        RegTensor<float> betaReg;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(betaReg, beta + row);
+        for (uint32_t col = 0; col < cols; col += kRegElements) {
+            const uint32_t offset = row * cols + col;
+            RegTensor<float> dkgReg;
+            RegTensor<float> expReg;
+            RegTensor<float> stateReg;
+            RegTensor<float> qReg;
+            RegTensor<float> dqReg;
+            RegTensor<float> kReg;
+            RegTensor<float> gateWReg;
+            RegTensor<float> tmp0;
+            RegTensor<float> tmp1;
+            DataCopy(dkgReg, dkg + offset);
+            DataCopy(expReg, expG + offset);
+            DataCopy(stateReg, dkState + offset);
+            DataCopy(qReg, q + offset);
+            DataCopy(dqReg, dq + offset);
+            DataCopy(kReg, k + offset);
+            DataCopy(gateWReg, gateW + offset);
+
+            Mul(tmp0, dkgReg, expReg, fullMask);
+            Mul(tmp0, tmp0, betaReg, fullMask);
+            Sub(tmp0, stateReg, tmp0, fullMask);
+            DataCopy(dkDst + offset, tmp0, fullMask);
+
+            Mul(tmp0, qReg, dqReg, fullMask);
+            Mul(tmp1, kReg, stateReg, fullMask);
+            Sub(tmp0, tmp0, tmp1, fullMask);
+            Mul(tmp1, gateWReg, betaReg, fullMask);
+            Sub(tmp0, tmp0, tmp1, fullMask);
+            DataCopy(dgDst + offset, tmp0, fullMask);
+        }
+    }
+}
 #endif
 
 template <typename DataT, uint32_t V_DIM, typename BetaT>
@@ -752,11 +801,33 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
 #endif
 
-            BroadcastRows(brcb, betaRows[row - begin], rows);
-
             // dk_base = dk_state - dKgb_raw * beta * exp2(gk).
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
             Exp2(e, e, rows * 128);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // Keep the complete dk/dg elementwise chain in registers.  The
+            // two outputs share beta and dk_state, while tmp already holds
+            // dKgb_raw*kE from the db reduction above.
+            Load(qk, qGm_[tokenBase + row * 128], rows * 128);
+            Load(brcb, dqGm_[tokenBase + row * 128], rows * 128);
+            Load(ke, kGm_[tokenBase + row * 128], rows * 128);
+            KdaBwdCFinishDkDgA5(
+                (__ubuf__ float *)e.GetPhyAddr(),
+                (__ubuf__ float *)qk.GetPhyAddr(),
+                (__ubuf__ float *)dkg.GetPhyAddr(),
+                (__ubuf__ float *)e.GetPhyAddr(),
+                (__ubuf__ float *)betaRows[row - begin].GetPhyAddr(),
+                (__ubuf__ float *)acc.GetPhyAddr(),
+                (__ubuf__ float *)qk.GetPhyAddr(),
+                (__ubuf__ float *)brcb.GetPhyAddr(),
+                (__ubuf__ float *)ke.GetPhyAddr(),
+                (__ubuf__ float *)tmp.GetPhyAddr(),
+                static_cast<uint16_t>(rows), 128);
+            AscendC::PipeBarrier<PIPE_V>();
+            Store(dkGm_[tokenBase + row * 128], e, rows * 128);
+            Store(dgGm_[tokenBase + row * 128], qk, rows * 128);
+#else
+            BroadcastRows(brcb, betaRows[row - begin], rows);
             // qk is dead until the gate expression below.  Use it here so
             // tmp keeps kE*dKgb resident for the gate_w contribution.
             AscendC::Mul(qk, dkg, e, rows * 128);
@@ -785,6 +856,7 @@ private:
             AscendC::Sub(qk, qk, tmp, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             Store(dgGm_[tokenBase + row * 128], qk, rows * 128);
+#endif
         }
         Store(dbGm_[scalarBase + begin], dbRows, ownedRows);
     }
