@@ -119,6 +119,12 @@ public:
         pipe_->InitBuffer(inputQueue_, 2, kIoBytes);
         pipe_->InitBuffer(outputQueue_, 2, kIoBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Keep the two heads' owned dk_state rows in A5's larger UB until
+        // FinishGradientRows forms final dk.  This removes one full FP32
+        // write/read round trip through GM for every owner.
+        pipe_->InitBuffer(dkStateBuffer_, kDkStateBytes);
+#endif
     }
 
     __aicore__ inline void Process()
@@ -292,7 +298,11 @@ private:
     // row-loop, queue and event overhead on the scalar-heavy A5 path while
     // retaining the proven 16-row footprint on A2/A3.
     static constexpr uint32_t kRows = 32;
-    static constexpr uint32_t kUbBudgetBytes = 192 * 1024;
+    static constexpr uint32_t kUbBudgetBytes = 248 * 1024;
+    static constexpr uint32_t kDkStateRowsPerHead = 32;
+    static constexpr uint32_t kDkStateBytes =
+        kWyFusedHeadsPerWindow * kDkStateRowsPerHead * kWyKeyDim *
+        sizeof(float);
 #else
     static constexpr uint32_t kRows = 16;
     static constexpr uint32_t kUbBudgetBytes = 96 * 1024;
@@ -304,8 +314,23 @@ private:
     // 1AIC:2AIV MIX kernel without providing any reusable live storage.
     static constexpr uint32_t kArenaBytes = 8 * kPlaneElements * sizeof(float);
     static constexpr float kLn2 = 0.69314718055994530942f;
-    static_assert(4 * kIoBytes + kArenaBytes <= kUbBudgetBytes,
+    static_assert(4 * kIoBytes + kArenaBytes
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                      + kDkStateBytes
+#endif
+                      <= kUbBudgetBytes,
                    "ChunkKdaBwdC AIV buffers exceed the architecture UB budget");
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline AscendC::LocalTensor<float> DkStateTile(
+        uint32_t head, uint32_t ownedRow)
+    {
+        const uint32_t lane = head % kWyFusedHeadsPerWindow;
+        const uint32_t offset =
+            (lane * kDkStateRowsPerHead + ownedRow) * kWyKeyDim;
+        return dkStateBuffer_.Get<float>()[offset];
+    }
+#endif
 
     __aicore__ inline AscendC::LocalTensor<float> Plane(uint32_t idx)
     {
@@ -577,7 +602,11 @@ private:
             const uint32_t rows = row + kRows <= end ? kRows : end - row;
             auto x = Plane(0);
             auto y = Plane(1);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            auto z = stage == 1 ? DkStateTile(head, row - begin) : Plane(2);
+#else
             auto z = Plane(2);
+#endif
             auto aux = Plane(3);
             auto scalar = Plane(4);
             auto brcb = Plane(5);
@@ -603,7 +632,9 @@ private:
                 Exp2(z, z, rows * 128);
                 AscendC::Mul(z, x, z, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                 Store(dkGm_[tokenBase + row * 128], z, rows * 128);
+#endif
 
                 // GPU keeps dk_state live and immediately accumulates
                 // sum_t(k * dk_state).  Do the same here instead of reading
@@ -690,7 +721,11 @@ private:
             auto ke = Plane(1);
             auto e = Plane(2);
             auto tmp = Plane(3);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            auto acc = DkStateTile(head, row - begin);
+#else
             auto acc = Plane(4);
+#endif
             auto scalar = Plane(5);
             auto brcb = Plane(6);
             auto qk = Plane(7);
@@ -727,7 +762,9 @@ private:
             AscendC::Mul(qk, dkg, e, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             MulRowsByScalar(qk, qk, brcb, rows, 128);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             Load(acc, dkGm_[tokenBase + row * 128], rows * 128);
+#endif
             AscendC::Sub(e, acc, qk, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             Store(dkGm_[tokenBase + row * 128], e, rows * 128);
@@ -965,6 +1002,9 @@ private:
     AscendC::TQue<AscendC::TPosition::VECIN, 1> inputQueue_;
     AscendC::TQue<AscendC::TPosition::VECOUT, 1> outputQueue_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> arena_;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    AscendC::TBuf<AscendC::TPosition::VECCALC> dkStateBuffer_;
+#endif
 };
 
 } // namespace KDA
