@@ -94,6 +94,18 @@ public:
             (headNum + kHeadsPerWindow - 1) / kHeadsPerWindow;
         const uint64_t taskGroupCount =
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128) {
+            if (tiling_.isVarLen == 0 &&
+                tiling_.seqlen % CHUNK_SIZE == 0) {
+                ProcessA5DenseFourSlot(
+                    coreIdx, coreNum, headNum, headWindowCount,
+                    taskGroupCount);
+                ReleaseMatrixInputEvents();
+                return;
+            }
+        }
+#endif
         uint64_t windowIdx = 0;
 
         for (uint64_t taskGroupIdx = coreIdx; taskGroupIdx < taskGroupCount;
@@ -150,6 +162,106 @@ public:
     }
 
 private:
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void PrepareA5DenseWindow(
+        uint64_t windowIdx, uint32_t coreIdx, uint32_t coreNum,
+        uint32_t headNum, uint32_t headWindowCount)
+    {
+        const uint64_t taskGroupIdx =
+            static_cast<uint64_t>(coreIdx) +
+            (windowIdx >> 1U) * coreNum;
+        const uint32_t taskIdx =
+            static_cast<uint32_t>(taskGroupIdx / headWindowCount);
+        const uint32_t headBase =
+            static_cast<uint32_t>(taskGroupIdx % headWindowCount) *
+            kHeadsPerWindow;
+        const uint32_t headCount =
+            headBase + kHeadsPerWindow <= headNum ?
+                kHeadsPerWindow : headNum - headBase;
+        const CIntraTask task = GetCIntraTask(
+            cuSeqlens_, chunkMetadata_, tiling_, taskIdx);
+        const uint32_t rowStart =
+            static_cast<uint32_t>(windowIdx & 1U) * kProcessRowBlock;
+
+        for (uint32_t headInWindow = 0;
+             headInWindow < headCount; ++headInWindow) {
+            const uint32_t slot =
+                CIntraWorkspaceSlot(windowIdx, headInWindow);
+            PrepareHead(
+                task, headBase + headInWindow, rowStart,
+                kProcessRowBlock, slot);
+            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                vecToCubeReadyFlag_);
+        }
+    }
+
+    __aicore__ inline void FinishA5DenseWindow(
+        uint64_t windowIdx, uint32_t coreIdx, uint32_t coreNum,
+        uint32_t headNum, uint32_t headWindowCount)
+    {
+        const uint64_t taskGroupIdx =
+            static_cast<uint64_t>(coreIdx) +
+            (windowIdx >> 1U) * coreNum;
+        const uint32_t taskIdx =
+            static_cast<uint32_t>(taskGroupIdx / headWindowCount);
+        const uint32_t headBase =
+            static_cast<uint32_t>(taskGroupIdx % headWindowCount) *
+            kHeadsPerWindow;
+        const uint32_t headCount =
+            headBase + kHeadsPerWindow <= headNum ?
+                kHeadsPerWindow : headNum - headBase;
+        const CIntraTask task = GetCIntraTask(
+            cuSeqlens_, chunkMetadata_, tiling_, taskIdx);
+        const uint32_t rowStart =
+            static_cast<uint32_t>(windowIdx & 1U) * kProcessRowBlock;
+
+        for (uint32_t headInWindow = 0;
+             headInWindow < headCount; ++headInWindow) {
+            Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+            const uint32_t slot =
+                CIntraWorkspaceSlot(windowIdx, headInWindow);
+            FinishHead(
+                task, headBase + headInWindow, rowStart,
+                kProcessRowBlock, slot);
+        }
+    }
+
+    __aicore__ inline void ProcessA5DenseFourSlot(
+        uint32_t coreIdx, uint32_t coreNum, uint32_t headNum,
+        uint32_t headWindowCount, uint64_t taskGroupCount)
+    {
+        static_assert(kProcessRowBlock == 32,
+                      "The A5 four-slot path requires row32 tiles.");
+        if (coreIdx >= taskGroupCount) {
+            return;
+        }
+        const uint64_t ownedGroups =
+            (taskGroupCount - 1U - coreIdx) / coreNum + 1U;
+        const uint64_t windowCount = ownedGroups * 2U;
+        const uint64_t primeCount = windowCount < 2U ? windowCount : 2U;
+
+        // Prime both generations.  Afterwards, Post(i) releases parity slot
+        // i before Pre(i+2) reuses it, while AIC advances through generation
+        // i+1.  The ready flags remain in the same logical FIFO order as the
+        // mature schedule; only their producer/consumer distance changes.
+        for (uint64_t windowIdx = 0; windowIdx < primeCount; ++windowIdx) {
+            PrepareA5DenseWindow(
+                windowIdx, coreIdx, coreNum, headNum, headWindowCount);
+        }
+        for (uint64_t windowIdx = 0; windowIdx < windowCount; ++windowIdx) {
+            FinishA5DenseWindow(
+                windowIdx, coreIdx, coreNum, headNum, headWindowCount);
+            const uint64_t nextWindow = windowIdx + 2U;
+            if (nextWindow < windowCount) {
+                PrepareA5DenseWindow(
+                    nextWindow, coreIdx, coreNum,
+                    headNum, headWindowCount);
+            }
+        }
+    }
+#endif
+
     static constexpr uint32_t kProcessRowBlock =
         ProcessRowBlock<K_DIM, PUBLIC_VARLEN>::value;
     static constexpr uint32_t kPlaneElements = 8 * 128;
