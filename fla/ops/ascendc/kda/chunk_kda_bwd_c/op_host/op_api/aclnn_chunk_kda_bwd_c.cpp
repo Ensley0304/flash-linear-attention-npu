@@ -62,12 +62,24 @@ extern "C" aclnnStatus aclnnChunkKdaBwdCGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr,
               ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto *executorPtr = uniqueExecutor.get();
+    // Keep every generated optional kernel-argument slot backed by a valid
+    // tensor even when raw-gate postprocessing is disabled.  The device
+    // branch does not read these aliases, but passing nullptr through the
+    // generated dynamic-input ABI can compact the argument table and shift
+    // the following MIX-kernel addresses on A2/A3.
+    const aclTensor *rawGArg = rawGOptional != nullptr ? rawGOptional : gk;
+    const aclTensor *aLogArg = aLogOptional != nullptr ? aLogOptional : gk;
+    const aclTensor *dtBiasArg =
+        dtBiasOptional != nullptr ? dtBiasOptional : gk;
+    const aclTensor *dAArg = dAOutOptional != nullptr ? dAOutOptional : dgOut;
+    const aclTensor *dBiasArg =
+        dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
     const auto result = l0op::ChunkKdaBwdC(
         q, k, v, vNew, gk, beta, akk, h, dh, dvScan, dqRaw, dAqk,
-        rawGOptional, aLogOptional, dtBiasOptional,
+        rawGArg, aLogArg, dtBiasArg,
         cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, safeGate,
         useGateInKernel, lowerBound, dqOut, dkOut, dvOut, dbOut,
-        dgOut, dAkkOut, dAOutOptional, dBiasOutOptional, executorPtr);
+        dgOut, dAkkOut, dAArg, dBiasArg, executorPtr);
     for (size_t i = 0; i < 6; ++i) {
         CHECK_RET(result[i] != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }

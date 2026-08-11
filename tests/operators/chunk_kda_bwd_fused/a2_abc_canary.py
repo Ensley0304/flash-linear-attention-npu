@@ -249,9 +249,12 @@ def run(args):
     stream = ctypes.c_void_p(torch.npu.current_stream().npu_stream)
 
     def launch_chain():
-        prepared = [op.prepare() for op in invocations]
-        for op, item in zip(invocations, prepared):
+        for op in invocations:
+            item = op.prepare()
             op.launch(item, stream)
+            if args.sync_each:
+                torch.npu.synchronize()
+                print(f"ABC_SYNC {op.name}", flush=True)
 
     launch_chain()
     torch.npu.synchronize()
@@ -296,18 +299,17 @@ def run(args):
     event_ms, host_ms = [], []
     stage_ms = {"A": [], "B": [], "C": []}
     for _ in range(args.repeat):
-        prepared = [op.prepare() for op in invocations]
         start = torch.npu.Event(enable_timing=True)
         after_a = torch.npu.Event(enable_timing=True)
         after_b = torch.npu.Event(enable_timing=True)
         end = torch.npu.Event(enable_timing=True)
         t0 = time.perf_counter_ns()
         start.record()
-        a.launch(prepared[0], stream)
+        a.launch(a.prepare(), stream)
         after_a.record()
-        b.launch(prepared[1], stream)
+        b.launch(b.prepare(), stream)
         after_b.record()
-        c.launch(prepared[2], stream)
+        c.launch(c.prepare(), stream)
         end.record()
         torch.npu.synchronize()
         host_ms.append((time.perf_counter_ns() - t0) / 1e6)
@@ -348,6 +350,8 @@ def main():
     parser.add_argument("--scale", type=float, default=0.08838834764831845)
     parser.add_argument("--lower-bound", type=float, default=-5.0)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--sync-each", action="store_true",
+                        help="synchronize after A/B/C to localize device faults")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=9)
     run(parser.parse_args())

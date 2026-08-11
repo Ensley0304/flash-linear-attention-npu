@@ -90,7 +90,7 @@ private:
                     2U : 1U;
             for (uint32_t lane = subBlockIdx; lane < headCount;
                  lane += subBlockNum) {
-                ProcessChunk(
+                ProcessChunk<false>(
                     taskIdx, headBase + lane, false, nullptr, nullptr);
             }
         }
@@ -122,7 +122,7 @@ private:
                 for (uint32_t task = 0;
                      task < static_cast<uint32_t>(tiling_.chunkNum);
                      ++task) {
-                    ProcessChunk(task, head, true, &dAAcc, &dbAcc);
+                    ProcessChunk<true>(task, head, true, &dAAcc, &dbAcc);
                 }
             } else {
                 for (uint32_t batch = 0;
@@ -135,7 +135,7 @@ private:
                         const uint32_t task =
                             batch * static_cast<uint32_t>(
                                 tiling_.chunkNumPerBatch) + local;
-                        ProcessChunk(
+                        ProcessChunk<true>(
                             task, head, true, &dAAcc, &dbAcc);
                     }
                 }
@@ -156,6 +156,7 @@ private:
         }
     }
 
+    template <bool APPLY_RAW>
     __aicore__ inline void ProcessChunk(
         uint32_t taskIdx, uint32_t head, bool applyRaw,
         AscendC::LocalTensor<float> *dAAcc,
@@ -189,9 +190,13 @@ private:
             srcIsInput = !srcIsInput;
         }
         auto upstream = srcIsInput ? src : dst;
-        if (applyRaw) {
+        if constexpr (APPLY_RAW) {
+            (void)applyRaw;
             ApplyRawGate(task, head, validC, upstream, *dAAcc, *dbAcc);
         } else {
+            (void)applyRaw;
+            (void)dAAcc;
+            (void)dbAcc;
             StoreDg(offset, upstream, count);
         }
     }

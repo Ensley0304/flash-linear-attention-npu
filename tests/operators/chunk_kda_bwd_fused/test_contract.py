@@ -152,6 +152,16 @@ def test_kernel_c_wy_preserves_vector_raw_dependencies():
         "PipeBarrier<PIPE_V>()") < gate_stage.index("Sub(qk, qk, acc")
 
 
+def test_kernel_c_no_gate_keeps_optional_abi_slots_valid():
+    api = _read(C_ROOT / "op_host/op_api/aclnn_chunk_kda_bwd_c.cpp")
+    gate = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_gate.h")
+    for alias in ("rawGArg", "aLogArg", "dtBiasArg", "dAArg", "dBiasArg"):
+        assert alias in api
+    assert "ProcessChunk<false>" in gate
+    assert "ProcessChunk<true>" in gate
+    assert "if constexpr (APPLY_RAW)" in gate
+
+
 def test_source_files_have_balanced_braces():
     # This deliberately simple guard catches accidental truncation while
     # porting the large fused headers before a CANN compiler is available.
