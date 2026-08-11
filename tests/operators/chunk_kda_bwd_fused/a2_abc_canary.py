@@ -294,18 +294,27 @@ def run(args):
         torch.npu.synchronize()
 
     event_ms, host_ms = [], []
+    stage_ms = {"A": [], "B": [], "C": []}
     for _ in range(args.repeat):
         prepared = [op.prepare() for op in invocations]
         start = torch.npu.Event(enable_timing=True)
+        after_a = torch.npu.Event(enable_timing=True)
+        after_b = torch.npu.Event(enable_timing=True)
         end = torch.npu.Event(enable_timing=True)
         t0 = time.perf_counter_ns()
         start.record()
-        for op, item in zip(invocations, prepared):
-            op.launch(item, stream)
+        a.launch(prepared[0], stream)
+        after_a.record()
+        b.launch(prepared[1], stream)
+        after_b.record()
+        c.launch(prepared[2], stream)
         end.record()
         torch.npu.synchronize()
         host_ms.append((time.perf_counter_ns() - t0) / 1e6)
         event_ms.append(start.elapsed_time(end))
+        stage_ms["A"].append(start.elapsed_time(after_a))
+        stage_ms["B"].append(after_a.elapsed_time(after_b))
+        stage_ms["C"].append(after_b.elapsed_time(end))
 
     result = {
         "shape": [bsz, heads, seqlen, key_dim, value_dim],
@@ -313,6 +322,11 @@ def run(args):
         "launches": 3,
         "event_ms": {"median": statistics.median(event_ms),
                      "min": min(event_ms), "max": max(event_ms)},
+        "stage_event_ms": {
+            name: {"median": statistics.median(samples),
+                   "min": min(samples), "max": max(samples)}
+            for name, samples in stage_ms.items()
+        },
         "host_ms": {"median": statistics.median(host_ms),
                     "min": min(host_ms), "max": max(host_ms)},
         "workspace_bytes": {op.name: op.workspace.numel()
