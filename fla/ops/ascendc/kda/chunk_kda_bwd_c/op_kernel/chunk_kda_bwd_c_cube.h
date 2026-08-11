@@ -177,8 +177,12 @@ private:
 // A5-local two-output path for contractions that share the complete left
 // operand.  The left tile is copied to L1/L0A once.  The two right tiles use
 // independent L1B buffers, so MTE2 can prefetch the second right operand while
-// MTE1/MMAD consumes the first one.  L0B remains single-buffered.  Two compact
-// L0C result planes let FIX copy the first output while M computes the second.
+// MTE1/MMAD consumes the first one.  On A5 V128, two 32-KiB L0B planes
+// additionally let MTE1 stage the second right tile while M computes the
+// first contraction.  V256 keeps the single-buffer fallback because two
+// worst-case L0B planes do not fit the 64-KiB hardware capacity.
+// Two compact L0C result planes let FIX copy the first output while M computes
+// the second.
 template <class ArchTag_, class ElementC_, class TileCopy_>
 struct WyTileGemmSharedLeftDualRightDirect {
     using ArchTag = ArchTag_;
@@ -200,15 +204,20 @@ struct WyTileGemmSharedLeftDualRightDirect {
     static constexpr int32_t kEventL1B0 = WyTileGemmDirectEvent::kL1B;
     static constexpr int32_t kEventL1B1 = 2;
     static constexpr int32_t kEventL0A = WyTileGemmDirectEvent::kL0A;
-    static constexpr int32_t kEventL0B = WyTileGemmDirectEvent::kL0B;
+    static constexpr int32_t kEventL0B0 = WyTileGemmDirectEvent::kL0B;
+    static constexpr int32_t kEventL0B1 = 2;
     static constexpr int32_t kEventL0C0 = WyTileGemmDirectEvent::kL0C;
     static constexpr int32_t kEventL0C1 = 1;
     static constexpr uint32_t kL1PlaneBytes =
         128 * 256 * sizeof(ElementA);
+    static constexpr uint32_t kL0BPlaneBytes =
+        128 * 128 * sizeof(ElementB);
     static constexpr uint32_t kL0CPlaneBytes =
         64 * 128 * sizeof(ElementAccumulator);
     static_assert(3 * kL1PlaneBytes <= 512 * 1024,
                   "Kernel C shared-left L1 buffers exceed capacity");
+    static_assert(2 * kL0BPlaneBytes <= ArchTag::L0B_SIZE,
+                  "Kernel C shared-left L0B double buffer exceeds capacity");
     static_assert(2 * kL0CPlaneBytes <= ArchTag::L0C_SIZE,
                   "Kernel C dual-output L0C buffers exceed capacity");
 
@@ -223,7 +232,9 @@ struct WyTileGemmSharedLeftDualRightDirect {
             l1B1_ = resource.l1Buf.template GetBufferByByte<ElementB>(
                 2 * kL1PlaneBytes);
             l0A_ = resource.l0ABuf.template GetBufferByByte<ElementA>(0);
-            l0B_ = resource.l0BBuf.template GetBufferByByte<ElementB>(0);
+            l0B0_ = resource.l0BBuf.template GetBufferByByte<ElementB>(0);
+            l0B1_ = resource.l0BBuf.template GetBufferByByte<ElementB>(
+                kL0BPlaneBytes);
             l0C0_ = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
             l0C1_ = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(
                 kL0CPlaneBytes);
@@ -300,41 +311,45 @@ struct WyTileGemmSharedLeftDualRightDirect {
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
 
         auto l0B0 = tla::MakeTensor(
-            l0B_, tla::MakeLayout<ElementB, LayoutTagL0B>(k, n0),
+            l0B0_, tla::MakeLayout<ElementB, LayoutTagL0B>(k, n0),
             Catlass::Arch::PositionL0B{});
         auto l0C0 = tla::MakeTensor(
             l0C0_, tla::MakeLayoutL0C(m, n0),
             Catlass::Arch::PositionL0C{});
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B0);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B0);
         copyL0B(l0B0, tileL1B0);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B0);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kEventL0C0);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kEventL0C0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kEventL0C0);
         mm(l0C0, l0A, l0B0, m, n0, k, true, 0b11);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B0);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kEventL0C0);
+
+        // The first MMAD is now live on PIPE_M.  Stage the second right tile
+        // through the independent L0B plane so PIPE_MTE1 can overlap it.
+        auto l0B1 = tla::MakeTensor(
+            l0B1_, tla::MakeLayout<ElementB, LayoutTagL0B>(k, n1),
+            Catlass::Arch::PositionL0B{});
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B1);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B1);
+        copyL0B(l0B1, tileL1B1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B1);
+
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kEventL0C0);
         copyC0(c0, l0C0, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kEventL0C0);
 
-        auto l0B1 = tla::MakeTensor(
-            l0B_, tla::MakeLayout<ElementB, LayoutTagL0B>(k, n1),
-            Catlass::Arch::PositionL0B{});
         auto l0C1 = tla::MakeTensor(
             l0C1_, tla::MakeLayoutL0C(m, n1),
             Catlass::Arch::PositionL0C{});
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B1);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
-        copyL0B(l0B1, tileL1B1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B1);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kEventL0C1);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kEventL0C1);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kEventL0C1);
         mm(l0C1, l0A, l0B1, m, n1, k, true, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B1);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kEventL0C1);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kEventL0C1);
         copyC1(c1, l0C1, 0b11);
@@ -346,7 +361,8 @@ private:
     AscendC::LocalTensor<ElementB> l1B0_;
     AscendC::LocalTensor<ElementB> l1B1_;
     AscendC::LocalTensor<ElementA> l0A_;
-    AscendC::LocalTensor<ElementB> l0B_;
+    AscendC::LocalTensor<ElementB> l0B0_;
+    AscendC::LocalTensor<ElementB> l0B1_;
     AscendC::LocalTensor<ElementAccumulator> l0C0_;
     AscendC::LocalTensor<ElementAccumulator> l0C1_;
 };
@@ -544,13 +560,22 @@ public:
                 // N=64 tiles; this also avoids reloading dvScan for the
                 // second half.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                RunSharedLeftDualTransposeB<
-                    Bf16C64DualRightMmad, RowMajor, ColumnMajor>(
-                    resource, dvScan_, tokenV,
-                    h_, hOffset, slot + tiling_.dWOffset,
-                    validLen, 128, 128, V_DIM,
-                    v_, tokenV, slot + tiling_.zVOffset,
-                    validLen, 64);
+                if constexpr (V_DIM == 128) {
+                    RunSharedLeftDualTransposeB<
+                        Bf16C64DualRightMmad, RowMajor, ColumnMajor>(
+                        resource, dvScan_, tokenV,
+                        h_, hOffset, slot + tiling_.dWOffset,
+                        validLen, 128, 128, V_DIM,
+                        v_, tokenV, slot + tiling_.zVOffset,
+                        validLen, 64);
+                } else {
+                    RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
+                        resource, dvScan_, tokenV, h_, hOffset,
+                        slot + tiling_.dWOffset, validLen, 128, 128, V_DIM);
+                    RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
+                        resource, dvScan_, tokenV, v_, tokenV,
+                        slot + tiling_.zVOffset, validLen, validLen, 64, V_DIM);
+                }
 #else
                 RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
                     resource, dvScan_, tokenV, h_, hOffset,
@@ -671,6 +696,7 @@ public:
         BeginFusedMmadPhase();
         if ASCEND_IS_AIC {
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(2);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(1);
         }
     }
@@ -679,6 +705,7 @@ public:
     {
         if ASCEND_IS_AIC {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(2);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(1);
         }
         EndFusedMmadPhase();
