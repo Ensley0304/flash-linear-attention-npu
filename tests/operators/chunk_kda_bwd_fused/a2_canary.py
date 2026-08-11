@@ -46,6 +46,11 @@ class CanaryRuntime:
         ]
         self.acl.aclDestroyTensor.restype = ctypes.c_int
         self.acl.aclDestroyTensor.argtypes = [ctypes.c_void_p]
+        self.acl.aclCreateIntArray.restype = ctypes.c_void_p
+        self.acl.aclCreateIntArray.argtypes = [
+            ctypes.POINTER(ctypes.c_int64), ctypes.c_uint64]
+        self.acl.aclDestroyIntArray.restype = ctypes.c_int
+        self.acl.aclDestroyIntArray.argtypes = [ctypes.c_void_p]
 
     def tensor(self, value: torch.Tensor) -> AclTensor:
         assert value.is_npu and value.is_contiguous()
@@ -70,6 +75,18 @@ class CanaryRuntime:
             status = self.acl.aclDestroyTensor(value.handle)
             if status != ACL_SUCCESS:
                 raise RuntimeError(f"aclDestroyTensor failed: {status}")
+
+    def int_array(self, values):
+        backing = (ctypes.c_int64 * len(values))(*values)
+        handle = self.acl.aclCreateIntArray(backing, len(values))
+        if not handle:
+            raise RuntimeError("aclCreateIntArray returned nullptr")
+        return ctypes.c_void_p(handle), backing
+
+    def destroy_int_array(self, handle) -> None:
+        status = self.acl.aclDestroyIntArray(handle)
+        if status != ACL_SUCCESS:
+            raise RuntimeError(f"aclDestroyIntArray failed: {status}")
 
 
 def _error(name: str, actual: torch.Tensor, expected: torch.Tensor) -> dict[str, object]:
@@ -121,24 +138,25 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
         return cpu, result
 
     aqk_cpu, aqk = make((batch, heads, seqlen, chunk))
-    qg_cpu, qg = make((batch, heads, seqlen, key_dim))
     vnew_cpu, vnew = make((batch, heads, seqlen, value_dim))
     h_cpu, h = make((batch, chunks, heads, key_dim, value_dim))
     do_cpu, d_o = make((batch, heads, seqlen, value_dim))
     del aqk_cpu
 
     dv0 = torch.empty_like(d_o)
-    q0 = torch.empty((batch, chunks, heads, key_dim, value_dim), dtype=torch.float32, device=device)
     dq_raw = torch.empty((batch, heads, seqlen, key_dim), dtype=torch.float32, device=device)
     daqk = torch.empty((batch, heads, seqlen, chunk), dtype=torch.float32, device=device)
     torch.npu.synchronize()
     print("INPUTS_READY", flush=True)
 
-    tensors = [rt.tensor(x) for x in (aqk, qg, vnew, h, d_o, dv0, q0, dq_raw, daqk)]
+    tensors = [rt.tensor(x) for x in (aqk, vnew, h, d_o, dv0, dq_raw, daqk)]
     print("ACL_TENSORS_READY", flush=True)
     get_ws = rt.op.aclnnChunkKdaBwdAGetWorkspaceSize
     get_ws.restype = ctypes.c_int
-    get_ws.argtypes = [ctypes.c_void_p] * 7 + [ctypes.c_float, ctypes.c_int64] + [ctypes.c_void_p] * 4 + [ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)]
+    get_ws.argtypes = ([ctypes.c_void_p] * 6 + [ctypes.c_int64] +
+                       [ctypes.c_void_p] * 3 +
+                       [ctypes.POINTER(ctypes.c_uint64),
+                        ctypes.POINTER(ctypes.c_void_p)])
     launch = rt.op.aclnnChunkKdaBwdA
     launch.restype = ctypes.c_int
     launch.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
@@ -146,9 +164,9 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
     def enqueue():
         workspace_size = ctypes.c_uint64()
         executor = ctypes.c_void_p()
-        ins = [x.handle for x in tensors[:5]]
-        outs = [x.handle for x in tensors[5:]]
-        status = get_ws(*ins, None, None, scale, chunk, *outs,
+        ins = [x.handle for x in tensors[:4]]
+        outs = [x.handle for x in tensors[4:]]
+        status = get_ws(*ins, None, None, chunk, *outs,
                         ctypes.byref(workspace_size), ctypes.byref(executor))
         print(f"WORKSPACE_READY {workspace_size.value}", flush=True)
         if status != ACL_SUCCESS:
@@ -186,7 +204,6 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
         return
 
     dv_ref = torch.empty_like(do_cpu)
-    q0_ref = torch.empty((batch, chunks, heads, key_dim, value_dim))
     dq_ref = torch.empty((batch, heads, seqlen, key_dim))
     da_ref = torch.zeros((batch, heads, seqlen, chunk))
     for c in range(chunks):
@@ -196,13 +213,11 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
             do_c = do_cpu[0, head, begin:end]
             # Cube operands are BF16/FP16 views, so reference the quantized inputs.
             aqk_c = aqk[0, head, begin:end].cpu().float()
-            qg_c = qg[0, head, begin:end].cpu().float()
             vn_c = vnew[0, head, begin:end].cpu().float()
             h_c = h[0, c, head].cpu().float()
             do_q = d_o[0, head, begin:end].cpu().float()
             # dv0 is [C,V]; Aqk is the saved [C,C] triangular matrix.
             dv_ref[0, head, begin:end] = aqk_c.transpose(0, 1).matmul(do_q)[:valid]
-            q0_ref[0, c, head] = scale * qg_c.transpose(0, 1).matmul(do_q)
             dq_ref[0, head, begin:end] = do_q.matmul(h_c.transpose(0, 1))
             # Kernel A publishes the full raw product.  Kernel C's intra pack
             # applies scale and the causal lower mask when consuming it.
@@ -210,7 +225,6 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
 
     reports = {
         "dv0": _error("dv0", dv0, dv_ref.to(data)),
-        "Q0": _error("Q0", q0, q0_ref),
         "dq_raw": _error("dq_raw", dq_raw, dq_ref),
         "dAqk": _error("dAqk", daqk, da_ref),
     }
@@ -264,7 +278,8 @@ def run_a(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
 def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
           scale: float, warmup: int, repeat: int, lower_bound: float,
           varlen: bool, nonzero_daqk: bool, daqk_impulse: bool,
-          dtype: str, perf_only: bool) -> None:
+          dtype: str, perf_only: bool, dh_head_major: bool,
+          use_raw_gate: bool, use_dt_bias: bool) -> None:
     """Independent nonzero smoke for Kernel C while Kernel B is not connected."""
     batch, chunk, key_dim = 1, 64, 128
     chunks = (seqlen + chunk - 1) // chunk
@@ -298,7 +313,10 @@ def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
     beta = zeros(token_prefix, torch.float32)
     akk = zeros((*token_prefix, chunk))
     h = zeros((*state_prefix, key_dim, value_dim))
-    dh = zeros((*state_prefix, key_dim, value_dim)) if nonzero_daqk else random_fp16((*state_prefix, key_dim, value_dim))
+    dh_shape = ((batch, heads, chunks, key_dim, value_dim)
+                if dh_head_major and not varlen else
+                (*state_prefix, key_dim, value_dim))
+    dh = (zeros(dh_shape) if nonzero_daqk else random_fp16(dh_shape))
     dv_scan = zeros((*token_prefix, value_dim))
     dq_raw = (zeros((*token_prefix, key_dim), torch.float32) if nonzero_daqk else
               (torch.randn((*token_prefix, key_dim), dtype=torch.float32) * 0.05).to(device))
@@ -344,7 +362,8 @@ def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
     get_ws.restype = ctypes.c_int
     get_ws.argtypes = (
         [ctypes.c_void_p] * 17
-        + [ctypes.c_float, ctypes.c_int64, ctypes.c_bool, ctypes.c_bool, ctypes.c_float]
+        + [ctypes.c_float, ctypes.c_int64, ctypes.c_bool, ctypes.c_bool,
+           ctypes.c_float, ctypes.c_bool]
         + [ctypes.c_void_p] * 8
         + [ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)]
     )
@@ -357,10 +376,15 @@ def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
         executor = ctypes.c_void_p()
         status = get_ws(
             *[x.handle for x in required_desc],
-            *[x.handle for x in optional_desc],
+            *([optional_desc[0].handle, optional_desc[1].handle,
+               optional_desc[2].handle if use_dt_bias else None]
+              if use_raw_gate else [None, None, None]),
             *[x.handle if x is not None else None for x in metadata],
-            scale, chunk, True, True, lower_bound,
-            *[x.handle for x in output_desc],
+            scale, chunk, True, use_raw_gate, lower_bound, dh_head_major,
+            *([x.handle for x in output_desc[:7]] +
+              [output_desc[7].handle if use_dt_bias else None]
+              if use_raw_gate else
+              [x.handle for x in output_desc[:6]] + [None, None]),
             ctypes.byref(workspace_size), ctypes.byref(executor),
         )
         print(f"KERNEL_C_WORKSPACE_READY {workspace_size.value}", flush=True)
@@ -432,15 +456,20 @@ def run_c(rt: CanaryRuntime, *, heads: int, seqlen: int, value_dim: int,
             else:
                 dk_expected[0, head, begin:end] = (
                     vnew_cpu[0, head, begin:end] @
-                    dh_cpu[0, c, head].transpose(0, 1))
+                    (dh_cpu[0, head, c] if dh_head_major else
+                     dh_cpu[0, c, head]).transpose(0, 1))
 
     reports = {
         "dq": _error("dq", dq, dq_expected),
         "dk": _error("dk", dk, dk_expected),
     }
     zero_reports = {}
-    for name, value in zip(
-            ("dv", "db", "dg", "dAkk", "dA", "dbias"), outputs[2:]):
+    zero_names = (("dv", "db", "dg", "dAkk", "dA", "dbias")
+                  if use_raw_gate and use_dt_bias else
+                  ("dv", "db", "dg", "dAkk", "dA")
+                  if use_raw_gate else
+                  ("dv", "db", "dg", "dAkk"))
+    for name, value in zip(zero_names, outputs[2:]):
         cpu = value.detach().cpu().float()
         zero_reports[name] = {
             "finite": bool(torch.isfinite(cpu).all()),
@@ -536,6 +565,9 @@ def main() -> None:
     parser.add_argument("--varlen", action="store_true")
     parser.add_argument("--c-nonzero-daqk", action="store_true")
     parser.add_argument("--c-daqk-impulse", action="store_true")
+    parser.add_argument("--c-dh-head-major", action="store_true")
+    parser.add_argument("--c-no-raw-gate", action="store_true")
+    parser.add_argument("--c-no-dt-bias", action="store_true")
     parser.add_argument("--dtype", choices=("fp16", "bf16"), default="fp16")
     parser.add_argument("--perf-only", action="store_true")
     parser.add_argument("--warmup", type=int, default=2)
@@ -554,7 +586,10 @@ def main() -> None:
               varlen=args.varlen,
               nonzero_daqk=args.c_nonzero_daqk or args.c_daqk_impulse,
               daqk_impulse=args.c_daqk_impulse,
-              dtype=args.dtype, perf_only=args.perf_only)
+              dtype=args.dtype, perf_only=args.perf_only,
+              dh_head_major=args.c_dh_head_major,
+              use_raw_gate=not args.c_no_raw_gate,
+              use_dt_bias=not args.c_no_dt_bias)
 
 
 if __name__ == "__main__":

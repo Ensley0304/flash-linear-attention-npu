@@ -106,9 +106,9 @@ __aicore__ inline uint64_t WyDAkkBf16TaskBase(
     return 2U * WyTokenOffset(tiling, batchIdx, headIdx, tokenIdx, 64);
 }
 
-// h is the public forward output and dh is Kernel B's output.  Both use the
-// fixed sequence/chunk-major state layout [B, NT, H, K, V] (or [NT,H,K,V]
-// for varlen), so C consumes them without an extra transpose or launch.
+// Saved h keeps the forward sequence/chunk-major layout. Kernel B's dh can
+// use PR291's head-major layout; C selects the matching offset directly, so
+// no transpose kernel or GM copy is introduced.
 __aicore__ inline uint64_t WySavedHOffset(
     const ChunkKdaBwdCTilingData &tiling, uint32_t batchIdx,
     uint32_t headIdx, uint32_t chunkIdx)
@@ -126,6 +126,15 @@ __aicore__ inline uint64_t WyDhOffset(
     const ChunkKdaBwdCTilingData &tiling, uint32_t batchIdx,
     uint32_t headIdx, uint32_t chunkIdx)
 {
+    if (tiling.dhHeadMajor != 0) {
+        if (tiling.isVarLen != 0) {
+            return (static_cast<uint64_t>(headIdx) * tiling.chunkNum +
+                    chunkIdx) * tiling.keyDim * tiling.valueDim;
+        }
+        return ((static_cast<uint64_t>(batchIdx) * tiling.headNum +
+                 headIdx) * tiling.chunkNumPerBatch + chunkIdx) *
+               tiling.keyDim * tiling.valueDim;
+    }
     if (tiling.isVarLen != 0) {
         return (static_cast<uint64_t>(chunkIdx) * tiling.headNum + headIdx) *
                tiling.keyDim * tiling.valueDim;

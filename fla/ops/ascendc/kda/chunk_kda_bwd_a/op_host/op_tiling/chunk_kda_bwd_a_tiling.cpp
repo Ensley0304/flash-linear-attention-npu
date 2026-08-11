@@ -13,19 +13,15 @@ ge::graphStatus Tiling4ChunkKdaBwdA(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     const auto *attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
-    const auto *scale = attrs->GetAttrPointer<float>(KDA_BWD_A_SCALE_ATTR_IDX);
     const auto *chunkSize =
         attrs->GetAttrPointer<int64_t>(KDA_BWD_A_CHUNK_SIZE_ATTR_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
 
     const auto *aqkDesc = context->GetInputDesc(KDA_BWD_A_AQK_IDX);
-    const auto *qgDesc = context->GetInputDesc(KDA_BWD_A_QG_IDX);
     const auto *vNewDesc = context->GetInputDesc(KDA_BWD_A_V_NEW_IDX);
     const auto *hDesc = context->GetInputDesc(KDA_BWD_A_H_IDX);
     const auto *doDesc = context->GetInputDesc(KDA_BWD_A_DO_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, aqkDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qgDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, vNewDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, hDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, doDesc);
@@ -33,15 +29,14 @@ ge::graphStatus Tiling4ChunkKdaBwdA(gert::TilingContext *context)
     ChunkKdaBwdATilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_BWD_A_AQK_IDX),
-        context->GetRequiredInputShape(KDA_BWD_A_QG_IDX),
         context->GetRequiredInputShape(KDA_BWD_A_V_NEW_IDX),
         context->GetRequiredInputShape(KDA_BWD_A_H_IDX),
         context->GetRequiredInputShape(KDA_BWD_A_DO_IDX),
         context->GetOptionalInputShape(KDA_BWD_A_CU_SEQLENS_IDX),
         context->GetOptionalInputShape(KDA_BWD_A_CHUNK_INDICES_IDX),
-        aqkDesc->GetDataType(), qgDesc->GetDataType(),
+        aqkDesc->GetDataType(),
         vNewDesc->GetDataType(), hDesc->GetDataType(), doDesc->GetDataType(),
-        *scale, *chunkSize,
+        *chunkSize,
         static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
     };

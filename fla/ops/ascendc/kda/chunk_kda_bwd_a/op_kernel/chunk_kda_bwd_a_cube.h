@@ -9,7 +9,6 @@
 #endif
 #endif
 #include "catlass/arch/arch.hpp"
-#include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/gemm/gemm_type.hpp"
@@ -36,8 +35,6 @@ private:
 
     using DvCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, T, ColumnMajor, T, RowMajor, T, RowMajor>;
-    using Q0Copy = Catlass::Gemm::Tile::PackedTileCopyTla<
-        ArchTag, T, ColumnMajor, T, RowMajor, float, RowMajor>;
     using DqCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, T, RowMajor, T, ColumnMajor, float, RowMajor>;
     using DACopy = Catlass::Gemm::Tile::PackedTileCopyTla<
@@ -45,8 +42,6 @@ private:
 
     using DvMmad = Catlass::Gemm::Tile::TileMmadTla<
         ArchTag, T, typename DvCopy::LayoutTagL1A>;
-    using Q0Mmad = Catlass::Gemm::Tile::TileMmadTla<
-        ArchTag, T, typename Q0Copy::LayoutTagL1A>;
     using DqMmad = Catlass::Gemm::Tile::TileMmadTla<
         ArchTag, T, typename DqCopy::LayoutTagL1A>;
     using DAMmad = Catlass::Gemm::Tile::TileMmadTla<
@@ -79,12 +74,12 @@ private:
 
 public:
     __aicore__ ChunkKdaBwdACube(
-        GM_ADDR aqk, GM_ADDR qg, GM_ADDR vNew, GM_ADDR h, GM_ADDR dO,
+        GM_ADDR aqk, GM_ADDR vNew, GM_ADDR h, GM_ADDR dO,
         GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
-        GM_ADDR dv0, GM_ADDR dqRaw, GM_ADDR dAqk, GM_ADDR workspace)
-        : aqk_(aqk), qg_(qg), vNew_(vNew), h_(h), dO_(dO),
+        GM_ADDR dv0, GM_ADDR dqRaw, GM_ADDR dAqk)
+        : aqk_(aqk), vNew_(vNew), h_(h), dO_(dO),
           cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices),
-          dv0_(dv0), dqRaw_(dqRaw), dAqk_(dAqk), workspace_(workspace)
+          dv0_(dv0), dqRaw_(dqRaw), dAqk_(dAqk)
     {
     }
 
@@ -104,22 +99,8 @@ public:
         const uint32_t core = AscendC::GetBlockIdx();
         const uint64_t ownerCount =
             static_cast<uint64_t>(tiling_.chunkNum) * tiling_.headNum;
-        uint32_t generation = 0;
         for (uint64_t owner = core; owner < ownerCount;
-             owner += tiling_.usedCoreNum, ++generation) {
-            const uint32_t slot = generation & 1U;
-            const uint32_t freeFlag =
-                slot == 0 ? KDA_BWD_A_FREE_FLAG0 : KDA_BWD_A_FREE_FLAG1;
-            const uint32_t readyFlag =
-                slot == 0 ? KDA_BWD_A_READY_FLAG0 : KDA_BWD_A_READY_FLAG1;
-            // The first use of each ping-pong slot cannot overwrite live AIV
-            // data, so it needs no reverse credit.  Waiting only on reuse
-            // also matches the mature producer-first MIX protocol: AIC
-            // publishes ready, AIV consumes, then AIV returns slot-free.
-            if (generation >= KDA_BWD_A_POST_SLOTS) {
-                WaitSlotFree(slot, freeFlag);
-            }
-
+             owner += tiling_.usedCoreNum) {
             const uint32_t taskIdx =
                 static_cast<uint32_t>(owner / tiling_.headNum);
             const uint32_t head =
@@ -127,15 +108,10 @@ public:
             ChunkKdaBwdATask task;
             GetChunkKdaBwdATask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
-            GM_ADDR slotBase =
-                KdaBwdAPostSlot(workspace_, core, slot, tiling_);
             LoadDo(task, head);
             RunDv(task, taskIdx, head, true);
-            RunQ0(task, head, slotBase);
             RunDq(task, taskIdx, head);
             RunDAqk(task, head);
-            AscendC::PipeBarrier<PIPE_FIX>();
-            PublishSlotReady(slot, readyFlag);
         }
 
         // PR190-style pipeline drain.  The final generation leaves the
@@ -147,52 +123,9 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
 
-        // Drain the final one or two producer-first generations only after
-        // Fixpipe has retired the corresponding ready notifications.  Reuse
-        // waits inside the loop consume the previous occupant of a slot; the
-        // last occupant(s) still owe AIV->AIC slot-free credits.  Returning
-        // with those credits pending leaves stale state for the next launch.
-        const uint32_t drainCount =
-            generation < KDA_BWD_A_POST_SLOTS ?
-                generation : KDA_BWD_A_POST_SLOTS;
-        for (uint32_t i = 0; i < drainCount; ++i) {
-            const uint32_t completedGeneration = generation - drainCount + i;
-            const uint32_t slot = completedGeneration & 1U;
-            const uint32_t freeFlag =
-                slot == 0 ? KDA_BWD_A_FREE_FLAG0 : KDA_BWD_A_FREE_FLAG1;
-            WaitSlotFree(slot, freeFlag);
-        }
     }
 
 private:
-    __aicore__ inline void WaitSlotFree(
-        uint32_t slot, uint32_t fallbackFlag)
-    {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (slot == 0) {
-            Catlass::Arch::CrossCoreWaitFlag(freeFlag0_);
-        } else {
-            Catlass::Arch::CrossCoreWaitFlag(freeFlag1_);
-        }
-#else
-        AscendC::CrossCoreWaitFlag(fallbackFlag);
-#endif
-    }
-
-    __aicore__ inline void PublishSlotReady(
-        uint32_t slot, uint32_t fallbackFlag)
-    {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (slot == 0) {
-            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(readyFlag0_);
-        } else {
-            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(readyFlag1_);
-        }
-#else
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(fallbackFlag);
-#endif
-    }
-
     __aicore__ inline void LoadDo(
         const ChunkKdaBwdATask &task, uint32_t head)
     {
@@ -314,6 +247,7 @@ private:
 
     }
 
+#if 0 // Q0 is intentionally computed inside PR291 Kernel B.
     __aicore__ inline void RunQ0(
         const ChunkKdaBwdATask &task, uint32_t head, GM_ADDR slotBase)
     {
@@ -397,6 +331,7 @@ private:
 
     }
 
+#endif
     template <typename Copy, typename Mmad>
     __aicore__ inline void RunDoLeft(
         GM_ADDR rightBase, uint32_t rightCols,
@@ -531,7 +466,6 @@ private:
     }
 
     GM_ADDR aqk_ = nullptr;
-    GM_ADDR qg_ = nullptr;
     GM_ADDR vNew_ = nullptr;
     GM_ADDR h_ = nullptr;
     GM_ADDR dO_ = nullptr;
@@ -540,14 +474,7 @@ private:
     GM_ADDR dv0_ = nullptr;
     GM_ADDR dqRaw_ = nullptr;
     GM_ADDR dAqk_ = nullptr;
-    GM_ADDR workspace_ = nullptr;
     ChunkKdaBwdATilingData tiling_{};
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    Catlass::Arch::CrossCoreFlag readyFlag0_{KDA_BWD_A_READY_FLAG0};
-    Catlass::Arch::CrossCoreFlag readyFlag1_{KDA_BWD_A_READY_FLAG1};
-    Catlass::Arch::CrossCoreFlag freeFlag0_{KDA_BWD_A_FREE_FLAG0};
-    Catlass::Arch::CrossCoreFlag freeFlag1_{KDA_BWD_A_FREE_FLAG1};
-#endif
 };
 
 } // namespace KDA

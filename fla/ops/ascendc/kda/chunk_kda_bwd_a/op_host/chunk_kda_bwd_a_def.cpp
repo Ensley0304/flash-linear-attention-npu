@@ -20,8 +20,6 @@ public:
 
         this->Input("Aqk").ParamType(REQUIRED).DataType(dataTypes)
             .Format(formats).UnknownShapeFormat(formats);
-        this->Input("qg").ParamType(REQUIRED).DataType(dataTypes)
-            .Format(formats).UnknownShapeFormat(formats);
         this->Input("v_new").ParamType(REQUIRED).DataType(dataTypes)
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("h").ParamType(REQUIRED).DataType(dataTypes)
@@ -35,14 +33,11 @@ public:
 
         this->Output("dv0").ParamType(REQUIRED).DataType(dataTypes)
             .Format(formats).UnknownShapeFormat(formats);
-        this->Output("Q0").ParamType(REQUIRED).DataType(fp32Types)
-            .Format(formats).UnknownShapeFormat(formats);
         this->Output("dq_raw").ParamType(REQUIRED).DataType(fp32Types)
             .Format(formats).UnknownShapeFormat(formats);
         this->Output("dAqk").ParamType(REQUIRED).DataType(fp32Types)
             .Format(formats).UnknownShapeFormat(formats);
 
-        this->Attr("scale").AttrType(REQUIRED).Float(1.0f);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
 
         OpAICoreConfig config;

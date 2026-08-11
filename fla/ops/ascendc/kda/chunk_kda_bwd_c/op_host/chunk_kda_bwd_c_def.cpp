@@ -90,6 +90,7 @@ public:
         this->Attr("safe_gate").AttrType(REQUIRED).Bool(true);
         this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(false);
         this->Attr("lower_bound").AttrType(OPTIONAL).Float(-5.0f);
+        this->Attr("dh_head_major").AttrType(REQUIRED).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

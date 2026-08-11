@@ -20,6 +20,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdCGetWorkspaceSize(
     const aclTensor *chunkIndicesOptional,
     float scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, float lowerBound,
+    bool dhHeadMajor,
     const aclTensor *dqOut, const aclTensor *dkOut,
     const aclTensor *dvOut, const aclTensor *dbOut,
     const aclTensor *dgOut, const aclTensor *dAkkOut,
@@ -31,7 +32,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdCGetWorkspaceSize(
         DFX_IN(q, k, v, vNew, gk, beta, akk, h, dh, dvScan, dqRaw,
                dAqk, rawGOptional, aLogOptional, dtBiasOptional,
                cuSeqlensOptional, chunkIndicesOptional, scale,
-               chunkSize, safeGate, useGateInKernel, lowerBound),
+               chunkSize, safeGate, useGateInKernel, lowerBound,
+               dhHeadMajor),
         DFX_OUT(dqOut, dkOut, dvOut, dbOut, dgOut, dAkkOut,
                 dAOutOptional, dBiasOutOptional));
     CHECK_COND(workspaceSize != nullptr && executor != nullptr,
@@ -66,7 +68,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdCGetWorkspaceSize(
         q, k, v, vNew, gk, beta, akk, h, dh, dvScan, dqRaw, dAqk,
         rawGOptional, aLogOptional, dtBiasOptional,
         cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, safeGate,
-        useGateInKernel, lowerBound, dqOut, dkOut, dvOut, dbOut,
+        useGateInKernel, lowerBound, dhHeadMajor, dqOut, dkOut, dvOut, dbOut,
         dgOut, dAkkOut, dAOutOptional, dBiasOutOptional, executorPtr);
     for (size_t i = 0; i < 6; ++i) {
         CHECK_RET(result[i] != nullptr, ACLNN_ERR_INNER_NULLPTR);

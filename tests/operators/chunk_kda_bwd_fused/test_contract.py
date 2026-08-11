@@ -92,12 +92,49 @@ def test_varlen_metadata_stays_inside_the_single_device_launch():
 
 def test_kernel_a_daqk_fixpipe_writes_directly_to_final_gm():
     cube = _read(A_ROOT / "op_kernel/chunk_kda_bwd_a_cube.h")
-    vector = _read(A_ROOT / "op_kernel/chunk_kda_bwd_a_vector.h")
-    process = vector.split("ProcessQ0(taskIdx", 1)[1].split(
-        "CrossCoreBarrier", 1)[0]
-    assert "ProcessDAqk" not in process
     assert "reinterpret_cast<__gm__ float *>(dAqk_) + outOffset" in cube
     assert "RunDAqk(task, head);" in cube
+
+
+def test_kernel_a_is_pure_aic_and_leaves_q0_inside_kernel_b():
+    entry = _read(A_ROOT / "op_kernel/chunk_kda_bwd_a.cpp")
+    op_def = _read(A_ROOT / "op_host/chunk_kda_bwd_a_def.cpp")
+    assert "KERNEL_TYPE_AIC_ONLY" in entry
+    assert "ASCEND_IS_AIV" not in entry
+    assert 'Input("qg")' not in op_def
+    assert 'Output("Q0")' not in op_def
+
+
+def test_three_kernel_wrapper_preserves_launch_order_and_pr291_dv_contract():
+    wrapper = _read(A_ROOT / "op_host/op_api/aclnn_chunk_kda_bwd.cpp")
+    launch_a = wrapper.index("l0op::ChunkKdaBwdA(")
+    launch_b = wrapper.index("l0op::ChunkGatedDeltaRuleBwdDhu(")
+    launch_c = wrapper.index("l0op::ChunkKdaBwdC(")
+    assert launch_a < launch_b < launch_c
+    b_call = wrapper[launch_b:launch_c]
+    assert "dOB, dv0B" in b_call
+    assert "dh, nullptr, dvScanB" in b_call
+    assert "h, dh, dvScan" in wrapper[launch_c:]
+    assert "const aclTensor *dv0" in wrapper
+    assert "const aclTensor *dvScan" in wrapper
+
+
+def test_three_kernel_wrapper_adapts_pr291_varlen_with_views_only():
+    wrapper = _read(A_ROOT / "op_host/op_api/aclnn_chunk_kda_bwd.cpp")
+    assert "l0op::Reshape" in wrapper
+    assert "qgB = AsRank4" in wrapper
+    assert "dvScanB = AsRank4" in wrapper
+    assert "never splits cu_seqlens" in wrapper
+    assert "for (int64_t sequence" not in wrapper
+
+
+def test_kernel_c_accepts_pr291_head_major_dh_without_transpose():
+    common = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_common.h")
+    tiling = _read(C_ROOT / "op_host/chunk_kda_bwd_c_tiling_processor.h")
+    assert "tiling.dhHeadMajor != 0" in common
+    assert "CheckDenseDhHeadMajor" in tiling
+    assert "CheckVarlenDhHeadMajor" in tiling
+    assert "Transpose" not in common
 
 
 def test_kernel_c_lower_mmad_pads_fp32_k():
@@ -204,8 +241,9 @@ def test_kernel_c_a5_reduces_state_gate_dot_products_in_registers():
     state_gate = vector.split("__aicore__ inline void PrepareStateGate", 1)[1]
     state_gate = state_gate.split("__aicore__ inline void AddPreparedStateGate", 1)[0]
     assert "KdaBwdCRowDotAccA5(" in state_gate
-    # Definition + state-gate h*dh + token db dot product.
-    assert vector.count("KdaBwdCRowDotAccA5(") == 3
+    # Definition + state-gate h*dh. Token db is now fused into the dedicated
+    # dkgb product/subtract helper below instead of calling this helper.
+    assert vector.count("KdaBwdCRowDotAccA5(") == 2
 
 
 def test_kernel_c_a5_fuses_dkgb_product_and_db_reduction():

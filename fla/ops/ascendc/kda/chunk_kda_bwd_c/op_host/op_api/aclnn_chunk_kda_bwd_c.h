@@ -20,6 +20,7 @@ aclnnStatus aclnnChunkKdaBwdCGetWorkspaceSize(
     const aclTensor *chunkIndicesOptional,
     float scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, float lowerBound,
+    bool dhHeadMajor,
     const aclTensor *dqOut, const aclTensor *dkOut,
     const aclTensor *dvOut, const aclTensor *dbOut,
     const aclTensor *dgOut, const aclTensor *dAkkOut,

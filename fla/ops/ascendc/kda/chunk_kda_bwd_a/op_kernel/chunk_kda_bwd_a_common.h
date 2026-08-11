@@ -7,11 +7,6 @@ namespace KDA {
 
 constexpr uint32_t KDA_BWD_A_C = 64;
 constexpr uint32_t KDA_BWD_A_K = 128;
-constexpr uint32_t KDA_BWD_A_POST_SLOTS = 2;
-constexpr uint32_t KDA_BWD_A_READY_FLAG0 = 0;
-constexpr uint32_t KDA_BWD_A_READY_FLAG1 = 1;
-constexpr uint32_t KDA_BWD_A_FREE_FLAG0 = 2;
-constexpr uint32_t KDA_BWD_A_FREE_FLAG1 = 3;
 
 struct ChunkKdaBwdATask {
     uint32_t sequence = 0;
@@ -86,16 +81,6 @@ __aicore__ inline uint64_t KdaBwdAChunkHeadOffset(
                  tiling.chunkNumPerBatch + task.localChunk) *
                 tiling.headNum + head) *
            elementsPerChunk;
-}
-
-__aicore__ inline GM_ADDR KdaBwdAPostSlot(
-    GM_ADDR workspace, uint32_t logicalCore, uint32_t slot,
-    const ChunkKdaBwdATilingData &tiling)
-{
-    return workspace + static_cast<uint64_t>(logicalCore) *
-                           static_cast<uint64_t>(tiling.workspaceCoreSize) +
-           static_cast<uint64_t>(slot) *
-               static_cast<uint64_t>(tiling.postSlotSize);
 }
 
 } // namespace KDA

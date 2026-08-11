@@ -10,24 +10,23 @@
 using namespace op;
 
 extern "C" aclnnStatus aclnnChunkKdaBwdAGetWorkspaceSize(
-    const aclTensor *aqk, const aclTensor *qg, const aclTensor *vNew,
+    const aclTensor *aqk, const aclTensor *vNew,
     const aclTensor *h, const aclTensor *dO,
     const aclTensor *cuSeqlensOptional,
     const aclTensor *chunkIndicesOptional,
-    float scale, int64_t chunkSize,
-    const aclTensor *dv0Out, const aclTensor *q0Out,
+    int64_t chunkSize, const aclTensor *dv0Out,
     const aclTensor *dqRawOut, const aclTensor *dAqkOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     L2_DFX_PHASE_1(aclnnChunkKdaBwdA,
-                   DFX_IN(aqk, qg, vNew, h, dO, cuSeqlensOptional,
-                          chunkIndicesOptional, scale, chunkSize),
-                   DFX_OUT(dv0Out, q0Out, dqRawOut, dAqkOut));
+                   DFX_IN(aqk, vNew, h, dO, cuSeqlensOptional,
+                          chunkIndicesOptional, chunkSize),
+                   DFX_OUT(dv0Out, dqRawOut, dAqkOut));
     CHECK_COND(workspaceSize != nullptr && executor != nullptr,
                ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize and executor must not be nullptr.");
     const aclTensor *required[] = {
-        aqk, qg, vNew, h, dO, dv0Out, q0Out, dqRawOut, dAqkOut};
+        aqk, vNew, h, dO, dv0Out, dqRawOut, dAqkOut};
     for (const aclTensor *tensor : required) {
         CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                    "ChunkKdaBwdA required tensor is nullptr.");
@@ -44,8 +43,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdAGetWorkspaceSize(
               ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto *executorPtr = uniqueExecutor.get();
     const auto result = l0op::ChunkKdaBwdA(
-        aqk, qg, vNew, h, dO, cuSeqlensOptional, chunkIndicesOptional,
-        scale, chunkSize, dv0Out, q0Out, dqRawOut, dAqkOut,
+        aqk, vNew, h, dO, cuSeqlensOptional, chunkIndicesOptional,
+        chunkSize, dv0Out, dqRawOut, dAqkOut,
         executorPtr);
     for (const aclTensor *tensor : result) {
         CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);

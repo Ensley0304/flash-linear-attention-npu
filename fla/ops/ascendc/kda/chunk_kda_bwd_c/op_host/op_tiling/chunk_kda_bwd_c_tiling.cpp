@@ -22,11 +22,14 @@ ge::graphStatus Tiling4ChunkKdaBwdC(gert::TilingContext *context)
         attrs->GetAttrPointer<bool>(KDA_C_USE_GATE_ATTR);
     const auto *lowerBound =
         attrs->GetAttrPointer<float>(KDA_C_LOWER_BOUND_ATTR);
+    const auto *dhHeadMajor =
+        attrs->GetAttrPointer<bool>(KDA_C_DH_HEAD_MAJOR_ATTR);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
     OP_CHECK_NULL_WITH_CONTEXT(context, useGate);
     OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dhHeadMajor);
 
     ChunkKdaBwdCTilingContext ctx{};
     ctx.nodeName = context->GetNodeName();
@@ -44,6 +47,7 @@ ge::graphStatus Tiling4ChunkKdaBwdC(gert::TilingContext *context)
     ctx.safeGate = *safeGate;
     ctx.useGateInKernel = *useGate;
     ctx.lowerBound = *lowerBound;
+    ctx.dhHeadMajor = *dhHeadMajor;
     ctx.aicCoreNum = static_cast<uint32_t>(platform.GetCoreNumAic());
     ctx.systemWorkspaceSize =
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize());

@@ -15,6 +15,7 @@ const std::array<const aclTensor *, 8> ChunkKdaBwdC(
     const aclTensor *cuSeqlens, const aclTensor *chunkIndices,
     float scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, float lowerBound,
+    bool dhHeadMajor,
     const aclTensor *dqOut, const aclTensor *dkOut,
     const aclTensor *dvOut, const aclTensor *dbOut,
     const aclTensor *dgOut, const aclTensor *dAkkOut,

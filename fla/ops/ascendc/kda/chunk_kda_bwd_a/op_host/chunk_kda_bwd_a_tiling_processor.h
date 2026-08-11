@@ -13,30 +13,25 @@
 namespace optiling {
 
 constexpr size_t KDA_BWD_A_AQK_IDX = 0;
-constexpr size_t KDA_BWD_A_QG_IDX = 1;
-constexpr size_t KDA_BWD_A_V_NEW_IDX = 2;
-constexpr size_t KDA_BWD_A_H_IDX = 3;
-constexpr size_t KDA_BWD_A_DO_IDX = 4;
-constexpr size_t KDA_BWD_A_CU_SEQLENS_IDX = 5;
-constexpr size_t KDA_BWD_A_CHUNK_INDICES_IDX = 6;
-constexpr size_t KDA_BWD_A_SCALE_ATTR_IDX = 0;
-constexpr size_t KDA_BWD_A_CHUNK_SIZE_ATTR_IDX = 1;
+constexpr size_t KDA_BWD_A_V_NEW_IDX = 1;
+constexpr size_t KDA_BWD_A_H_IDX = 2;
+constexpr size_t KDA_BWD_A_DO_IDX = 3;
+constexpr size_t KDA_BWD_A_CU_SEQLENS_IDX = 4;
+constexpr size_t KDA_BWD_A_CHUNK_INDICES_IDX = 5;
+constexpr size_t KDA_BWD_A_CHUNK_SIZE_ATTR_IDX = 0;
 
 struct ChunkKdaBwdATilingContext {
     const char *nodeName;
     const gert::StorageShape *aqkShape;
-    const gert::StorageShape *qgShape;
     const gert::StorageShape *vNewShape;
     const gert::StorageShape *hShape;
     const gert::StorageShape *doShape;
     const gert::StorageShape *cuSeqlensShape;
     const gert::StorageShape *chunkIndicesShape;
     ge::DataType dataType;
-    ge::DataType qgType;
     ge::DataType vNewType;
     ge::DataType hType;
     ge::DataType doType;
-    float scale;
     int64_t chunkSize;
     uint32_t aicCoreNum;
     size_t systemWorkspaceSize;
@@ -52,21 +47,20 @@ public:
 
     ge::graphStatus Process()
     {
-        OP_CHECK_IF(ctx_.aqkShape == nullptr || ctx_.qgShape == nullptr ||
+        OP_CHECK_IF(ctx_.aqkShape == nullptr ||
                         ctx_.vNewShape == nullptr || ctx_.hShape == nullptr ||
                         ctx_.doShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Aqk/qg/v_new/h/d_o are required."),
+                    OP_LOGE(ctx_.nodeName, "Aqk/v_new/h/d_o are required."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(ctx_.dataType != ge::DT_FLOAT16 &&
                         ctx_.dataType != ge::DT_BF16,
                     OP_LOGE(ctx_.nodeName, "Kernel A supports FP16/BF16 inputs."),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.qgType != ctx_.dataType ||
-                        ctx_.vNewType != ctx_.dataType ||
+        OP_CHECK_IF(ctx_.vNewType != ctx_.dataType ||
                         ctx_.hType != ctx_.dataType ||
                         ctx_.doType != ctx_.dataType,
                     OP_LOGE(ctx_.nodeName,
-                            "Aqk/qg/v_new/h/d_o must use one common dtype."),
+                            "Aqk/v_new/h/d_o must use one common dtype."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(ctx_.chunkSize != 64,
                     OP_LOGE(ctx_.nodeName, "Kernel A requires chunk_size=64."),
@@ -81,13 +75,12 @@ public:
         tiling_.isVarLen = hasCu ? 1 : 0;
 
         const gert::Shape aqk = ctx_.aqkShape->GetOriginShape();
-        const gert::Shape qg = ctx_.qgShape->GetOriginShape();
         const gert::Shape vNew = ctx_.vNewShape->GetOriginShape();
         const gert::Shape h = ctx_.hShape->GetOriginShape();
         const gert::Shape dO = ctx_.doShape->GetOriginShape();
         const size_t tokenRank = hasCu ? 3 : 4;
         const size_t stateRank = hasCu ? 4 : 5;
-        OP_CHECK_IF(aqk.GetDimNum() != tokenRank || qg.GetDimNum() != tokenRank ||
+        OP_CHECK_IF(aqk.GetDimNum() != tokenRank ||
                         vNew.GetDimNum() != tokenRank ||
                         dO.GetDimNum() != tokenRank ||
                         h.GetDimNum() != stateRank,
@@ -101,10 +94,9 @@ public:
         tiling_.batch = hasCu ? 1 : static_cast<int64_t>(aqk.GetDim(0));
         tiling_.headNum = static_cast<int64_t>(aqk.GetDim(headAxis));
         tiling_.seqlen = static_cast<int64_t>(aqk.GetDim(tokenAxis));
-        tiling_.keyDim = static_cast<int64_t>(qg.GetDim(dimAxis));
+        tiling_.keyDim = 128;
         tiling_.valueDim = static_cast<int64_t>(dO.GetDim(dimAxis));
         tiling_.chunkSize = ctx_.chunkSize;
-        tiling_.scale = ctx_.scale;
         OP_CHECK_IF(aqk.GetDim(dimAxis) != 64 || tiling_.keyDim != 128,
                     OP_LOGE(ctx_.nodeName, "Kernel A requires C=64 and K=128."),
                     return ge::GRAPH_FAILED);
@@ -116,11 +108,10 @@ public:
                     OP_LOGE(ctx_.nodeName, "v_new and d_o must have the same V."),
                     return ge::GRAPH_FAILED);
         for (size_t axis = 0; axis < dimAxis; ++axis) {
-            OP_CHECK_IF(aqk.GetDim(axis) != qg.GetDim(axis) ||
-                            aqk.GetDim(axis) != vNew.GetDim(axis) ||
+            OP_CHECK_IF(aqk.GetDim(axis) != vNew.GetDim(axis) ||
                             aqk.GetDim(axis) != dO.GetDim(axis),
                         OP_LOGE(ctx_.nodeName,
-                                "Aqk/qg/v_new/d_o leading dimensions must match."),
+                                "Aqk/v_new/d_o leading dimensions must match."),
                         return ge::GRAPH_FAILED);
         }
 
@@ -166,19 +157,7 @@ public:
             blockDim_ = 1;
         }
         tiling_.usedCoreNum = blockDim_;
-        tiling_.postSlotCount = 2;
-        tiling_.q0RawOffset = 0;
-        const uint64_t q0Bytes =
-            static_cast<uint64_t>(128) * tiling_.valueDim * sizeof(float);
-        tiling_.dAqkRawOffset = static_cast<int64_t>(AlignUp(q0Bytes, 512));
-        const uint64_t daBytes = static_cast<uint64_t>(64) * 64 * sizeof(float);
-        tiling_.postSlotSize = static_cast<int64_t>(
-            AlignUp(static_cast<uint64_t>(tiling_.dAqkRawOffset) + daBytes, 512));
-        tiling_.workspaceCoreSize =
-            tiling_.postSlotCount * tiling_.postSlotSize;
-        workspaceSize_ = ctx_.systemWorkspaceSize +
-            static_cast<size_t>(blockDim_) *
-                static_cast<size_t>(tiling_.workspaceCoreSize);
+        workspaceSize_ = ctx_.systemWorkspaceSize;
         tilingKey_ = (ctx_.dataType == ge::DT_BF16 ? 2U : 0U) +
                      (tiling_.valueDim == 256 ? 2U : 1U);
         return ge::GRAPH_SUCCESS;

@@ -38,6 +38,7 @@ constexpr size_t KDA_C_CHUNK_SIZE_ATTR = 1;
 constexpr size_t KDA_C_SAFE_GATE_ATTR = 2;
 constexpr size_t KDA_C_USE_GATE_ATTR = 3;
 constexpr size_t KDA_C_LOWER_BOUND_ATTR = 4;
+constexpr size_t KDA_C_DH_HEAD_MAJOR_ATTR = 5;
 constexpr int64_t KDA_C_SLOT_BYTES = 256 * 1024;
 constexpr int64_t KDA_C_SLOT_COUNT = 4;
 
@@ -50,6 +51,7 @@ struct ChunkKdaBwdCTilingContext {
     bool safeGate;
     bool useGateInKernel;
     float lowerBound;
+    bool dhHeadMajor;
     uint32_t aicCoreNum;
     size_t systemWorkspaceSize;
 };
@@ -80,10 +82,14 @@ public:
                             "cu_seqlens and chunk_indices must be both present or absent"),
                     return ge::GRAPH_FAILED);
         tiling_.isVarLen = hasCu ? 1 : 0;
+        tiling_.dhHeadMajor = ctx_.dhHeadMajor ? 1 : 0;
         tiling_.safeGate = ctx_.safeGate ? 1 : 0;
         tiling_.useGateInKernel = ctx_.useGateInKernel ? 1 : 0;
         tiling_.lowerBound = ctx_.lowerBound;
-        tiling_.hasDtBias = ctx_.shapes[KDA_C_DT_BIAS] != nullptr ? 1 : 0;
+        tiling_.hasDtBias =
+            ctx_.shapes[KDA_C_DT_BIAS] != nullptr &&
+            ctx_.shapes[KDA_C_DT_BIAS]->GetStorageShape().GetShapeSize() > 0 ?
+                1 : 0;
 
         const ge::DataType dataType = ctx_.types[KDA_C_Q];
         OP_CHECK_IF(dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16,
@@ -116,7 +122,7 @@ public:
             OP_CHECK_IF((ctx_.types[KDA_C_RAW_G] != ge::DT_FLOAT &&
                          ctx_.types[KDA_C_RAW_G] != ge::DT_BF16) ||
                             ctx_.types[KDA_C_A_LOG] != ge::DT_FLOAT ||
-                            (ctx_.shapes[KDA_C_DT_BIAS] != nullptr &&
+                            (tiling_.hasDtBias != 0 &&
                              ctx_.types[KDA_C_DT_BIAS] != ge::DT_FLOAT),
                         OP_LOGE(ctx_.nodeName,
                                 "raw_g must be BF16/FP32; a_log/dt_bias must be FP32"),
@@ -147,8 +153,7 @@ public:
                         dvScan.GetDimNum() != tokenRank ||
                         dqRaw.GetDimNum() != tokenRank ||
                         dAqk.GetDimNum() != tokenRank ||
-                        h.GetDimNum() != stateRank ||
-                        dh.GetDimNum() != stateRank,
+                        h.GetDimNum() != stateRank,
                     OP_LOGE(ctx_.nodeName,
                             "Kernel C expects dense head-major rank-4/5 or varlen rank-3/4"),
                     return ge::GRAPH_FAILED);
@@ -202,7 +207,7 @@ public:
                         OP_LOGE(ctx_.nodeName,
                                 "raw_g must match q and a_log must be [H]"),
                         return ge::GRAPH_FAILED);
-            if (ctx_.shapes[KDA_C_DT_BIAS] != nullptr) {
+            if (tiling_.hasDtBias != 0) {
                 const gert::Shape bias = Shape(KDA_C_DT_BIAS);
                 OP_CHECK_IF(bias.GetDimNum() != 2 ||
                                 bias.GetDim(0) !=
@@ -231,10 +236,18 @@ public:
             tiling_.chunkNumPerBatch =
                 (tiling_.seqlen + tiling_.chunkSize - 1) / tiling_.chunkSize;
             tiling_.chunkNum = tiling_.batch * tiling_.chunkNumPerBatch;
-            OP_CHECK_IF(!CheckDenseState(h) || !CheckDenseState(dh),
+            OP_CHECK_IF(!CheckDenseState(h),
                         OP_LOGE(ctx_.nodeName,
-                                "h/dh must be [B,chunkNum,H,K,V]"),
+                                "h must be [B,chunkNum,H,K,V]"),
                         return ge::GRAPH_FAILED);
+            const bool validDh = dh.GetDimNum() == 5 &&
+                (ctx_.dhHeadMajor ? CheckDenseDhHeadMajor(dh) :
+                                    CheckDenseState(dh));
+            if (!validDh) {
+                OP_LOGE(ctx_.nodeName,
+                        "dh must be [B,chunkNum,H,K,V] or PR291 [B,H,chunkNum,K,V]");
+                return ge::GRAPH_FAILED;
+            }
         } else {
             const gert::Shape cu = Shape(KDA_C_CU_SEQLENS);
             const gert::Shape chunks = Shape(KDA_C_CHUNK_INDICES);
@@ -248,10 +261,18 @@ public:
             tiling_.seqNum = static_cast<int64_t>(cu.GetDim(0) - 1);
             tiling_.chunkNumPerBatch = 0;
             tiling_.chunkNum = static_cast<int64_t>(chunks.GetDim(0) / 2);
-            OP_CHECK_IF(!CheckVarlenState(h) || !CheckVarlenState(dh),
+            OP_CHECK_IF(!CheckVarlenState(h),
                         OP_LOGE(ctx_.nodeName,
-                                "varlen h/dh must be [totalChunks,H,K,V]"),
+                                "varlen h must be [totalChunks,H,K,V]"),
                         return ge::GRAPH_FAILED);
+            const bool validDh = ctx_.dhHeadMajor ?
+                (dh.GetDimNum() == 5 && CheckVarlenDhHeadMajor(dh)) :
+                (dh.GetDimNum() == 4 && CheckVarlenState(dh));
+            if (!validDh) {
+                OP_LOGE(ctx_.nodeName,
+                        "varlen dh must be [totalChunks,H,K,V] or PR291 [1,H,totalChunks,K,V]");
+                return ge::GRAPH_FAILED;
+            }
         }
 
         const uint64_t headWindows =
@@ -325,6 +346,25 @@ private:
                shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
                shape.GetDim(2) == 128 &&
                shape.GetDim(3) == static_cast<size_t>(tiling_.valueDim);
+    }
+
+    bool CheckDenseDhHeadMajor(const gert::Shape &shape) const
+    {
+        return shape.GetDim(0) == static_cast<size_t>(tiling_.batch) &&
+               shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
+               shape.GetDim(2) ==
+                   static_cast<size_t>(tiling_.chunkNumPerBatch) &&
+               shape.GetDim(3) == 128 &&
+               shape.GetDim(4) == static_cast<size_t>(tiling_.valueDim);
+    }
+
+    bool CheckVarlenDhHeadMajor(const gert::Shape &shape) const
+    {
+        return shape.GetDim(0) == 1 &&
+               shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
+               shape.GetDim(2) == static_cast<size_t>(tiling_.chunkNum) &&
+               shape.GetDim(3) == 128 &&
+               shape.GetDim(4) == static_cast<size_t>(tiling_.valueDim);
     }
 
     uint64_t Align512(uint64_t value) const

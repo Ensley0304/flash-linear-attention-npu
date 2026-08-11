@@ -19,12 +19,6 @@ struct ChunkKdaBwdATilingData {
     int64_t chunkNumPerBatch;
     int64_t isVarLen;
     uint32_t usedCoreNum;
-    uint32_t postSlotCount;
-    int64_t postSlotSize;
-    int64_t workspaceCoreSize;
-    int64_t q0RawOffset;
-    int64_t dAqkRawOffset;
-    float scale;
 };
 
 } // namespace KDA
