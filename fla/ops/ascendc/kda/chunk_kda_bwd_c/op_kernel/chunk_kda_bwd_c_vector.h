@@ -179,6 +179,33 @@ static __simd_vf__ inline void KdaBwdCFinishDAA5(
         StoreAlign(dst + row * cols, result, fullMask);
     }
 }
+
+static __simd_vf__ inline void KdaBwdCBuildZbA5(
+    __ubuf__ float *dst, __ubuf__ float *zv, __ubuf__ float *zw,
+    __ubuf__ float *beta, uint16_t rows, uint16_t rowStart, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    RegTensor<float> zvReg;
+    RegTensor<float> zwReg;
+    RegTensor<float> betaReg;
+    RegTensor<float> value;
+    RegTensor<float> result;
+    RegTensor<float> zero;
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    Duplicate(zero, 0.0f, fullMask);
+    for (uint32_t row = 0; row < rows; ++row) {
+        const uint32_t validCols = rowStart + row;
+        uint32_t activeCount = validCols;
+        MaskReg lowerMask = UpdateMask<float>(activeCount);
+        LoadAlign(zvReg, zv + row * cols);
+        LoadAlign(zwReg, zw + row * cols);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(betaReg, beta + row);
+        Sub(value, zvReg, zwReg, fullMask);
+        Mul(value, value, betaReg, fullMask);
+        Select(result, value, zero, lowerMask);
+        StoreAlign(dst + row * cols, result, fullMask);
+    }
+}
 #endif
 
 template <typename DataT, uint32_t V_DIM, typename BetaT>
@@ -942,6 +969,14 @@ private:
             auto out = Plane(3);
             Load(zv, wsBf16_[zV + row * 64], rows * 64);
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            KdaBwdCBuildZbA5(
+                reinterpret_cast<__ubuf__ float *>(out.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(zv.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(zw.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(beta[row].GetPhyAddr()),
+                static_cast<uint16_t>(rows), static_cast<uint16_t>(row), 64);
+#else
             // zW was formed from dW_raw; subtracting it is equivalent to
             // adding the original zW formed from -dW_raw.
             AscendC::Sub(out, zv, zw, rows * 64);
@@ -965,6 +1000,7 @@ private:
             // the Duplicate -> Adds dependency explicitly, as in mature
             // vector post-processing paths.
             AscendC::PipeBarrier<PIPE_V>();
+#endif
             Store(dAkkBf16Gm_[zB + row * 64], out, rows * 64);
         }
     }
