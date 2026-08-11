@@ -901,6 +901,17 @@ private:
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
         PackLowerA(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128) {
+            if (validRows == kProcessRowBlock &&
+                task.end - task.begin == CHUNK_SIZE) {
+                PackDenseA5B(
+                    task, head, rowStart, prefix, future,
+                    subBlock, slotBase);
+                return;
+            }
+        }
+#endif
         PackLowerB(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperB(task, head, rowStart, future, subBlock, slotBase);
     }
@@ -1267,6 +1278,147 @@ private:
         }
 #endif
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void PackDenseA5B(
+        const CIntraTask &task, uint32_t head, uint32_t rowStart,
+        uint32_t prefix, uint32_t future, uint32_t subBlock,
+        uint64_t slotBase)
+    {
+        static_assert(kProcessRowBlock == 32,
+                      "A5 fused B-pack requires row32 tiles.");
+        auto qData = Plane(0);       // planes 0-1
+        auto kData = Plane(2);       // planes 2-3
+        auto gate = Plane(4);        // planes 4-5
+        auto lowerData = Plane(6);   // planes 6-7
+        auto anchor = Plane(8);
+        auto beta = Plane(9);
+        constexpr uint32_t rows = kProcessRowBlock;
+        constexpr uint32_t cols = K_DIM / 2;
+        constexpr uint32_t count = rows * cols;
+        const uint32_t col = subBlock * cols;
+        const uint32_t anchorRow = task.begin + rowStart + 8;
+        Load(
+            anchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, anchorRow, col)],
+            cols);
+
+        for (uint32_t sourceRow = 0; sourceRow < CHUNK_SIZE;
+             sourceRow += kProcessRowBlock) {
+            const bool needLower = sourceRow < prefix;
+            const bool needUpper = sourceRow >= rowStart;
+            const uint32_t token = task.begin + sourceRow;
+
+            if (needLower && needUpper) {
+                // The shared row block supplies both contractions.  Keep one
+                // raw k copy for the lower scale before the upper pair
+                // updates kData in place.
+                LoadMatrixRowsPair(
+                    qData,
+                    qGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    kData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadRows(
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadScalarRows(
+                    beta,
+                    betaGm_[CIntraScalarOffset(
+                        tiling_, task.batchIdx, head, token)],
+                    rows);
+                KdaRegbaseCopy(
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(), count);
+                KdaRegbaseGateScale<true, false>(
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)anchor.GetPhyAddr(),
+                    (__ubuf__ float *)0, rows, cols);
+                KdaRegbaseGateScalePair(
+                    (__ubuf__ float *)qData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)anchor.GetPhyAddr(),
+                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+            } else if (needLower) {
+                LoadMatrixRowsPair(
+                    lowerData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                KdaRegbaseGateScale<true, false>(
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)anchor.GetPhyAddr(),
+                    (__ubuf__ float *)0, rows, cols);
+            } else {
+                LoadMatrixRowsPair(
+                    qData,
+                    qGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    kData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadRows(
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadScalarRows(
+                    beta,
+                    betaGm_[CIntraScalarOffset(
+                        tiling_, task.batchIdx, head, token)],
+                    rows);
+                KdaRegbaseGateScalePair(
+                    (__ubuf__ float *)qData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)anchor.GetPhyAddr(),
+                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+            }
+
+            if (needLower) {
+                const uint64_t lowerOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBLowerOffset / sizeof(float) +
+                    static_cast<uint64_t>(sourceRow) * K_DIM + col;
+                StoreRows(
+                    workspaceGm_[lowerOffset], lowerData,
+                    rows, cols, K_DIM);
+            }
+            if (needUpper) {
+                const uint32_t upperRow = sourceRow - rowStart;
+                const uint64_t qOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(upperRow) * K_DIM + col;
+                const uint64_t kOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(future + upperRow) * K_DIM + col;
+                StoreRows(
+                    workspaceGm_[qOffset], qData,
+                    rows, cols, K_DIM);
+                StoreRows(
+                    workspaceGm_[kOffset], kData,
+                    rows, cols, K_DIM);
+            }
+        }
+    }
+#endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     __aicore__ inline void FinishPendingDgA5(
