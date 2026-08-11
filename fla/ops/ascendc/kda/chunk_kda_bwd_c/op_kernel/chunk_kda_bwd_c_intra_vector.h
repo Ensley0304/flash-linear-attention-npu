@@ -248,6 +248,7 @@ private:
                         task, head, rowStart, kProcessRowBlock, slot);
                     FinishPendingDgA5(task, head);
                 }
+                CompleteDirectOutputGeneration();
             }
         } else {
             for (uint32_t headInWindow = 0;
@@ -381,6 +382,12 @@ private:
         directVToMte2Event_ = static_cast<event_t>(
             pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+        directVToMte3Event_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>());
+        directMte3ToMte2Event_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>());
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+            directMte3ToMte2Event_);
 #endif
     }
 
@@ -398,6 +405,12 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+            directMte3ToMte2Event_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(
+            directVToMte3Event_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(
+            directMte3ToMte2Event_);
 #endif
     }
 
@@ -518,6 +531,47 @@ private:
             0
         };
         AscendC::DataCopyPad(dst, src, copyParams, {false, 0, 0, 0});
+    }
+
+    __aicore__ inline void StoreRowsDirect(
+        AscendC::GlobalTensor<float> dst, AscendC::LocalTensor<float> src,
+        uint32_t rows, uint32_t cols, uint32_t dstRowElements)
+    {
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(directVToMte3Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(directVToMte3Event_);
+        AscendC::DataCopyExtParams copyParams{
+            static_cast<uint16_t>(rows),
+            static_cast<uint32_t>(cols * sizeof(float)),
+            0,
+            static_cast<uint32_t>((dstRowElements - cols) * sizeof(float)),
+            0
+        };
+        AscendC::DataCopyPad(dst, src, copyParams);
+    }
+
+    __aicore__ inline void StorePreparedRows(
+        AscendC::GlobalTensor<float> dst,
+        AscendC::LocalTensor<float> output,
+        uint32_t rows, uint32_t cols, uint32_t dstRowElements)
+    {
+        outputQueue_.EnQue(output);
+        auto ready = outputQueue_.DeQue<float>();
+        AscendC::DataCopyExtParams copyParams{
+            static_cast<uint16_t>(rows),
+            static_cast<uint32_t>(cols * sizeof(float)),
+            0,
+            static_cast<uint32_t>((dstRowElements - cols) * sizeof(float)),
+            0
+        };
+        AscendC::DataCopyPad(dst, ready, copyParams);
+        outputQueue_.FreeTensor(ready);
+    }
+
+    __aicore__ inline void CompleteDirectOutputGeneration()
+    {
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+            directMte3ToMte2Event_);
     }
 #endif
 
@@ -1223,7 +1277,7 @@ private:
         KdaRegbaseReverseScanCarry(
             (__ubuf__ float *)pending.GetPhyAddr(),
             (__ubuf__ float *)carry.GetPhyAddr(), 32);
-        StoreRows(
+        StoreRowsDirect(
             dgOutGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, task.begin, 0)],
             pending, 32, K_DIM, TensorRowElements());
@@ -1282,6 +1336,8 @@ private:
         // UB-to-UB copies.  One group event protects the shared resident
         // layout across consecutive heads/generations.
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+            directMte3ToMte2Event_);
         CopyInMatrixRowsDirect(
             anchor,
             gkGm_[CIntraTensorOffset(
@@ -1356,7 +1412,7 @@ private:
             dgGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
-        StoreRows(
+        StoreRowsDirect(
             dqOutGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             gate, ownedRows, cols, TensorRowElements());
@@ -1364,21 +1420,23 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[dkSlot]);
         KdaRegbaseAdd3(
-            (__ubuf__ float *)gate.GetPhyAddr(),
+            (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
             (__ubuf__ float *)MatrixInput<float>(dkSlot).GetPhyAddr(),
             (__ubuf__ float *)rawDkLower.GetPhyAddr(),
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(), count);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dkSlot]);
-        StoreRows(
+        StoreRowsDirect(
             dkOutGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
-            gate, ownedRows, cols, TensorRowElements());
+            dqBaseRaw, ownedRows, cols, TensorRowElements());
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[dgSlot]);
+        auto dgTile = rowStart == 0 ?
+            pendingDg_.Get<float>() : outputQueue_.AllocTensor<float>();
         KdaRegbaseDg(
-            (__ubuf__ float *)gate.GetPhyAddr(),
+            (__ubuf__ float *)dgTile.GetPhyAddr(),
             (__ubuf__ float *)MatrixInput<float>(dgSlot).GetPhyAddr(),
             (__ubuf__ float *)q.GetPhyAddr(),
             (__ubuf__ float *)rawDq.GetPhyAddr(),
@@ -1388,21 +1446,15 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
-        if (rowStart == 0) {
-            auto pending = pendingDg_.Get<float>();
-            KdaRegbaseCopy(
-                (__ubuf__ float *)pending.GetPhyAddr(),
-                (__ubuf__ float *)gate.GetPhyAddr(),
-                static_cast<uint16_t>(count));
-        } else {
+        if (rowStart != 0) {
             auto carry = reduce[7 * kPlaneElements];
             KdaRegbaseReverseScanCarry(
-                (__ubuf__ float *)gate.GetPhyAddr(),
+                (__ubuf__ float *)dgTile.GetPhyAddr(),
                 (__ubuf__ float *)carry.GetPhyAddr(), ownedRows);
-            StoreRows(
+            StorePreparedRows(
                 dgOutGm_[CIntraTensorOffset(
                     tiling_, task.batchIdx, head, tokenBegin, 0)],
-                gate, ownedRows, cols, TensorRowElements());
+                dgTile, ownedRows, cols, TensorRowElements());
         }
 
         LoadScalarRows(
@@ -1884,6 +1936,8 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     event_t directMte2ToVEvent_{};
     event_t directVToMte2Event_{};
+    event_t directVToMte3Event_{};
+    event_t directMte3ToMte2Event_{};
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
 #endif
