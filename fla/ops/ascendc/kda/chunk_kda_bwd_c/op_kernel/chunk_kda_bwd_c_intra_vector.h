@@ -375,6 +375,13 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
                 matrixVToMte2Event_[slot]);
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        directMte2ToVEvent_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+        directVToMte2Event_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+#endif
     }
 
     __aicore__ inline void ReleaseMatrixInputEvents()
@@ -387,6 +394,11 @@ private:
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
                 matrixVToMte2Event_[slot]);
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+#endif
     }
 
     template <typename T>
@@ -491,6 +503,23 @@ private:
             dst1, MatrixInput<T1>(slot1), slot1, rows1 * cols1);
         AscendC::PipeBarrier<PIPE_V>();
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    template <typename T>
+    __aicore__ inline void CopyInMatrixRowsDirect(
+        AscendC::LocalTensor<T> dst, AscendC::GlobalTensor<T> src,
+        uint32_t rows, uint32_t cols, uint32_t srcRowElements)
+    {
+        AscendC::DataCopyExtParams copyParams{
+            static_cast<uint16_t>(rows),
+            static_cast<uint32_t>(cols * sizeof(T)),
+            static_cast<uint32_t>((srcRowElements - cols) * sizeof(T)),
+            0,
+            0
+        };
+        AscendC::DataCopyPad(dst, src, copyParams, {false, 0, 0, 0});
+    }
+#endif
 
     __aicore__ inline void Load(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src, uint32_t count)
@@ -1247,11 +1276,18 @@ private:
 
         constexpr uint32_t cols = 128;
         const uint32_t count = ownedRows * cols;
-        LoadMatrixRowsPair(
+        // These FP32 operands already have permanent destinations in the
+        // dense32 resident layout.  Copy them there directly instead of
+        // staging through matrixInputPing/Pong and executing five 16-KiB
+        // UB-to-UB copies.  One group event protects the shared resident
+        // layout across consecutive heads/generations.
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+        CopyInMatrixRowsDirect(
             anchor,
             gkGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, anchorRow, 0)],
-            1, cols, TensorRowElements(),
+            1, cols, TensorRowElements());
+        CopyInMatrixRowsDirect(
             dqBaseRaw,
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
@@ -1259,6 +1295,30 @@ private:
         const uint64_t resultBase =
             slotBase / sizeof(float) +
             tiling_.intraResultRegionOffset / sizeof(float);
+        CopyInMatrixRowsDirect(
+            rawDq,
+            workspaceGm_[
+                resultBase + tiling_.intraResultDqOffset / sizeof(float)],
+            ownedRows, cols, K_DIM);
+        CopyInMatrixRowsDirect(
+            rawDkLower,
+            workspaceGm_[
+                resultBase +
+                tiling_.intraResultDkLowerOffset / sizeof(float)],
+            ownedRows, cols, K_DIM);
+        CopyInMatrixRowsDirect(
+            rawDkUpper,
+            workspaceGm_[
+                resultBase +
+                tiling_.intraResultDkUpperOffset / sizeof(float)],
+            ownedRows, cols, K_DIM);
+        CopyInMatrixRowsDirect(
+            gate,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
+
         LoadMatrixRowsPair(
             q,
             qGm_[CIntraTensorOffset(
@@ -1268,26 +1328,8 @@ private:
             kGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
-        LoadMatrixRowsPair(
-            gate,
-            gkGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements(),
-            rawDq,
-            workspaceGm_[
-                resultBase + tiling_.intraResultDqOffset / sizeof(float)],
-            ownedRows, cols, K_DIM);
-        LoadMatrixRowsPair(
-            rawDkLower,
-            workspaceGm_[
-                resultBase +
-                tiling_.intraResultDkLowerOffset / sizeof(float)],
-            ownedRows, cols, K_DIM,
-            rawDkUpper,
-            workspaceGm_[
-                resultBase +
-                tiling_.intraResultDkUpperOffset / sizeof(float)],
-            ownedRows, cols, K_DIM);
+
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
 
         KdaRegbaseExp2(
             (__ubuf__ float *)anchorExp.GetPhyAddr(),
@@ -1343,6 +1385,7 @@ private:
             (__ubuf__ float *)k.GetPhyAddr(),
             (__ubuf__ float *)rawDkLower.GetPhyAddr(),
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(), count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
         if (rowStart == 0) {
@@ -1839,6 +1882,8 @@ private:
     event_t matrixMte2ToVEvent_[kMatrixInputBufferCount]{};
     event_t matrixVToMte2Event_[kMatrixInputBufferCount]{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    event_t directMte2ToVEvent_{};
+    event_t directVToMte2Event_{};
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
 #endif
