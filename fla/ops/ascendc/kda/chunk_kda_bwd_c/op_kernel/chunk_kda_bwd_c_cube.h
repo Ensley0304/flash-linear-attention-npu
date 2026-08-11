@@ -174,6 +174,183 @@ private:
     AscendC::LocalTensor<ElementAccumulator> l0C_;
 };
 
+// A5-local two-output path for contractions that share the complete left
+// operand.  The left tile is copied to L1/L0A once.  The two right tiles use
+// independent L1B buffers, so MTE2 can prefetch the second right operand while
+// MTE1/MMAD consumes the first one.  L0B remains single-buffered.  Two compact
+// L0C result planes let FIX copy the first output while M computes the second.
+template <class ArchTag_, class ElementC_, class TileCopy_>
+struct WyTileGemmSharedLeftDualRightDirect {
+    using ArchTag = ArchTag_;
+    using TileCopy = TileCopy_;
+    using ElementA = typename TileCopy::ElementA;
+    using ElementB = typename TileCopy::ElementB;
+    using ElementC = ElementC_;
+    using ElementAccumulator = typename TileCopy::ElementAccumulator;
+    using LayoutTagL1A = typename TileCopy::LayoutTagL1A;
+    using LayoutTagL1B = typename TileCopy::LayoutTagL1B;
+    using LayoutTagL0A = typename TileCopy::LayoutTagL0A;
+    using LayoutTagL0B = typename TileCopy::LayoutTagL0B;
+    using CopyL1ToL0A = typename TileCopy::CopyL1ToL0A;
+    using CopyL1ToL0B = typename TileCopy::CopyL1ToL0B;
+    using TileMmad = Catlass::Gemm::Tile::TileMmadTla<
+        ArchTag, ElementA, LayoutTagL1A>;
+
+    static constexpr int32_t kEventL1A = WyTileGemmDirectEvent::kL1A;
+    static constexpr int32_t kEventL1B0 = WyTileGemmDirectEvent::kL1B;
+    static constexpr int32_t kEventL1B1 = 2;
+    static constexpr int32_t kEventL0A = WyTileGemmDirectEvent::kL0A;
+    static constexpr int32_t kEventL0B = WyTileGemmDirectEvent::kL0B;
+    static constexpr int32_t kEventL0C0 = WyTileGemmDirectEvent::kL0C;
+    static constexpr int32_t kEventL0C1 = 1;
+    static constexpr uint32_t kL1PlaneBytes =
+        128 * 256 * sizeof(ElementA);
+    static constexpr uint32_t kL0CPlaneBytes =
+        64 * 128 * sizeof(ElementAccumulator);
+    static_assert(3 * kL1PlaneBytes <= 512 * 1024,
+                  "Kernel C shared-left L1 buffers exceed capacity");
+    static_assert(2 * kL0CPlaneBytes <= ArchTag::L0C_SIZE,
+                  "Kernel C dual-output L0C buffers exceed capacity");
+
+    CATLASS_DEVICE
+    explicit WyTileGemmSharedLeftDualRightDirect(
+        Catlass::Arch::Resource<ArchTag> &resource)
+    {
+        if ASCEND_IS_AIC {
+            l1A_ = resource.l1Buf.template GetBufferByByte<ElementA>(0);
+            l1B0_ = resource.l1Buf.template GetBufferByByte<ElementB>(
+                kL1PlaneBytes);
+            l1B1_ = resource.l1Buf.template GetBufferByByte<ElementB>(
+                2 * kL1PlaneBytes);
+            l0A_ = resource.l0ABuf.template GetBufferByByte<ElementA>(0);
+            l0B_ = resource.l0BBuf.template GetBufferByByte<ElementB>(0);
+            l0C0_ = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+            l0C1_ = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(
+                kL0CPlaneBytes);
+        }
+    }
+
+    template <class TensorA, class TensorB0, class TensorC0,
+              class TensorB1, class TensorC1>
+    CATLASS_DEVICE
+    void operator()(TensorA &a, TensorB0 &b0, TensorC0 &c0,
+                    Catlass::GemmCoord const &shape0,
+                    TensorB1 &b1, TensorC1 &c1,
+                    Catlass::GemmCoord const &shape1)
+    {
+        using CopyGmToL1A =
+            typename TileCopy::template CopyGmToL1A<TensorA>;
+        using CopyGmToL1B0 =
+            typename TileCopy::template CopyGmToL1B<TensorB0>;
+        using CopyGmToL1B1 =
+            typename TileCopy::template CopyGmToL1B<TensorB1>;
+        using CopyL0CToDst0 =
+            typename TileCopy::template CopyL0CToDst<TensorC0>;
+        using CopyL0CToDst1 =
+            typename TileCopy::template CopyL0CToDst<TensorC1>;
+        CopyGmToL1A copyGmA;
+        CopyGmToL1B0 copyGmB0;
+        CopyGmToL1B1 copyGmB1;
+        CopyL1ToL0A copyL0A;
+        CopyL1ToL0B copyL0B;
+        CopyL0CToDst0 copyC0;
+        CopyL0CToDst1 copyC1;
+        TileMmad mm;
+
+        const uint32_t m = shape0.m() == 1 ? 16 : shape0.m();
+        const uint32_t k = shape0.k();
+        const uint32_t n0 = shape0.n();
+        const uint32_t n1 = shape1.n();
+        auto l1A = tla::MakeTensor(
+            l1A_, tla::MakeLayout<ElementA, LayoutTagL1A>(m, k),
+            Catlass::Arch::PositionL1{});
+        auto l1B0 = tla::MakeTensor(
+            l1B0_, tla::MakeLayout<ElementB, LayoutTagL1B>(k, n0),
+            Catlass::Arch::PositionL1{});
+        auto l1B1 = tla::MakeTensor(
+            l1B1_, tla::MakeLayout<ElementB, LayoutTagL1B>(k, n1),
+            Catlass::Arch::PositionL1{});
+        auto tileL1A = GetTile(
+            l1A, tla::MakeCoord(0, 0), tla::MakeShape(m, k));
+        auto tileL1B0 = GetTile(
+            l1B0, tla::MakeCoord(0, 0), tla::MakeShape(k, n0));
+        auto tileL1B1 = GetTile(
+            l1B1, tla::MakeCoord(0, 0), tla::MakeShape(k, n1));
+
+        // All three L1 events are owned by the surrounding S3 MMAD phase.
+        // Hoisting event-2 initialization/drain out of the per-head call is
+        // essential: otherwise the synchronization cost erases the saved
+        // left-operand copy.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
+        copyGmA(l1A, a);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1A);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B0);
+        copyGmB0(l1B0, b0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B1);
+        copyGmB1(l1B1, b1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B1);
+
+        auto l0A = tla::MakeTensor(
+            l0A_, tla::MakeLayout<ElementA, LayoutTagL0A>(m, k),
+            Catlass::Arch::PositionL0A{});
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1A);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
+        copyL0A(l0A, tileL1A);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
+
+        auto l0B0 = tla::MakeTensor(
+            l0B_, tla::MakeLayout<ElementB, LayoutTagL0B>(k, n0),
+            Catlass::Arch::PositionL0B{});
+        auto l0C0 = tla::MakeTensor(
+            l0C0_, tla::MakeLayoutL0C(m, n0),
+            Catlass::Arch::PositionL0C{});
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B0);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        copyL0B(l0B0, tileL1B0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B0);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kEventL0C0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kEventL0C0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kEventL0C0);
+        mm(l0C0, l0A, l0B0, m, n0, k, true, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kEventL0C0);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kEventL0C0);
+        copyC0(c0, l0C0, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kEventL0C0);
+
+        auto l0B1 = tla::MakeTensor(
+            l0B_, tla::MakeLayout<ElementB, LayoutTagL0B>(k, n1),
+            Catlass::Arch::PositionL0B{});
+        auto l0C1 = tla::MakeTensor(
+            l0C1_, tla::MakeLayoutL0C(m, n1),
+            Catlass::Arch::PositionL0C{});
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B1);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        copyL0B(l0B1, tileL1B1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B1);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kEventL0C1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kEventL0C1);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kEventL0C1);
+        mm(l0C1, l0A, l0B1, m, n1, k, true, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kEventL0C1);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kEventL0C1);
+        copyC1(c1, l0C1, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kEventL0C1);
+    }
+
+private:
+    AscendC::LocalTensor<ElementA> l1A_;
+    AscendC::LocalTensor<ElementB> l1B0_;
+    AscendC::LocalTensor<ElementB> l1B1_;
+    AscendC::LocalTensor<ElementA> l0A_;
+    AscendC::LocalTensor<ElementB> l0B_;
+    AscendC::LocalTensor<ElementAccumulator> l0C0_;
+    AscendC::LocalTensor<ElementAccumulator> l0C1_;
+};
+
 template <typename DataT, uint32_t V_DIM>
 class ChunkKdaBwdCCubeProcess {
 public:
@@ -221,6 +398,13 @@ public:
             WyTileGemmDirect<ArchTag, float, Fp32C64Copy>;
         using ElementC64Mmad =
             WyTileGemmDirect<ArchTag, Element, ElementC64Copy>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        using ElementC64DualRightMmad =
+            WyTileGemmSharedLeftDualRightDirect<
+                ArchTag, Element, ElementC64Copy>;
+#else
+        using ElementC64DualRightMmad = ElementC64Mmad;
+#endif
         using Fp32AT64x128Mmad =
             WyTileGemmDirect<ArchTag, float, Fp32AT64x128Copy>;
         using ElementSquareRightTransposeMmad =
@@ -232,13 +416,15 @@ public:
 
         Catlass::Arch::Resource<ArchTag> resource;
         ProcessFused<
-            Fp32C64Mmad, ElementC64Mmad, Fp32AT64x128Mmad,
+            Fp32C64Mmad, ElementC64Mmad, ElementC64DualRightMmad,
+            Fp32AT64x128Mmad,
             ElementSquareRightTransposeMmad,
             Fp32SquareLeftTransposeMmad,
             RowMajor, ColumnMajor>(resource);
     }
 
     template <typename Fp32C64Mmad, typename Bf16C64Mmad,
+              typename Bf16C64DualRightMmad,
               typename Fp32AT64x128Mmad,
               typename Bf16SquareRightTransposeMmad,
               typename Fp32SquareLeftTransposeMmad,
@@ -335,7 +521,7 @@ public:
 
             // FP32 S0-S2 complete.  Drain before entering BF16 S3a/S3b.
             EndFusedMmadPhase();
-            BeginFusedMmadPhase();
+            BeginSharedLeftMmadPhase();
 
             // S3a: dW_raw/zV.  Keep the shared dW operand unnegated so S3b
             // and S5 can consume it immediately.  Their downstream Vector
@@ -354,12 +540,22 @@ public:
                 // dW in one direct tile instead of launching two adjacent
                 // N=64 tiles; this also avoids reloading dvScan for the
                 // second half.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                RunSharedLeftDualTransposeB<
+                    Bf16C64DualRightMmad, RowMajor, ColumnMajor>(
+                    resource, dvScan_, tokenV,
+                    h_, hOffset, slot + tiling_.dWOffset,
+                    validLen, 128, 128, V_DIM,
+                    v_, tokenV, slot + tiling_.zVOffset,
+                    validLen, 64);
+#else
                 RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
                     resource, dvScan_, tokenV, h_, hOffset,
                     slot + tiling_.dWOffset, validLen, 128, 128, V_DIM);
                 RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
                     resource, dvScan_, tokenV, v_, tokenV,
                     slot + tiling_.zVOffset, validLen, validLen, 64, V_DIM);
+#endif
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
 
@@ -378,7 +574,7 @@ public:
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS0Ready);
 
             // BF16 S3a/S3b complete.  Start a clean FP32 phase for S5.
-            EndFusedMmadPhase();
+            EndSharedLeftMmadPhase();
             BeginFusedMmadPhase();
 
             // S5 produces dKgb_raw = A^T @ dW_raw.  The gradient/gate Vector
@@ -479,6 +675,24 @@ public:
         }
     }
 
+    __aicore__ inline void BeginSharedLeftMmadPhase()
+    {
+        BeginFusedMmadPhase();
+        if ASCEND_IS_AIC {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(2);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(1);
+        }
+    }
+
+    __aicore__ inline void EndSharedLeftMmadPhase()
+    {
+        if ASCEND_IS_AIC {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(2);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(1);
+        }
+        EndFusedMmadPhase();
+    }
+
     template <typename Mmad, typename RowMajor, typename ColumnMajor>
     __aicore__ inline void RunTransposeB(
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -519,6 +733,69 @@ public:
         Catlass::GemmCoord actualShape{m, n, k};
         Mmad mm(resource);
         mm(tileA, tileB, tileC, actualShape);
+    }
+
+    template <typename Mmad, typename RowMajor, typename ColumnMajor>
+    __aicore__ inline void RunSharedLeftDualTransposeB(
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource,
+#else
+        Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
+#endif
+        GM_ADDR aAddr, uint64_t aOffset,
+        GM_ADDR b0Addr, uint64_t b0Offset, uint64_t c0ByteOffset,
+        uint32_t m, uint32_t n0, uint32_t physicalN0, uint32_t k,
+        GM_ADDR b1Addr, uint64_t b1Offset, uint64_t c1ByteOffset,
+        uint32_t n1, uint32_t physicalN1)
+    {
+        AscendC::GlobalTensor<DataT> a;
+        AscendC::GlobalTensor<DataT> b0;
+        AscendC::GlobalTensor<DataT> b1;
+        a.SetGlobalBuffer(
+            reinterpret_cast<__gm__ DataT *>(aAddr) + aOffset);
+        b0.SetGlobalBuffer(
+            reinterpret_cast<__gm__ DataT *>(b0Addr) + b0Offset);
+        b1.SetGlobalBuffer(
+            reinterpret_cast<__gm__ DataT *>(b1Addr) + b1Offset);
+        using CType = typename Mmad::ElementC;
+        AscendC::GlobalTensor<CType> c0;
+        AscendC::GlobalTensor<CType> c1;
+        c0.SetGlobalBuffer(
+            reinterpret_cast<__gm__ CType *>(workspace_) +
+            c0ByteOffset / sizeof(CType));
+        c1.SetGlobalBuffer(
+            reinterpret_cast<__gm__ CType *>(workspace_) +
+            c1ByteOffset / sizeof(CType));
+        auto ta = tla::MakeTensor(
+            a, tla::MakeLayout<DataT, RowMajor>(64, k),
+            Catlass::Arch::PositionGM{});
+        auto tb0 = tla::MakeTensor(
+            b0, tla::MakeLayout<DataT, ColumnMajor>(k, physicalN0),
+            Catlass::Arch::PositionGM{});
+        auto tb1 = tla::MakeTensor(
+            b1, tla::MakeLayout<DataT, ColumnMajor>(k, physicalN1),
+            Catlass::Arch::PositionGM{});
+        auto tc0 = tla::MakeTensor(
+            c0, tla::MakeLayout<CType, RowMajor>(64, physicalN0),
+            Catlass::Arch::PositionGM{});
+        auto tc1 = tla::MakeTensor(
+            c1, tla::MakeLayout<CType, RowMajor>(64, physicalN1),
+            Catlass::Arch::PositionGM{});
+        auto tileA = GetTile(
+            ta, tla::MakeCoord(0, 0), tla::MakeShape(m, k));
+        auto tileB0 = GetTile(
+            tb0, tla::MakeCoord(0, 0), tla::MakeShape(k, n0));
+        auto tileB1 = GetTile(
+            tb1, tla::MakeCoord(0, 0), tla::MakeShape(k, n1));
+        auto tileC0 = GetTile(
+            tc0, tla::MakeCoord(0, 0), tla::MakeShape(m, n0));
+        auto tileC1 = GetTile(
+            tc1, tla::MakeCoord(0, 0), tla::MakeShape(m, n1));
+        Catlass::GemmCoord shape0{m, n0, k};
+        Catlass::GemmCoord shape1{m, n1, k};
+        Mmad mm(resource);
+        mm(tileA, tileB0, tileC0, shape0,
+           tileB1, tileC1, shape1);
     }
 
 
