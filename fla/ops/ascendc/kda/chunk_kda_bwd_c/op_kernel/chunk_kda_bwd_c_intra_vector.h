@@ -1033,6 +1033,75 @@ private:
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t future,
         uint32_t subBlock, uint64_t slotBase)
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Partition q and k by columns across the two AIVs.  Both operands
+        // use the same exp2(gk-anchor) factor, so each AIV loads its gate
+        // half and evaluates Exp only once for both q and k.
+        auto qData = Plane(0);   // planes 0-1
+        auto kData = Plane(2);   // planes 2-3
+        auto gate = Plane(4);    // planes 4-5
+        auto anchor = Plane(6);
+        auto beta = Plane(8);
+        const uint32_t cols = K_DIM / 2;
+        const uint32_t col = subBlock * cols;
+        const uint32_t anchorLocal =
+            rowStart + 8 < task.end - task.begin ?
+                rowStart + 8 : task.end - task.begin - 1;
+        const uint32_t anchorRow = task.begin + anchorLocal;
+        Load(
+            anchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, anchorRow, col)],
+            cols);
+        for (uint32_t sourceRow = 0; sourceRow < future;
+             sourceRow += kUpperPackRows) {
+            const uint32_t rows =
+                sourceRow + kUpperPackRows <= future ?
+                    kUpperPackRows : future - sourceRow;
+            const uint32_t token = task.begin + rowStart + sourceRow;
+            LoadMatrixRowsPair(
+                qData,
+                qGm_[CIntraTensorOffset(
+                    tiling_, task.batchIdx, head, token, col)],
+                rows, cols, TensorRowElements(),
+                kData,
+                kGm_[CIntraTensorOffset(
+                    tiling_, task.batchIdx, head, token, col)],
+                rows, cols, TensorRowElements());
+            LoadRows(
+                gate,
+                gkGm_[CIntraTensorOffset(
+                    tiling_, task.batchIdx, head, token, col)],
+                rows, cols, TensorRowElements());
+            LoadScalarRows(
+                beta,
+                betaGm_[CIntraScalarOffset(
+                    tiling_, task.batchIdx, head, token)],
+                rows);
+            KdaRegbaseGateScalePair(
+                (__ubuf__ float *)qData.GetPhyAddr(),
+                (__ubuf__ float *)kData.GetPhyAddr(),
+                (__ubuf__ float *)gate.GetPhyAddr(),
+                (__ubuf__ float *)anchor.GetPhyAddr(),
+                (__ubuf__ float *)beta.GetPhyAddr(),
+                rows, cols);
+
+            const uint64_t qDstOffset =
+                slotBase / sizeof(float) +
+                tiling_.intraBUpperOffset / sizeof(float) +
+                static_cast<uint64_t>(sourceRow) * K_DIM + col;
+            const uint64_t kDstOffset =
+                slotBase / sizeof(float) +
+                tiling_.intraBUpperOffset / sizeof(float) +
+                static_cast<uint64_t>(future + sourceRow) * K_DIM + col;
+            StoreRows(
+                workspaceGm_[qDstOffset], qData,
+                rows, cols, K_DIM);
+            StoreRows(
+                workspaceGm_[kDstOffset], kData,
+                rows, cols, K_DIM);
+        }
+#else
         // data/gate/anchor/exponent each own one complete pack batch.  Compute
         // the plane stride from kUpperPackRows so the A5 32-row matrices and
         // the A2/A3 16-row matrices use the same code without overlap.
@@ -1122,6 +1191,7 @@ private:
                 StoreRows(workspaceGm_[dstOffset], data, rows, cols, K_DIM);
             }
         }
+#endif
     }
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
