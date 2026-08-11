@@ -206,6 +206,40 @@ static __simd_vf__ inline void KdaBwdCBuildZbA5(
         StoreAlign(dst + row * cols, result, fullMask);
     }
 }
+
+// kE and dq share exp2(gk).  Keep that value in a vector register and form
+// both consumers before advancing to the next 64-element slice, avoiding the
+// five full-tile UB passes and intervening PIPE_V barriers of the generic
+// elementwise sequence.
+static __simd_vf__ inline void KdaBwdCBuildKEDqA5(
+    __ubuf__ float *keDst, __ubuf__ float *dqDst,
+    __ubuf__ float *k, __ubuf__ float *gk, __ubuf__ float *dqRaw,
+    float ln2, float scale, uint16_t elements)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    const uint16_t loops = static_cast<uint16_t>(elements / kRegElements);
+    for (uint16_t loop = 0; loop < loops; ++loop) {
+        const uint32_t offset = loop * kRegElements;
+        RegTensor<float> kReg;
+        RegTensor<float> gkReg;
+        RegTensor<float> dqReg;
+        RegTensor<float> expReg;
+        RegTensor<float> outReg;
+        LoadAlign(kReg, k + offset);
+        LoadAlign(gkReg, gk + offset);
+        LoadAlign(dqReg, dqRaw + offset);
+        Muls(expReg, gkReg, ln2, fullMask);
+        Exp(expReg, expReg, fullMask);
+        Mul(outReg, kReg, expReg, fullMask);
+        StoreAlign(keDst + offset, outReg, fullMask);
+        Mul(outReg, dqReg, expReg, fullMask);
+        Muls(outReg, outReg, scale, fullMask);
+        StoreAlign(dqDst + offset, outReg, fullMask);
+    }
+}
 #endif
 
 template <typename DataT, uint32_t V_DIM, typename BetaT>
@@ -670,6 +704,25 @@ private:
             auto out = Plane(2);
             Load(k, kGm_[tokenBase + row * 128], rows * 128);
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if constexpr (FINISH_DQ) {
+                auto dqRaw = Plane(2);
+                auto keOut = Plane(3);
+                auto dqOut = Plane(4);
+                Load(dqRaw, dqRawGm_[tokenBase + row * 128], rows * 128);
+                KdaBwdCBuildKEDqA5(
+                    reinterpret_cast<__ubuf__ float *>(keOut.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float *>(dqOut.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float *>(k.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float *>(e.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float *>(dqRaw.GetPhyAddr()),
+                    kLn2, tiling_.scale,
+                    static_cast<uint16_t>(rows * 128));
+                Store(wsBf16_[ws + row * 128], keOut, rows * 128);
+                Store(dqGm_[tokenBase + row * 128], dqOut, rows * 128);
+                continue;
+            }
+#endif
             Exp2(e, e, rows * 128);
             AscendC::Mul(out, k, e, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
