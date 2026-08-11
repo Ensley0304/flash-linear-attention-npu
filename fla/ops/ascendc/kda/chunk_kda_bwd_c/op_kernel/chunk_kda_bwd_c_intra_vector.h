@@ -68,6 +68,12 @@ public:
         pipe_->InitBuffer(matrixInputPong_, kIoBufferBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
         pipe_->InitBuffer(reduceTmp_, kReduceTmpBytes);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Dense accumulated-gate fusion keeps row0's complete 32x128 dg
+        // contribution until row32 arrives.  Each AIV owns one head, so one
+        // 16-KiB resident plane is sufficient per sub-block.
+        pipe_->InitBuffer(pendingDg_, kPendingDgBytes);
+#endif
         InitMatrixInputEvents();
         if constexpr (VARLEN_TND) {
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
@@ -216,14 +222,52 @@ private:
         const uint32_t rowStart =
             static_cast<uint32_t>(windowIdx & 1U) * kProcessRowBlock;
 
-        for (uint32_t headInWindow = 0;
-             headInWindow < headCount; ++headInWindow) {
-            Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
-            const uint32_t slot =
-                CIntraWorkspaceSlot(windowIdx, headInWindow);
-            FinishHead(
-                task, headBase + headInWindow, rowStart,
-                kProcessRowBlock, slot);
+        if (tiling_.useGateInKernel == 0) {
+            const uint32_t ownedHead = AscendC::GetSubBlockIdx();
+            // Every AIV consumes the complete ready stream so the paired
+            // AIC/AIV generation counters stay aligned.  Only the matching
+            // sub-block performs Vector-Post, owning all 32 rows of one head.
+            for (uint32_t headInWindow = 0;
+                 headInWindow < headCount; ++headInWindow) {
+                Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+                if (headInWindow != ownedHead) {
+                    continue;
+                }
+                const uint32_t slot =
+                    CIntraWorkspaceSlot(windowIdx, headInWindow);
+                const uint32_t head = headBase + headInWindow;
+                if (rowStart == 0) {
+                    FinishHeadA5Dense16(
+                        task, head, rowStart, kProcessRowBlock,
+                        slot, 0);
+                    FinishHeadA5Dense16(
+                        task, head, rowStart, kProcessRowBlock,
+                        slot, 16);
+                } else {
+                    auto carry = reduceTmp_.Get<float>();
+                    KdaRegbaseFill(
+                        (__ubuf__ float *)carry.GetPhyAddr(),
+                        0.0f, K_DIM);
+                    // Preserve the exact row-63 -> row-0 accumulation order.
+                    FinishHeadA5Dense16(
+                        task, head, rowStart, kProcessRowBlock,
+                        slot, 16);
+                    FinishHeadA5Dense16(
+                        task, head, rowStart, kProcessRowBlock,
+                        slot, 0);
+                    FinishPendingDgA5(task, head);
+                }
+            }
+        } else {
+            for (uint32_t headInWindow = 0;
+                 headInWindow < headCount; ++headInWindow) {
+                Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+                const uint32_t slot =
+                    CIntraWorkspaceSlot(windowIdx, headInWindow);
+                FinishHead(
+                    task, headBase + headInWindow, rowStart,
+                    kProcessRowBlock, slot);
+            }
         }
     }
 
@@ -286,10 +330,16 @@ private:
         (kUpperPackRows * 128 + kPlaneElements - 1) / kPlaneElements;
     static constexpr uint32_t kArenaBytes = 96 * 1024;
     static constexpr uint32_t kReduceTmpBytes = 32 * 1024;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    static constexpr uint32_t kPendingDgBytes = 32 * 128 * sizeof(float);
+#else
+    static constexpr uint32_t kPendingDgBytes = 0;
+#endif
     static constexpr uint32_t kFp32BlockElements = 32 / sizeof(float);
     static constexpr uint32_t kMatrixInputBufferCount = 2;
     static_assert(
-        6 * kIoBufferBytes + kArenaBytes + kReduceTmpBytes <= kUbBudgetBytes,
+        6 * kIoBufferBytes + kArenaBytes + kReduceTmpBytes +
+                kPendingDgBytes <= kUbBudgetBytes,
         "Vector UB buffers exceed the architecture-specific budget.");
     static_assert(kProcessRowBlock * CHUNK_SIZE <= 2 * kPlaneElements,
                   "Packed A-matrix tile exceeds its two-plane arena group.");
@@ -1075,9 +1125,28 @@ private:
     }
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void FinishPendingDgA5(
+        const CIntraTask &task, uint32_t head)
+    {
+        auto pending = pendingDg_.Get<float>();
+        auto carry = reduceTmp_.Get<float>();
+        for (uint32_t segment = 2; segment > 0; --segment) {
+            const uint32_t ownedBegin = (segment - 1U) * 16U;
+            auto data = pending[ownedBegin * K_DIM];
+            KdaRegbaseReverseScanCarry(
+                (__ubuf__ float *)data.GetPhyAddr(),
+                (__ubuf__ float *)carry.GetPhyAddr(), 16);
+            StoreRows(
+                dgOutGm_[CIntraTensorOffset(
+                    tiling_, task.batchIdx, head,
+                    task.begin + ownedBegin, 0)],
+                data, 16, K_DIM, TensorRowElements());
+        }
+    }
+
     __aicore__ inline void FinishHeadA5Dense16(
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
-        uint32_t slot)
+        uint32_t slot, uint32_t ownedBegin)
     {
         static_assert(K_DIM == 128,
                       "The A5 16-row Vector-Post path is specialized for K=128.");
@@ -1086,8 +1155,6 @@ private:
         static_assert(kProcessRowBlock == 32,
                       "The A5 16-row Vector-Post path requires the proven row32 outer tile.");
 
-        const uint32_t subBlock = AscendC::GetSubBlockIdx();
-        const uint32_t ownedBegin = subBlock * 16;
         if (ownedBegin >= validRows) {
             return;
         }
@@ -1229,9 +1296,28 @@ private:
             count);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
-        StoreRows(dgOutGm_[CIntraTensorOffset(
-                      tiling_, task.batchIdx, head, tokenBegin, 0)],
-                  output, ownedRows, cols, TensorRowElements());
+        if (tiling_.useGateInKernel == 0) {
+            if (rowStart == 0) {
+                auto pending = pendingDg_.Get<float>()[ownedBegin * K_DIM];
+                KdaRegbaseCopy(
+                    (__ubuf__ float *)pending.GetPhyAddr(),
+                    (__ubuf__ float *)output.GetPhyAddr(),
+                    static_cast<uint16_t>(count));
+            } else {
+                auto carry = reduceTmp_.Get<float>();
+                KdaRegbaseReverseScanCarry(
+                    (__ubuf__ float *)output.GetPhyAddr(),
+                    (__ubuf__ float *)carry.GetPhyAddr(),
+                    static_cast<uint16_t>(ownedRows));
+                StoreRows(dgOutGm_[CIntraTensorOffset(
+                              tiling_, task.batchIdx, head, tokenBegin, 0)],
+                          output, ownedRows, cols, TensorRowElements());
+            }
+        } else {
+            StoreRows(dgOutGm_[CIntraTensorOffset(
+                          tiling_, task.batchIdx, head, tokenBegin, 0)],
+                      output, ownedRows, cols, TensorRowElements());
+        }
 
         // output is no longer live; plane 13 can hold the final db input.
         LoadScalarRows(
@@ -1257,7 +1343,9 @@ private:
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128) {
-            FinishHeadA5Dense16(task, head, rowStart, validRows, slot);
+            FinishHeadA5Dense16(
+                task, head, rowStart, validRows, slot,
+                AscendC::GetSubBlockIdx() * 16U);
             return;
         }
 #endif
@@ -1511,6 +1599,9 @@ private:
     AscendC::TBuf<AscendC::QuePosition::VECCALC> matrixInputPong_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> arena_;
     AscendC::TBuf<AscendC::QuePosition::VECCALC> reduceTmp_;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    AscendC::TBuf<AscendC::QuePosition::VECCALC> pendingDg_;
+#endif
     uint32_t currentMatrixInputSlot_ = 0;
     event_t matrixMte2ToVEvent_[kMatrixInputBufferCount]{};
     event_t matrixVToMte2Event_[kMatrixInputBufferCount]{};

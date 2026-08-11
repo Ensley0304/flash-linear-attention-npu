@@ -80,8 +80,20 @@ __aicore__ inline void ChunkKdaBwdCImpl(
             ChunkKdaBwdCGateProcess<SAFE_GATE, DTYPE_RAW_G> process(
                 dg, rawG, aLog, dtBias, dA, dBias,
                 cuSeqlens, chunkIndices);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // Dense/full-chunk accumulated-gate mode is completed in
+            // Intra-Post while dg is resident.  Raw-gate and varlen/tail
+            // paths retain the standalone phase.
+            if (tiling->useGateInKernel != 0 ||
+                tiling->isVarLen != 0 ||
+                tiling->seqlen % 64U != 0) {
+                process.Init(*tiling, &pipe);
+                process.Process();
+            }
+#else
             process.Init(*tiling, &pipe);
             process.Process();
+#endif
         }
     }
 }

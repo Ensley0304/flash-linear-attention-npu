@@ -335,6 +335,31 @@ static __simd_vf__ inline void KdaRegbaseDg(
     }
 }
 
+// Reverse inclusive scan for one contiguous row segment.  Carry contains the
+// suffix accumulated by later segments and is updated with this segment's
+// total.  Calling segments in descending token order is bitwise equivalent to
+// scanning the complete chunk in one pass while allowing an earlier row block
+// to remain resident in UB across the Intra four-slot pipeline.
+static __simd_vf__ inline void KdaRegbaseReverseScanCarry(
+    __ubuf__ float *data, __ubuf__ float *carry, uint16_t rows)
+{
+    constexpr uint32_t kCols = 128;
+    RegTensor<float> valueReg;
+    RegTensor<float> carryReg;
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    for (uint32_t col = 0; col < kCols;
+         col += kKdaRegbaseFp32Elements) {
+        DataCopy(carryReg, carry + col);
+        for (uint32_t row = rows; row > 0; --row) {
+            const uint32_t offset = (row - 1U) * kCols + col;
+            DataCopy(valueReg, data + offset);
+            Add(carryReg, carryReg, valueReg, mask);
+            DataCopy(data + offset, carryReg, mask);
+        }
+        DataCopy(carry + col, carryReg, mask);
+    }
+}
+
 } // namespace KDA
 
 #endif // CHUNK_KDA_BWD_C_ARCH35_INTRA_REGBASE_H
