@@ -48,10 +48,13 @@ private:
         ArchTag, T, typename DACopy::LayoutTagL1A>;
 
     static constexpr uint32_t DO_BYTES = KDA_BWD_A_C * V_DIM * sizeof(T);
-    static constexpr uint32_t SCRATCH_BYTES =
+    static constexpr uint32_t RIGHT0_BYTES =
         V_DIM * KDA_BWD_A_K * sizeof(T);
     static constexpr uint32_t SCRATCH_OFFSET = DO_BYTES;
-    static constexpr uint32_t L1_USED_BYTES = SCRATCH_OFFSET + SCRATCH_BYTES;
+    static constexpr uint32_t RIGHT1_OFFSET = SCRATCH_OFFSET + RIGHT0_BYTES;
+    static constexpr uint32_t RIGHT1_BYTES =
+        V_DIM * KDA_BWD_A_C * sizeof(T);
+    static constexpr uint32_t L1_USED_BYTES = RIGHT1_OFFSET + RIGHT1_BYTES;
     static constexpr uint32_t L0A_BYTES = KDA_BWD_A_K * 64 * sizeof(T);
     static constexpr uint32_t L0B_BYTES = 64 * V_DIM * sizeof(T);
     static constexpr uint32_t L0C_BYTES =
@@ -67,10 +70,12 @@ private:
 
     static constexpr int32_t EVENT_DO = 0;
     static constexpr int32_t EVENT_SCRATCH = 1;
+    static constexpr int32_t EVENT_SCRATCH1 = 2;
     static constexpr int32_t EVENT_L0A = 0;
     static constexpr int32_t EVENT_L0B = 1;
     static constexpr int32_t EVENT_L0_READY = 0;
     static constexpr int32_t EVENT_L0C = 0;
+    static constexpr int32_t EVENT_L0C1 = 1;
 
 public:
     __aicore__ ChunkKdaBwdACube(
@@ -89,9 +94,15 @@ public:
         AscendC::SetHF32Mode(false);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH1);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
+#endif
     }
 
     __aicore__ inline void Process()
@@ -110,8 +121,12 @@ public:
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
             LoadDo(task, head);
             RunDv(task, taskIdx, head, true);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            RunDqDAqk(task, taskIdx, head);
+#else
             RunDq(task, taskIdx, head);
             RunDAqk(task, head);
+#endif
         }
 
         // PR190-style pipeline drain.  The final generation leaves the
@@ -119,9 +134,15 @@ public:
         // required for all outstanding MTE1/MMAD/Fixpipe work to retire.
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH1);
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
+#endif
 
     }
 
@@ -430,6 +451,185 @@ private:
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    // A5-local two-output path for the two contractions that share do as
+    // their complete left operand:
+    //   dq_raw = do @ h^T, dAqk = do @ v_new^T.
+    // Both right operands are prefetched into independent L1 regions.  For
+    // each K=64 reduction slice, do is copied to L0A once and consumed by
+    // both MMADs before L0A is released.  Independent L0C accumulators keep
+    // the two outputs live across the V=128/256 reduction loop.
+    __aicore__ inline void RunDqDAqk(
+        const ChunkKdaBwdATask &task, uint32_t taskIdx, uint32_t head)
+    {
+        Catlass::Arch::Resource<ArchTag> resource;
+        auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
+        auto l1B0 = resource.l1Buf.template GetBufferByByte<T>(SCRATCH_OFFSET);
+        auto l1B1 = resource.l1Buf.template GetBufferByByte<T>(RIGHT1_OFFSET);
+        auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
+        auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
+        auto l0C0 = resource.l0CBuf.template GetBufferByByte<float>(0);
+        constexpr uint32_t kDqL0CBytes =
+            KDA_BWD_A_C * KDA_BWD_A_K * sizeof(float);
+        auto l0C1 = resource.l0CBuf.template GetBufferByByte<float>(
+            kDqL0CBytes);
+        static_assert(
+            kDqL0CBytes + KDA_BWD_A_C * KDA_BWD_A_C * sizeof(float) <=
+                ArchTag::L0C_SIZE,
+            "Kernel A dual-output FP32 L0C exceeds capacity.");
+
+        const uint64_t hOffset = KdaBwdAChunkHeadOffset(
+            tiling_, task, taskIdx, head, KDA_BWD_A_K * V_DIM);
+        const uint64_t vOffset = KdaBwdAHeadTokenOffset(
+            tiling_, task, head, V_DIM);
+        AscendC::GlobalTensor<T> hGm;
+        AscendC::GlobalTensor<T> vGm;
+        hGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(h_) + hOffset);
+        vGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(vNew_) + vOffset);
+        auto hTensor = tla::MakeTensor(
+            hGm, tla::MakeLayout<T, ColumnMajor>(V_DIM, KDA_BWD_A_K),
+            Catlass::Arch::PositionGM{});
+        auto vTensor = tla::MakeTensor(
+            vGm, tla::MakeLayout<T, ColumnMajor>(V_DIM, KDA_BWD_A_C),
+            Catlass::Arch::PositionGM{});
+        auto hBlock = GetTile(
+            hTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(V_DIM, KDA_BWD_A_K));
+        auto vBlock = GetTile(
+            vTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(V_DIM, task.validC));
+        auto l1B0Tensor = tla::MakeTensor(
+            l1B0, tla::MakeLayout<T, typename DqCopy::LayoutTagL1B>(
+                      V_DIM, KDA_BWD_A_K),
+            Catlass::Arch::PositionL1{});
+        auto l1B1Tensor = tla::MakeTensor(
+            l1B1, tla::MakeLayout<T, typename DqCopy::LayoutTagL1B>(
+                      V_DIM, KDA_BWD_A_C),
+            Catlass::Arch::PositionL1{});
+        typename DqCopy::template CopyGmToL1B<decltype(hBlock)> loadH;
+        typename DqCopy::template CopyGmToL1B<decltype(vBlock)> loadV;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
+        loadH(l1B0Tensor, hBlock);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_SCRATCH);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH1);
+        loadV(l1B1Tensor, vBlock);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_SCRATCH1);
+
+        auto l1ATensor = tla::MakeTensor(
+            l1A, tla::MakeLayout<T, typename DqCopy::LayoutTagL1A>(
+                     KDA_BWD_A_C, V_DIM),
+            Catlass::Arch::PositionL1{});
+        const uint32_t m = task.validC == 1 ? 16 : task.validC;
+        auto l0C0Tensor = tla::MakeTensor(
+            l0C0, tla::MakeLayoutL0C(m, KDA_BWD_A_K),
+            Catlass::Arch::PositionL0C{});
+        auto l0C1Tensor = tla::MakeTensor(
+            l0C1, tla::MakeLayoutL0C(m, task.validC),
+            Catlass::Arch::PositionL0C{});
+        typename DqCopy::CopyL1ToL0A copyA;
+        typename DqCopy::CopyL1ToL0B copyB;
+        DqMmad mm;
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
+        for (uint32_t k0 = 0; k0 < V_DIM; k0 += 64) {
+            const bool lastK = k0 + 64 >= V_DIM;
+            auto l0ATensor = tla::MakeTensor(
+                l0A, tla::MakeLayout<T, typename DqCopy::LayoutTagL0A>(m, 64),
+                Catlass::Arch::PositionL0A{});
+            auto l0B0Tensor = tla::MakeTensor(
+                l0B, tla::MakeLayout<T, typename DqCopy::LayoutTagL0B>(
+                         64, KDA_BWD_A_K),
+                Catlass::Arch::PositionL0B{});
+            auto l0B1Tensor = tla::MakeTensor(
+                l0B, tla::MakeLayout<T, typename DqCopy::LayoutTagL0B>(
+                         64, task.validC),
+                Catlass::Arch::PositionL0B{});
+            auto tileA = GetTile(
+                l1ATensor, tla::MakeCoord(0, k0), tla::MakeShape(m, 64));
+            auto tileB0 = GetTile(
+                l1B0Tensor, tla::MakeCoord(k0, 0),
+                tla::MakeShape(64, KDA_BWD_A_K));
+            auto tileB1 = GetTile(
+                l1B1Tensor, tla::MakeCoord(k0, 0),
+                tla::MakeShape(64, task.validC));
+
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
+            copyA(l0ATensor, tileA);
+            if (lastK) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
+            }
+
+            if (k0 == 0) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
+                    EVENT_SCRATCH);
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+            copyB(l0B0Tensor, tileB0);
+            if (lastK) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
+                    EVENT_SCRATCH);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
+            mm(l0C0Tensor, l0ATensor, l0B0Tensor, k0 == 0,
+               lastK ? 0b11 : 0b10);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+
+            if (k0 == 0) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
+                    EVENT_SCRATCH1);
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+            copyB(l0B1Tensor, tileB1);
+            if (lastK) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(
+                    EVENT_SCRATCH1);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
+            mm(l0C1Tensor, l0ATensor, l0B1Tensor, k0 == 0,
+               lastK ? 0b11 : 0b10);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C1);
+
+        const uint64_t dqOffset = KdaBwdAHeadTokenOffset(
+            tiling_, task, head, KDA_BWD_A_K);
+        const uint64_t dAOffset = KdaBwdAHeadTokenOffset(
+            tiling_, task, head, KDA_BWD_A_C);
+        AscendC::GlobalTensor<float> dqGm;
+        AscendC::GlobalTensor<float> dAGm;
+        dqGm.SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(dqRaw_) + dqOffset);
+        dAGm.SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(dAqk_) + dAOffset);
+        auto dqTensor = tla::MakeTensor(
+            dqGm, tla::MakeLayout<float, RowMajor>(
+                      KDA_BWD_A_C, KDA_BWD_A_K),
+            Catlass::Arch::PositionGM{});
+        auto dATensor = tla::MakeTensor(
+            dAGm, tla::MakeLayout<float, RowMajor>(
+                      KDA_BWD_A_C, KDA_BWD_A_C),
+            Catlass::Arch::PositionGM{});
+        auto dqBlock = GetTile(
+            dqTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(task.validC, KDA_BWD_A_K));
+        auto dABlock = GetTile(
+            dATensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(task.validC, task.validC));
+        typename DqCopy::template CopyL0CToDst<decltype(dqBlock)> fixDq;
+        typename DqCopy::template CopyL0CToDst<decltype(dABlock)> fixDA;
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+        fixDq(dqBlock, l0C0Tensor, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C1);
+        fixDA(dABlock, l0C1Tensor, 0b11);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
+    }
+#endif
 
     __aicore__ inline void RunDq(
         const ChunkKdaBwdATask &task, uint32_t taskIdx, uint32_t head)
