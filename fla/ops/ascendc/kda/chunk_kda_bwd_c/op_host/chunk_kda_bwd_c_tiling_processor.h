@@ -231,10 +231,15 @@ public:
             tiling_.chunkNumPerBatch =
                 (tiling_.seqlen + tiling_.chunkSize - 1) / tiling_.chunkSize;
             tiling_.chunkNum = tiling_.batch * tiling_.chunkNumPerBatch;
-            OP_CHECK_IF(!CheckDenseState(h) || !CheckDenseState(dh),
+            const bool dhChunkMajor = CheckDenseState(dh);
+            const bool dhHeadMajor = CheckDenseHeadMajorState(dh);
+            OP_CHECK_IF(!CheckDenseState(h) ||
+                            (!dhChunkMajor && !dhHeadMajor),
                         OP_LOGE(ctx_.nodeName,
-                                "h/dh must be [B,chunkNum,H,K,V]"),
+                                "h must be [B,chunkNum,H,K,V] and dh must be "
+                                "[B,chunkNum,H,K,V] or [B,H,chunkNum,K,V]"),
                         return ge::GRAPH_FAILED);
+            tiling_.dhHeadMajor = dhHeadMajor ? 1 : 0;
         } else {
             const gert::Shape cu = Shape(KDA_C_CU_SEQLENS);
             const gert::Shape chunks = Shape(KDA_C_CHUNK_INDICES);
@@ -252,6 +257,7 @@ public:
                         OP_LOGE(ctx_.nodeName,
                                 "varlen h/dh must be [totalChunks,H,K,V]"),
                         return ge::GRAPH_FAILED);
+            tiling_.dhHeadMajor = 0;
         }
 
         const uint64_t headWindows =
@@ -315,6 +321,17 @@ private:
                shape.GetDim(1) ==
                    static_cast<size_t>(tiling_.chunkNumPerBatch) &&
                shape.GetDim(2) == static_cast<size_t>(tiling_.headNum) &&
+               shape.GetDim(3) == 128 &&
+               shape.GetDim(4) == static_cast<size_t>(tiling_.valueDim);
+    }
+
+    bool CheckDenseHeadMajorState(const gert::Shape &shape) const
+    {
+        return shape.GetDimNum() == 5 &&
+               shape.GetDim(0) == static_cast<size_t>(tiling_.batch) &&
+               shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
+               shape.GetDim(2) ==
+                   static_cast<size_t>(tiling_.chunkNumPerBatch) &&
                shape.GetDim(3) == 128 &&
                shape.GetDim(4) == static_cast<size_t>(tiling_.valueDim);
     }

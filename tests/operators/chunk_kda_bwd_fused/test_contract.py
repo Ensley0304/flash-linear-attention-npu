@@ -66,15 +66,19 @@ def test_kernel_c_preserves_inplace_dv_scan_until_its_last_read():
     assert "PersistTza" not in _all_source(C_ROOT / "op_kernel")
 
 
-def test_saved_state_layout_matches_forward_export_and_kernel_b():
+def test_saved_state_layout_matches_forward_export_and_pr291_kernel_b():
     a_common = _read(A_ROOT / "op_kernel/chunk_kda_bwd_a_common.h")
     c_common = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_common.h")
     a_tiling = _read(A_ROOT / "op_host/chunk_kda_bwd_a_tiling_processor.h")
     c_tiling = _read(C_ROOT / "op_host/chunk_kda_bwd_c_tiling_processor.h")
     assert "taskIdx) * tiling.headNum + head" in a_common
     assert "chunkIdx) * tiling.headNum + headIdx" in c_common
+    assert "if (tiling.dhHeadMajor != 0)" in c_common
+    assert "CheckDenseHeadMajorState" in c_tiling
+    assert "tiling_.dhHeadMajor = dhHeadMajor ? 1 : 0" in c_tiling
     assert "[B,chunkNum,H,K,V]" in a_tiling
     assert "[B,chunkNum,H,K,V]" in c_tiling
+    assert "[B,H,chunkNum,K,V]" in c_tiling
 
 
 def test_varlen_metadata_stays_inside_the_single_device_launch():

@@ -27,6 +27,10 @@ struct ChunkKdaBwdCTilingData {
     int32_t safeGate;
     int32_t useGateInKernel;
     int32_t hasDtBias;
+    // PR291 publishes dense dh as [B,H,NT,K,V].  The original chunk-major
+    // layout remains the default; the internal three-kernel path can select
+    // this alternative and avoid a transpose launch.
+    int32_t dhHeadMajor;
     int32_t intraRowBlock;
     int32_t kEOffset;
     int32_t dqRawOffset;

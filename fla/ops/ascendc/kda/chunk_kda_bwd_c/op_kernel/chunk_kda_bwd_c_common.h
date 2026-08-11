@@ -130,6 +130,12 @@ __aicore__ inline uint64_t WyDhOffset(
         return (static_cast<uint64_t>(chunkIdx) * tiling.headNum + headIdx) *
                tiling.keyDim * tiling.valueDim;
     }
+    if (tiling.dhHeadMajor != 0) {
+        return ((static_cast<uint64_t>(batchIdx) * tiling.headNum + headIdx) *
+                    tiling.chunkNumPerBatch +
+                chunkIdx) *
+               tiling.keyDim * tiling.valueDim;
+    }
     return ((static_cast<uint64_t>(batchIdx) * tiling.chunkNumPerBatch +
              chunkIdx) * tiling.headNum + headIdx) *
            tiling.keyDim * tiling.valueDim;
