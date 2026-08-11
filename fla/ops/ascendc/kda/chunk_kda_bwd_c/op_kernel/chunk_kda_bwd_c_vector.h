@@ -41,6 +41,42 @@ static __simd_vf__ inline void KdaBwdCRowDotAccA5(
     }
 }
 
+static __simd_vf__ inline void KdaBwdCDvDbA5(
+    __ubuf__ float *dvDst, __ubuf__ float *rowAcc,
+    __ubuf__ float *dvb, __ubuf__ float *v, __ubuf__ float *beta,
+    uint16_t rows, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    for (uint32_t row = 0; row < rows; ++row) {
+        RegTensor<float> acc;
+        RegTensor<float> betaReg;
+        Duplicate(acc, 0.0f, fullMask);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(betaReg, beta + row);
+        for (uint32_t col = 0; col < cols; col += kRegElements) {
+            const uint32_t offset = row * cols + col;
+            RegTensor<float> dvbReg;
+            RegTensor<float> vReg;
+            RegTensor<float> product;
+            DataCopy(dvbReg, dvb + offset);
+            DataCopy(vReg, v + offset);
+            Mul(product, dvbReg, vReg, fullMask);
+            Add(acc, acc, product, fullMask);
+            Mul(product, dvbReg, betaReg, fullMask);
+            DataCopy(dvDst + offset, product, fullMask);
+        }
+        RegTensor<float> sum;
+        RegTensor<float> current;
+        ReduceSum(sum, acc, fullMask);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(current, rowAcc + row);
+        Add(sum, sum, current, fullMask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            rowAcc + row, sum, fullMask);
+    }
+}
+
 static __simd_vf__ inline void KdaBwdCMulRowDotSubA5(
     __ubuf__ float *productDst, __ubuf__ float *rowAcc,
     __ubuf__ float *lhs, __ubuf__ float *rhs,
@@ -703,7 +739,9 @@ private:
                 AscendC::Add(statePartial, statePartial, y, 128);
                 AscendC::PipeBarrier<PIPE_V>();
             } else {
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                 BroadcastRows(brcb, Plane(6)[row - begin], rows);
+#endif
                 for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
                     LoadRows(
                         x, wsFp32_[dVb + row * V_DIM + v0],
@@ -712,11 +750,14 @@ private:
                         y, vGm_[tokenBaseV + row * V_DIM + v0],
                         rows, 128, V_DIM);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    KdaBwdCRowDotAccA5(
+                    KdaBwdCDvDbA5(
+                        (__ubuf__ float *)z.GetPhyAddr(),
                         (__ubuf__ float *)Plane(7)[row - begin].GetPhyAddr(),
                         (__ubuf__ float *)x.GetPhyAddr(),
                         (__ubuf__ float *)y.GetPhyAddr(),
+                        (__ubuf__ float *)Plane(6)[row - begin].GetPhyAddr(),
                         static_cast<uint16_t>(rows), 128);
+                    AscendC::PipeBarrier<PIPE_V>();
 #else
                     AscendC::Mul(aux, x, y, rows * 128);
                     AscendC::PipeBarrier<PIPE_V>();
@@ -725,8 +766,8 @@ private:
                         Plane(7)[row - begin],
                         Plane(7)[row - begin], z, rows);
                     AscendC::PipeBarrier<PIPE_V>();
-#endif
                     MulRowsByScalar(z, x, brcb, rows, 128);
+#endif
                     StoreStrided(
                         dvGm_[tokenBaseV + row * V_DIM + v0],
                         z, rows, 128, V_DIM);
