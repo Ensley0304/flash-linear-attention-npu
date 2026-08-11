@@ -22,12 +22,13 @@ class ChunkKdaBwdCIntraVectorProcess {
 public:
     __aicore__ ChunkKdaBwdCIntraVectorProcess(
         GM_ADDR q, GM_ADDR k, GM_ADDR gk, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
-        GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg, GM_ADDR dqOut, GM_ADDR dkOut,
-        GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR cuSeqlens,
+        GM_ADDR dqBaseRaw, GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg,
+        GM_ADDR dqOut, GM_ADDR dkOut, GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR cuSeqlens,
         GM_ADDR chunkMetadata, GM_ADDR workspace)
         : q_(q), k_(k), gk_(gk), beta_(beta), dAqk_(dAqk), dAkk_(dAkk),
-          dq_(dq), dk_(dk), db_(db), dg_(dg), dqOut_(dqOut), dkOut_(dkOut),
-          dbOut_(dbOut), dgOut_(dgOut), cuSeqlens_(cuSeqlens),
+          dqBaseRaw_(dqBaseRaw), dq_(dq), dk_(dk), db_(db), dg_(dg),
+          dqOut_(dqOut), dkOut_(dkOut), dbOut_(dbOut), dgOut_(dgOut),
+          cuSeqlens_(cuSeqlens),
           chunkMetadata_(chunkMetadata),
           workspace_(workspace)
     {
@@ -45,6 +46,8 @@ public:
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(beta_));
         dAqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk_));
         dAkkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk_));
+        dqBaseRawGm_.SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(dqBaseRaw_));
         dqGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dq_));
         dkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dk_));
         dbGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(db_));
@@ -995,6 +998,9 @@ private:
         auto anchor = Plane(12);     // plane 12; reused by output
         auto beta = Plane(13);       // plane 13; reused by output
         auto dbAcc = Plane(14);      // plane 14
+        auto dqBaseRaw = Plane(15);  // planes 15-16
+        auto anchorExp = Plane(17);  // first 128 elements
+        auto dqFinal = Plane(18);    // planes 18-19
 
         KdaRegbaseFill(
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
@@ -1010,10 +1016,15 @@ private:
 
         const uint32_t cols = 128;
         const uint32_t count = ownedRows * cols;
-        Load(anchor,
-             gkGm_[CIntraTensorOffset(
-                 tiling_, task.batchIdx, head, anchorRow, 0)],
-             cols);
+        LoadMatrixRowsPair(
+            anchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, anchorRow, 0)],
+            1, cols, TensorRowElements(),
+            dqBaseRaw,
+            dqBaseRawGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
         const uint64_t resultBase =
             slotBase / sizeof(float) + tiling_.intraResultRegionOffset / sizeof(float);
         LoadMatrixRowsPair(
@@ -1044,7 +1055,10 @@ private:
                          static_cast<uint64_t>(ownedBegin) * K_DIM],
             ownedRows, cols, K_DIM);
 
-        KdaRegbaseFinishScale(
+        KdaRegbaseExp2(
+            (__ubuf__ float *)anchorExp.GetPhyAddr(),
+            (__ubuf__ float *)anchor.GetPhyAddr(), cols);
+        KdaRegbaseFinishScale<true>(
             (__ubuf__ float *)rawDq.GetPhyAddr(),
             (__ubuf__ float *)rawDkLower.GetPhyAddr(),
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
@@ -1053,42 +1067,28 @@ private:
             (__ubuf__ float *)anchor.GetPhyAddr(),
             (__ubuf__ float *)beta.GetPhyAddr(),
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+            (__ubuf__ float *)anchorExp.GetPhyAddr(),
+            (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
             ownedRows, cols);
 
         auto output = Plane(12);  // planes 12-13, after anchor/beta's last use
 
-        // The original gradients are consumed once and do not need to remain
-        // in the arena.  Reuse the existing 8 KiB matrix ping/pong buffers as
-        // their final RegBase operands: issue dq/dk together, then refill the
-        // released dq slot with dg while dq is being copied out.  This removes
-        // three 16 x 128 FP32 UB-to-UB copies and overlaps the mandatory MTE2
-        // reads with the neighbouring Vector/MTE3 work without increasing UB.
-        const uint32_t dqSlot = CopyInMatrixRows(
-            dqGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements());
+        // dq_base is completed above from Kernel A's raw dq tile and written
+        // directly with the Intra correction, so only the mature dk/dg matrix
+        // input ping/pong remains here.  Issue both MTE2 reads before storing
+        // dq_final to overlap input traffic with the independent MTE3 write.
         const uint32_t dkSlot = CopyInMatrixRows(
             dkGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
-
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
-            matrixMte2ToVEvent_[dqSlot]);
-        KdaRegbaseAdd2(
-            (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)MatrixInput<float>(dqSlot).GetPhyAddr(),
-            (__ubuf__ float *)rawDq.GetPhyAddr(),
-            count);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-            matrixVToMte2Event_[dqSlot]);
-
         const uint32_t dgSlot = CopyInMatrixRows(
             dgGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
         StoreRows(dqOutGm_[CIntraTensorOffset(
                       tiling_, task.batchIdx, head, tokenBegin, 0)],
-                  output, ownedRows, cols, TensorRowElements());
+                  dqFinal, ownedRows, cols, TensorRowElements());
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[dkSlot]);
@@ -1244,7 +1244,7 @@ private:
                 ownedRows, cols, K_DIM);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            KdaRegbaseFinishScale(
+            KdaRegbaseFinishScale<false>(
                 (__ubuf__ float *)rawDq.GetPhyAddr(),
                 (__ubuf__ float *)rawDkLower.GetPhyAddr(),
                 (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
@@ -1253,6 +1253,9 @@ private:
                 (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)rawDq.GetPhyAddr(),
+                (__ubuf__ float *)anchor.GetPhyAddr(),
+                (__ubuf__ float *)rawDq.GetPhyAddr(), 0.0f,
                 ownedRows, cols);
 #else
             AscendC::Sub(posScale, gate, anchor, count);
@@ -1375,6 +1378,7 @@ private:
     GM_ADDR beta_;
     GM_ADDR dAqk_;
     GM_ADDR dAkk_;
+    GM_ADDR dqBaseRaw_;
     GM_ADDR dq_;
     GM_ADDR dk_;
     GM_ADDR db_;
@@ -1408,6 +1412,7 @@ private:
     AscendC::GlobalTensor<BetaT> betaGm_;
     AscendC::GlobalTensor<float> dAqkGm_;
     AscendC::GlobalTensor<float> dAkkGm_;
+    AscendC::GlobalTensor<float> dqBaseRawGm_;
     AscendC::GlobalTensor<float> dqGm_;
     AscendC::GlobalTensor<float> dkGm_;
     AscendC::GlobalTensor<float> dbGm_;

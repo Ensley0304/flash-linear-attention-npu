@@ -191,11 +191,14 @@ static __simd_vf__ inline void KdaRegbaseGateScale(
     }
 }
 
+template <bool FUSE_DQ_BASE>
 static __simd_vf__ inline void KdaRegbaseFinishScale(
     __ubuf__ float *rawDq, __ubuf__ float *rawDkLower,
     __ubuf__ float *rawDkUpper, __ubuf__ float *k,
     __ubuf__ float *gate, __ubuf__ float *anchor, __ubuf__ float *beta,
-    __ubuf__ float *dbAcc, uint16_t rows, uint16_t cols)
+    __ubuf__ float *dbAcc, __ubuf__ float *dqBaseRaw,
+    __ubuf__ float *anchorExp, __ubuf__ float *dqFinal, float scale,
+    uint16_t rows, uint16_t cols)
 {
     RegTensor<float> dqReg;
     RegTensor<float> dkLowerReg;
@@ -210,6 +213,9 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
     RegTensor<float> blockSumReg;
     RegTensor<float> betaReg;
     RegTensor<float> dbReg;
+    RegTensor<float> dqBaseReg;
+    RegTensor<float> anchorExpReg;
+    RegTensor<float> dqFinalReg;
     MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
 
     for (uint32_t row = 0; row < rows; ++row) {
@@ -233,6 +239,15 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
             Exp(posReg, posReg, mask);
             Exp(negReg, negReg, mask);
             Mul(dqReg, dqReg, posReg, mask);
+            if constexpr (FUSE_DQ_BASE) {
+                DataCopy(dqBaseReg, dqBaseRaw + row * cols + col);
+                DataCopy(anchorExpReg, anchorExp + col);
+                Mul(dqBaseReg, dqBaseReg, posReg, mask);
+                Mul(dqBaseReg, dqBaseReg, anchorExpReg, mask);
+                Muls(dqBaseReg, dqBaseReg, scale, mask);
+                Add(dqFinalReg, dqReg, dqBaseReg, mask);
+                DataCopy(dqFinal + row * cols + col, dqFinalReg, mask);
+            }
             Mul(dkLowerReg, dkLowerReg, posReg, mask);
             Mul(dkUpperReg, dkUpperReg, negReg, mask);
             Mul(productReg, dkLowerReg, kReg, mask);

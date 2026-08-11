@@ -70,7 +70,7 @@ __aicore__ inline void ChunkKdaBwdCImpl(
             ChunkKdaBwdCIntraVectorProcess<
                 128, 64, SAFE_GATE, false, VARLEN_TND, DataT, BetaT> process(
                     q, k, gk, beta, dAqk, dAkk,
-                    dq, dk, db, dg, dq, dk, db, dg,
+                    dqRaw, dq, dk, db, dg, dq, dk, db, dg,
                     cuSeqlens, chunkIndices, workspace);
             process.Init(*tiling, &pipe);
             process.Process();

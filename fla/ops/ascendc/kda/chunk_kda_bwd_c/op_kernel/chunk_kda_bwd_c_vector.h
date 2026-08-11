@@ -356,22 +356,35 @@ private:
             // kE has no AIC dependency.  Build it while AIC produces the
             // independent base GEMMs instead of serializing it behind S2.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            // S0 is published before AIC starts S1.  Consume it here so kE
-            // and dq share the same resident exp2(gk) tile instead of
-            // loading gk and evaluating exp twice.
-            AscendC::CrossCoreWaitFlag(kS0Ready);
+            // Dense A5 completes dq_base in Intra Post, where the existing
+            // exp2(gk-gk_last) tile can be reused.  Build kE while AIC is
+            // still producing S0, then consume the S0 generation before its
+            // flag is reused.  Varlen keeps the mature standalone path.
+            if (tiling_.isVarLen != 0) {
+                AscendC::CrossCoreWaitFlag(kS0Ready);
+            }
 #endif
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                BuildKE<true>(task, headBase + lane, validLen, slot,
-                              subBlockIdx, subBlockNum);
+                if (tiling_.isVarLen == 0) {
+                    BuildKE<false>(task, headBase + lane, validLen, slot,
+                                   subBlockIdx, subBlockNum);
+                } else {
+                    BuildKE<true>(task, headBase + lane, validLen, slot,
+                                  subBlockIdx, subBlockNum);
+                }
 #else
                 BuildKE<false>(task, headBase + lane, validLen, slot,
                                subBlockIdx, subBlockNum);
 #endif
             }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (tiling_.isVarLen == 0) {
+                AscendC::CrossCoreWaitFlag(kS0Ready);
+            }
+#endif
 
             // S0: consume dq_raw and finish dq_base.
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
