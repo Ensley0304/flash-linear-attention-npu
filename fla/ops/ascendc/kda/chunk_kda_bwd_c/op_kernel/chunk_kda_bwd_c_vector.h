@@ -283,10 +283,21 @@ public:
         // Two entries let MTE2/MTE3 alternate buffers while Vector consumes
         // the preceding tile.  RowReduce uses the unused tail of its output
         // plane, so the full 96 KiB UB budget remains available to IO ping-pong.
+        // A5 keeps one generic queue entry and spends the released 16 KiB on
+        // two explicit MTE2 ping/pong tiles.  Hot independent input pairs can
+        // then issue both GM reads before Vector consumes the first tile,
+        // matching the proven PR190/PR291 overlap pattern.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        pipe_->InitBuffer(inputQueue_, 1, kIoBytes);
+#else
         pipe_->InitBuffer(inputQueue_, 2, kIoBytes);
+#endif
         pipe_->InitBuffer(outputQueue_, 2, kIoBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        pipe_->InitBuffer(matrixInputPing_, kIoBytes);
+        pipe_->InitBuffer(matrixInputPong_, kIoBytes);
+        InitMatrixInputEvents();
         // Keep the two heads' owned dk_state rows in A5's larger UB until
         // FinishGradientRows forms final dk.  This removes one full FP32
         // write/read round trip through GM for every owner.
@@ -297,6 +308,9 @@ public:
     __aicore__ inline void Process()
     {
         ProcessFused();
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        ReleaseMatrixInputEvents();
+#endif
     }
 
 
@@ -494,7 +508,12 @@ private:
     // 1AIC:2AIV MIX kernel without providing any reusable live storage.
     static constexpr uint32_t kArenaBytes = 8 * kPlaneElements * sizeof(float);
     static constexpr float kLn2 = 0.69314718055994530942f;
-    static_assert(4 * kIoBytes + kArenaBytes
+    static_assert(
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                      5 * kIoBytes + kArenaBytes
+#else
+                      4 * kIoBytes + kArenaBytes
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                       + kDkStateBytes
 #endif
@@ -516,6 +535,102 @@ private:
     {
         return arena_.Get<float>()[idx * kPlaneElements];
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void InitMatrixInputEvents()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            matrixMte2ToVEvent_[slot] = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+            matrixVToMte2Event_[slot] = static_cast<event_t>(
+                pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+                matrixVToMte2Event_[slot]);
+        }
+    }
+
+    __aicore__ inline void ReleaseMatrixInputEvents()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+                matrixVToMte2Event_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(
+                matrixMte2ToVEvent_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
+                matrixVToMte2Event_[slot]);
+        }
+    }
+
+    template <typename T>
+    __aicore__ inline AscendC::LocalTensor<T> MatrixInput(uint32_t slot)
+    {
+        return slot == 0 ? matrixInputPing_.Get<T>() :
+                           matrixInputPong_.Get<T>();
+    }
+
+    template <typename T>
+    __aicore__ inline uint32_t CopyInMatrixRows(
+        AscendC::GlobalTensor<T> src, uint32_t rows, uint32_t cols,
+        uint32_t physicalCols)
+    {
+        const uint32_t slot = currentMatrixInputSlot_;
+        currentMatrixInputSlot_ ^= 1U;
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+        AscendC::DataCopyExtParams params{
+            static_cast<uint16_t>(rows),
+            static_cast<uint32_t>(cols * sizeof(T)),
+            static_cast<uint32_t>((physicalCols - cols) * sizeof(T)),
+            0, 0};
+        AscendC::DataCopyPad(
+            MatrixInput<T>(slot), src, params, {false, 0, 0, 0});
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[slot]);
+        return slot;
+    }
+
+    __aicore__ inline void ConsumeMatrixRows(
+        AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<float> src, uint32_t slot, uint32_t count)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[slot]);
+        AscendC::Adds(dst, src, 0.0f, count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+    }
+
+    template <typename SrcT>
+    __aicore__ inline void ConsumeMatrixRows(
+        AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<SrcT> src, uint32_t slot, uint32_t count)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[slot]);
+        AscendC::Cast(
+            dst, src, AscendC::RoundMode::CAST_NONE, count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+    }
+
+    template <typename T0, typename T1>
+    __aicore__ inline void LoadRowsPair(
+        AscendC::LocalTensor<float> dst0, AscendC::GlobalTensor<T0> src0,
+        uint32_t rows0, uint32_t cols0, uint32_t physicalCols0,
+        AscendC::LocalTensor<float> dst1, AscendC::GlobalTensor<T1> src1,
+        uint32_t rows1, uint32_t cols1, uint32_t physicalCols1)
+    {
+        const uint32_t slot0 =
+            CopyInMatrixRows(src0, rows0, cols0, physicalCols0);
+        const uint32_t slot1 =
+            CopyInMatrixRows(src1, rows1, cols1, physicalCols1);
+        ConsumeMatrixRows(
+            dst0, MatrixInput<T0>(slot0), slot0, rows0 * cols0);
+        ConsumeMatrixRows(
+            dst1, MatrixInput<T1>(slot1), slot1, rows1 * cols1);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+#endif
 
     __aicore__ inline void Load(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src,
@@ -715,8 +830,14 @@ private:
             auto k = Plane(0);
             auto e = Plane(1);
             auto out = Plane(2);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            LoadRowsPair(
+                k, kGm_[tokenBase + row * 128], rows, 128, 128,
+                e, gkGm_[tokenBase + row * 128], rows, 128, 128);
+#else
             Load(k, kGm_[tokenBase + row * 128], rows * 128);
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (FINISH_DQ) {
                 auto dqRaw = Plane(2);
@@ -820,12 +941,20 @@ private:
                 AscendC::PipeBarrier<PIPE_V>();
                 Store(dqGm_[tokenBase + row * 128], z, rows * 128);
             } else if (stage == 1) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                LoadRowsPair(
+                    x, dkGm_[tokenBase + row * 128], rows, 128, 128,
+                    y, gkGm_[tokenBase + row * 128], rows, 128, 128);
+#else
                 Load(x, dkGm_[tokenBase + row * 128], rows * 128);
+#endif
                 for (uint32_t r = 0; r < rows; ++r) {
                     AscendC::Adds(z[r * 128], gkLast, 0.0f, 128);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                 Load(y, gkGm_[tokenBase + row * 128], rows * 128);
+#endif
                 AscendC::Sub(z, z, y, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
                 Exp2(z, z, rows * 128);
@@ -857,12 +986,20 @@ private:
                 BroadcastRows(brcb, Plane(6)[row - begin], rows);
 #endif
                 for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    LoadRowsPair(
+                        x, wsFp32_[dVb + row * V_DIM + v0],
+                        rows, 128, V_DIM,
+                        y, vGm_[tokenBaseV + row * V_DIM + v0],
+                        rows, 128, V_DIM);
+#else
                     LoadRows(
                         x, wsFp32_[dVb + row * V_DIM + v0],
                         rows, 128, V_DIM);
                     LoadRows(
                         y, vGm_[tokenBaseV + row * V_DIM + v0],
                         rows, 128, V_DIM);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     KdaBwdCDvDbA5(
                         (__ubuf__ float *)z.GetPhyAddr(),
@@ -934,8 +1071,14 @@ private:
             auto brcb = Plane(6);
             auto qk = Plane(7);
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            LoadRowsPair(
+                dkg, wsFp32_[dKgb + row * 128], rows, 128, 128,
+                ke, wsBf16_[kE + row * 128], rows, 128, 128);
+#else
             Load(dkg, wsFp32_[dKgb + row * 128], rows * 128);
             Load(ke, wsBf16_[kE + row * 128], rows * 128);
+#endif
 
             // dKgb_raw has the opposite sign of mathematical dKgb, so fold
             // the minus sign into each consumer instead of materializing a
@@ -963,8 +1106,9 @@ private:
             // Keep the complete dk/dg elementwise chain in registers.  The
             // two outputs share beta and dk_state, while tmp already holds
             // dKgb_raw*kE from the db reduction above.
-            Load(qk, qGm_[tokenBase + row * 128], rows * 128);
-            Load(brcb, dqGm_[tokenBase + row * 128], rows * 128);
+            LoadRowsPair(
+                qk, qGm_[tokenBase + row * 128], rows, 128, 128,
+                brcb, dqGm_[tokenBase + row * 128], rows, 128, 128);
             Load(ke, kGm_[tokenBase + row * 128], rows * 128);
             KdaBwdCFinishDkDgA5(
                 (__ubuf__ float *)e.GetPhyAddr(),
@@ -1033,8 +1177,14 @@ private:
             auto zv = Plane(1);
             auto zw = Plane(2);
             auto out = Plane(3);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            LoadRowsPair(
+                zv, wsBf16_[zV + row * 64], rows, 64, 64,
+                zw, wsBf16_[zW + row * 64], rows, 64, 64);
+#else
             Load(zv, wsBf16_[zV + row * 64], rows * 64);
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaBwdCBuildZbA5(
                 reinterpret_cast<__ubuf__ float *>(out.GetPhyAddr()),
@@ -1109,12 +1259,20 @@ private:
             AscendC::Duplicate(reduced, 0.0f, kRows);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                LoadRowsPair(
+                    x, hGm_[hBase + col * V_DIM + v0],
+                    kRows, 128, V_DIM,
+                    y, dhGm_[dhBase + col * V_DIM + v0],
+                    kRows, 128, V_DIM);
+#else
                 LoadRows(
                     x, hGm_[hBase + col * V_DIM + v0],
                     kRows, 128, V_DIM);
                 LoadRows(
                     y, dhGm_[dhBase + col * V_DIM + v0],
                     kRows, 128, V_DIM);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 KdaBwdCRowDotAccA5(
                     (__ubuf__ float *)reduced.GetPhyAddr(),
@@ -1148,8 +1306,14 @@ private:
         const uint32_t last = validLen - 1U;
         auto state = Plane(0);
         auto gradient = Plane(1);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        LoadRowsPair(
+            state, wsFp32_[stateBase], 1, 128, 128,
+            gradient, dgGm_[tokenBase + last * 128], 1, 128, 128);
+#else
         Load(state, wsFp32_[stateBase], 128);
         Load(gradient, dgGm_[tokenBase + last * 128], 128);
+#endif
         AscendC::Add(gradient, gradient, state, 128);
         AscendC::PipeBarrier<PIPE_V>();
         Store(dgGm_[tokenBase + last * 128], gradient, 128);
@@ -1246,7 +1410,12 @@ private:
     AscendC::TQue<AscendC::TPosition::VECOUT, 1> outputQueue_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> arena_;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    AscendC::TBuf<AscendC::TPosition::VECCALC> matrixInputPing_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> matrixInputPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> dkStateBuffer_;
+    event_t matrixMte2ToVEvent_[2]{};
+    event_t matrixVToMte2Event_[2]{};
+    uint32_t currentMatrixInputSlot_ = 0;
 #endif
 };
 
