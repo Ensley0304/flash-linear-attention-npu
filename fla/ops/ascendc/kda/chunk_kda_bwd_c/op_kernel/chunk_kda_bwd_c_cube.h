@@ -464,6 +464,14 @@ public:
         const uint64_t taskGroupCount =
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
         uint32_t localGeneration = 0;
+
+        // Every direct MMAD call returns its L1/L0 event credits to the
+        // reusable state before it returns.  Initialize the complete event
+        // set once for the WY phase instead of draining and recreating it at
+        // every formula boundary of every owner.  The final drain still
+        // protects the following Intra phase, which reuses the same local
+        // storage and event ids with a different layout.
+        BeginSharedLeftMmadPhase();
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
@@ -479,7 +487,6 @@ public:
             const WyChunkTask task = GetWyChunkTask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-            BeginFusedMmadPhase();
 
             // S0: dq_raw is produced by Kernel A.  Publish the dependency
             // credit immediately; AIV applies exp2(gk) and scale while AIC
@@ -518,10 +525,6 @@ public:
                     64, V_DIM, V_DIM);
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS2Ready);
-
-            // FP32 S0-S2 complete.  Drain before entering BF16 S3a/S3b.
-            EndFusedMmadPhase();
-            BeginSharedLeftMmadPhase();
 
             // S3a: dW_raw/zV.  Keep the shared dW operand unnegated so S3b
             // and S5 can consume it immediately.  Their downstream Vector
@@ -573,10 +576,6 @@ public:
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS0Ready);
 
-            // BF16 S3a/S3b complete.  Start a clean FP32 phase for S5.
-            EndSharedLeftMmadPhase();
-            BeginFusedMmadPhase();
-
             // S5 produces dKgb_raw = A^T @ dW_raw.  The gradient/gate Vector
             // stage consumes it with a negative sign, avoiding a materialized
             // negated dW while preserving the original formulas.
@@ -596,9 +595,6 @@ public:
             // S6 consumes Zb, while the S5 AIV gradient path is independent.
             AscendC::CrossCoreWaitFlag(kZbReady);
 
-            EndFusedMmadPhase();
-            BeginFusedMmadPhase();
-
             // S6: Zb @ A^T -> Tza.  Keep Tza in the current slot; S7 is an
             // AIC consumer, so an AIC->GM->AIV->GM round trip is unnecessary.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
@@ -615,9 +611,6 @@ public:
                     slot + tiling_.zaOutputOffset,
                     validLen, validLen, validLen, 64, 64, 64);
             }
-            EndFusedMmadPhase();
-            BeginFusedMmadPhase();
-
             // S7: A^T @ Tza and final causal/sign postprocess for dAkk.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint32_t head = headBase + lane;
@@ -632,12 +625,10 @@ public:
                     slot + tiling_.zaInputOffset,
                     validLen, validLen, validLen, 64, 64, 64);
             }
-            EndFusedMmadPhase();
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
             AscendC::CrossCoreWaitFlag(kTaskDone);
-            // The final S7 drain prevents workspace reuse by the next task;
-            // the next iteration opens a fresh FP32 phase.
         }
+        EndSharedLeftMmadPhase();
         if ASCEND_IS_AIC {
             AscendC::SetMMLayoutTransform(false);
         }
