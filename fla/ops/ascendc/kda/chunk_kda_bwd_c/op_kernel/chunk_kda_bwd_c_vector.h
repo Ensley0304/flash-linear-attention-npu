@@ -158,6 +158,27 @@ static __simd_vf__ inline void KdaBwdCFinishDkDgA5(
         }
     }
 }
+
+static __simd_vf__ inline void KdaBwdCFinishDAA5(
+    __ubuf__ float *dst, __ubuf__ float *src,
+    uint16_t rows, uint16_t rowStart, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    RegTensor<float> value;
+    RegTensor<float> result;
+    RegTensor<float> zero;
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    Duplicate(zero, 0.0f, fullMask);
+    for (uint32_t row = 0; row < rows; ++row) {
+        const uint32_t validCols = rowStart + row;
+        uint32_t activeCount = validCols;
+        MaskReg lowerMask = UpdateMask<float>(activeCount);
+        LoadAlign(value, src + row * cols);
+        Muls(value, value, -1.0f, fullMask);
+        Select(result, value, zero, lowerMask);
+        StoreAlign(dst + row * cols, result, fullMask);
+    }
+}
 #endif
 
 template <typename DataT, uint32_t V_DIM, typename BetaT>
@@ -1058,6 +1079,12 @@ private:
             const uint32_t rows = row + kRows <= end ? kRows : end - row;
             auto value = Plane(0);
             Load(value, wsFp32_[raw + row * 64], rows * 64);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            KdaBwdCFinishDAA5(
+                reinterpret_cast<__ubuf__ float *>(value.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(value.GetPhyAddr()),
+                static_cast<uint16_t>(rows), static_cast<uint16_t>(row), 64);
+#else
             AscendC::Muls(value, value, -1.0f, rows * 64);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t r = 0; r < rows; ++r) {
@@ -1072,6 +1099,7 @@ private:
                 }
             }
             AscendC::PipeBarrier<PIPE_V>();
+#endif
             Store(dAkkGm_[out + row * 64], value, rows * 64);
         }
     }
