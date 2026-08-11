@@ -30,13 +30,6 @@ __aicore__ inline uint32_t WyCubeToVectorFlag(uint32_t headInWindow)
     return 4U + headInWindow;
 }
 
-// Per-generation free flags copied from the mature
-// prepare_wy_repr_bwd_full ping-pong workspace protocol.
-__aicore__ inline uint32_t WyWorkspaceFreeFlag(uint32_t generation)
-{
-    return 6U + (generation & 1U);
-}
-
 struct WyChunkTask {
     uint32_t sequence;
     uint32_t batchIdx;
@@ -148,10 +141,11 @@ __aicore__ inline uint64_t WyWorkspaceSlotBase(
     const ChunkKdaBwdCTilingData &tiling, uint32_t logicalCore,
     uint32_t generation, uint32_t headInWindow)
 {
-    (void)generation;
-    // The production path is task-serial and devotes one slot to every head
-    // in the current head window.  No diagnostic split-stage mapping exists.
-    const uint32_t slot = headInWindow;
+    // Two adjacent generations use disjoint two-head windows.  AIC is bounded
+    // to at most two outstanding generations by the task-done credit, so the
+    // same parity slot is never overwritten before AIV has released it.
+    const uint32_t slot = ((generation & 1U) * kWyFusedHeadsPerWindow) +
+                          headInWindow;
     return (static_cast<uint64_t>(logicalCore) * tiling.workspaceSlotCount + slot) *
            tiling.workspaceSlotSize;
 }

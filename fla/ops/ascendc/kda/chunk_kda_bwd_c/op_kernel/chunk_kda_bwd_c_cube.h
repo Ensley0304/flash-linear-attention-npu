@@ -465,11 +465,11 @@ public:
         constexpr uint32_t kS3aReady = 5;
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kTaskDone = 7;
-        // The fused path is task-serial: S7 waits for the final AIV writeback
-        // before the next task can enter S0.  Consequently the ping-pong slot
-        // is already free here and needs no second workspace-free protocol.
-        // Keeping a second reverse-counted protocol made a slot cross the
-        // 15-notification depth at long sequence lengths and deadlock.
+        // kTaskDone is a two-generation credit rather than a per-task fence.
+        // Generations g and g+1 occupy separate two-head workspace windows;
+        // before g+2 reuses g's window, AIC consumes g's completion credit.
+        // This bounds every counted notification stream and lets AIC start the
+        // next owner while AIV is finishing the previous owner's epilogue.
 
         const uint32_t coreIdx = AscendC::GetBlockIdx();
         const uint32_t coreNum = static_cast<uint32_t>(tiling_.usedCoreNum);
@@ -491,6 +491,9 @@ public:
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
+            if (localGeneration >= 2U) {
+                AscendC::CrossCoreWaitFlag(kTaskDone);
+            }
             const uint32_t taskIdx =
                 static_cast<uint32_t>(taskGroupIdx / headWindowCount);
             const uint32_t headWindow =
@@ -651,6 +654,11 @@ public:
                     validLen, validLen, validLen, 64, 64, 64);
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
+        }
+        // Drain the at-most-two generations that still own workspace before
+        // the following Intra phase reuses local resources and event ids.
+        const uint32_t outstanding = localGeneration < 2U ? localGeneration : 2U;
+        for (uint32_t i = 0; i < outstanding; ++i) {
             AscendC::CrossCoreWaitFlag(kTaskDone);
         }
         EndSharedLeftMmadPhase();
