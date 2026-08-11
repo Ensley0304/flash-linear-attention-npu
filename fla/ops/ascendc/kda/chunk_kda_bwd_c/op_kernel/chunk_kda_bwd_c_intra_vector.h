@@ -237,24 +237,15 @@ private:
                     CIntraWorkspaceSlot(windowIdx, headInWindow);
                 const uint32_t head = headBase + headInWindow;
                 if (rowStart == 0) {
-                    FinishHeadA5Dense16(
-                        task, head, rowStart, kProcessRowBlock,
-                        slot, 0);
-                    FinishHeadA5Dense16(
-                        task, head, rowStart, kProcessRowBlock,
-                        slot, 16);
+                    FinishHeadA5Dense32(
+                        task, head, rowStart, kProcessRowBlock, slot);
                 } else {
-                    auto carry = reduceTmp_.Get<float>();
+                    auto carry = reduceTmp_.Get<float>()[7 * kPlaneElements];
                     KdaRegbaseFill(
                         (__ubuf__ float *)carry.GetPhyAddr(),
                         0.0f, K_DIM);
-                    // Preserve the exact row-63 -> row-0 accumulation order.
-                    FinishHeadA5Dense16(
-                        task, head, rowStart, kProcessRowBlock,
-                        slot, 16);
-                    FinishHeadA5Dense16(
-                        task, head, rowStart, kProcessRowBlock,
-                        slot, 0);
+                    FinishHeadA5Dense32(
+                        task, head, rowStart, kProcessRowBlock, slot);
                     FinishPendingDgA5(task, head);
                 }
             }
@@ -1199,19 +1190,191 @@ private:
         const CIntraTask &task, uint32_t head)
     {
         auto pending = pendingDg_.Get<float>();
-        auto carry = reduceTmp_.Get<float>();
-        for (uint32_t segment = 2; segment > 0; --segment) {
-            const uint32_t ownedBegin = (segment - 1U) * 16U;
-            auto data = pending[ownedBegin * K_DIM];
+        auto carry = reduceTmp_.Get<float>()[7 * kPlaneElements];
+        KdaRegbaseReverseScanCarry(
+            (__ubuf__ float *)pending.GetPhyAddr(),
+            (__ubuf__ float *)carry.GetPhyAddr(), 32);
+        StoreRows(
+            dgOutGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, task.begin, 0)],
+            pending, 32, K_DIM, TensorRowElements());
+    }
+
+    __aicore__ inline void FinishHeadA5Dense32(
+        const CIntraTask &task, uint32_t head, uint32_t rowStart,
+        uint32_t validRows, uint32_t slot)
+    {
+        static_assert(K_DIM == 128,
+                      "The A5 32-row Vector-Post path is specialized for K=128.");
+        static_assert(!PUBLIC_VARLEN,
+                      "The A5 32-row Vector-Post path is dense-only.");
+        static_assert(kProcessRowBlock == 32,
+                      "The A5 32-row Vector-Post path requires row32 tiles.");
+
+        const uint32_t ownedRows = validRows;
+        const uint32_t tokenBegin = task.begin + rowStart;
+        const uint64_t slotBase = SlotBase(slot);
+
+        // Six 32x128 FP32 matrices exactly fill the 96-KiB arena.  The raw
+        // dq-base tile uses reduceTmp planes 0-3.  FinishScale consumes gate
+        // before writing the matching dq-final element, so dqFinal may alias
+        // gate and releases a complete 16-KiB tile from the live set.
+        auto rawDq = Plane(0);       // planes 0-3
+        auto rawDkLower = Plane(4);  // planes 4-7
+        auto rawDkUpper = Plane(8);  // planes 8-11
+        auto k = Plane(12);          // planes 12-15
+        auto gate = Plane(16);       // planes 16-19; becomes dqFinal/output
+        auto q = Plane(20);          // planes 20-23
+        auto reduce = reduceTmp_.Get<float>();
+        auto dqBaseRaw = reduce;                         // planes 0-3
+        auto anchor = reduce[4 * kPlaneElements];        // plane 4
+        auto beta = reduce[5 * kPlaneElements];          // plane 5
+        auto anchorExp = reduce[6 * kPlaneElements];     // plane 6
+        auto dbAcc = beta[128];
+
+        KdaRegbaseFill(
+            (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
+
+        const uint32_t anchorLocal =
+            rowStart + 8 < task.end - task.begin ?
+                rowStart + 8 : task.end - task.begin - 1;
+        const uint32_t anchorRow = task.begin + anchorLocal;
+        LoadScalarRows(
+            beta,
+            betaGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
+
+        constexpr uint32_t cols = 128;
+        const uint32_t count = ownedRows * cols;
+        LoadMatrixRowsPair(
+            anchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, anchorRow, 0)],
+            1, cols, TensorRowElements(),
+            dqBaseRaw,
+            dqBaseRawGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        const uint64_t resultBase =
+            slotBase / sizeof(float) +
+            tiling_.intraResultRegionOffset / sizeof(float);
+        LoadMatrixRowsPair(
+            q,
+            qGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements(),
+            k,
+            kGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        LoadMatrixRowsPair(
+            gate,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements(),
+            rawDq,
+            workspaceGm_[
+                resultBase + tiling_.intraResultDqOffset / sizeof(float)],
+            ownedRows, cols, K_DIM);
+        LoadMatrixRowsPair(
+            rawDkLower,
+            workspaceGm_[
+                resultBase +
+                tiling_.intraResultDkLowerOffset / sizeof(float)],
+            ownedRows, cols, K_DIM,
+            rawDkUpper,
+            workspaceGm_[
+                resultBase +
+                tiling_.intraResultDkUpperOffset / sizeof(float)],
+            ownedRows, cols, K_DIM);
+
+        KdaRegbaseExp2(
+            (__ubuf__ float *)anchorExp.GetPhyAddr(),
+            (__ubuf__ float *)anchor.GetPhyAddr(), cols);
+        KdaRegbaseFinishScale<true>(
+            (__ubuf__ float *)rawDq.GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+            (__ubuf__ float *)k.GetPhyAddr(),
+            (__ubuf__ float *)gate.GetPhyAddr(),
+            (__ubuf__ float *)anchor.GetPhyAddr(),
+            (__ubuf__ float *)beta.GetPhyAddr(),
+            (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+            (__ubuf__ float *)anchorExp.GetPhyAddr(),
+            (__ubuf__ float *)gate.GetPhyAddr(), tiling_.scale,
+            ownedRows, cols);
+
+        const uint32_t dkSlot = CopyInMatrixRows(
+            dkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        const uint32_t dgSlot = CopyInMatrixRows(
+            dgGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        StoreRows(
+            dqOutGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            gate, ownedRows, cols, TensorRowElements());
+
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[dkSlot]);
+        KdaRegbaseAdd3(
+            (__ubuf__ float *)gate.GetPhyAddr(),
+            (__ubuf__ float *)MatrixInput<float>(dkSlot).GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(), count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dkSlot]);
+        StoreRows(
+            dkOutGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            gate, ownedRows, cols, TensorRowElements());
+
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[dgSlot]);
+        KdaRegbaseDg(
+            (__ubuf__ float *)gate.GetPhyAddr(),
+            (__ubuf__ float *)MatrixInput<float>(dgSlot).GetPhyAddr(),
+            (__ubuf__ float *)q.GetPhyAddr(),
+            (__ubuf__ float *)rawDq.GetPhyAddr(),
+            (__ubuf__ float *)k.GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(), count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dgSlot]);
+        if (rowStart == 0) {
+            auto pending = pendingDg_.Get<float>();
+            KdaRegbaseCopy(
+                (__ubuf__ float *)pending.GetPhyAddr(),
+                (__ubuf__ float *)gate.GetPhyAddr(),
+                static_cast<uint16_t>(count));
+        } else {
+            auto carry = reduce[7 * kPlaneElements];
             KdaRegbaseReverseScanCarry(
-                (__ubuf__ float *)data.GetPhyAddr(),
-                (__ubuf__ float *)carry.GetPhyAddr(), 16);
+                (__ubuf__ float *)gate.GetPhyAddr(),
+                (__ubuf__ float *)carry.GetPhyAddr(), ownedRows);
             StoreRows(
                 dgOutGm_[CIntraTensorOffset(
-                    tiling_, task.batchIdx, head,
-                    task.begin + ownedBegin, 0)],
-                data, 16, K_DIM, TensorRowElements());
+                    tiling_, task.batchIdx, head, tokenBegin, 0)],
+                gate, ownedRows, cols, TensorRowElements());
         }
+
+        LoadScalarRows(
+            beta,
+            dbGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
+        KdaRegbaseAdd2(
+            (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            (__ubuf__ float *)dbAcc.GetPhyAddr(),
+            (__ubuf__ float *)beta.GetPhyAddr(), ownedRows);
+        StoreScalarRows(
+            dbOutGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            dbAcc, ownedRows);
     }
 
     __aicore__ inline void FinishHeadA5Dense16(
