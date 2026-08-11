@@ -150,28 +150,39 @@ private:
     static constexpr uint32_t kProcessRowBlock =
         ProcessRowBlock<K_DIM, PUBLIC_VARLEN>::value;
     static constexpr uint32_t kPlaneElements = 8 * 128;
-    // Each AIV owns half of K in PackLowerB.  For the target K=128 path,
-    // 16 FP32 rows x 64 columns exactly fill one 4 KiB arena plane.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    // A5's larger UB lets each B-pack consume 32 rows per MTE2/Vector/MTE3
+    // batch.  The 16-KiB upper operand and 8-KiB lower operand remain aligned
+    // full-row transfers; A2/A3 retain the mature 16-row/8-KiB schedule.
+    static constexpr uint32_t kLowerPackRows = K_DIM == 128 ? 32 : 8;
+    static constexpr uint32_t kUpperPackRows = K_DIM == 128 ? 32 : 8;
+    static constexpr uint32_t kIoBufferBytes = 16 * 1024;
+    static constexpr uint32_t kUbBudgetBytes = 248 * 1024;
+#else
     static constexpr uint32_t kLowerPackRows = K_DIM == 128 ? 16 : 8;
-    // PackUpperB owns all 128 columns.  Its K=128 hot path uses two
-    // consecutive 4 KiB arena planes and one 8 KiB IO tile per operand.
     static constexpr uint32_t kUpperPackRows = K_DIM == 128 ? 16 : 8;
-    static constexpr uint32_t kUpperMatrixPlanes = 2;
     static constexpr uint32_t kIoBufferBytes = 8 * 1024;
+    static constexpr uint32_t kUbBudgetBytes = 192 * 1024;
+#endif
+    static constexpr uint32_t kLowerMatrixPlanes =
+        (kLowerPackRows * (K_DIM / 2) + kPlaneElements - 1) /
+        kPlaneElements;
+    static constexpr uint32_t kUpperMatrixPlanes =
+        (kUpperPackRows * 128 + kPlaneElements - 1) / kPlaneElements;
     static constexpr uint32_t kArenaBytes = 96 * 1024;
     static constexpr uint32_t kReduceTmpBytes = 32 * 1024;
-    static constexpr uint32_t kUbBudgetBytes = 192 * 1024;
     static constexpr uint32_t kFp32BlockElements = 32 / sizeof(float);
     static constexpr uint32_t kMatrixInputBufferCount = 2;
     static_assert(
         6 * kIoBufferBytes + kArenaBytes + kReduceTmpBytes <= kUbBudgetBytes,
-        "Vector UB buffers exceed the A2/A3 192 KiB budget.");
+        "Vector UB buffers exceed the architecture-specific budget.");
     static_assert(kProcessRowBlock * CHUNK_SIZE <= 2 * kPlaneElements,
                   "Packed A-matrix tile exceeds its two-plane arena group.");
     static_assert(kProcessRowBlock * CHUNK_SIZE * sizeof(float) <= kIoBufferBytes,
                   "Packed A-matrix FP32 tile exceeds the IO queue buffer.");
-    static_assert(kLowerPackRows * (K_DIM / 2) <= kPlaneElements,
-                  "PackLowerB row tile exceeds one arena plane.");
+    static_assert(kLowerPackRows * (K_DIM / 2) <=
+                      kLowerMatrixPlanes * kPlaneElements,
+                  "PackLowerB row tile exceeds its arena plane group.");
     static_assert(kLowerPackRows * (K_DIM / 2) * sizeof(float) <= kIoBufferBytes,
                   "PackLowerB FP32 row tile exceeds the IO queue buffer.");
     static_assert(kUpperPackRows * 128 <= kUpperMatrixPlanes * kPlaneElements,
@@ -786,9 +797,9 @@ private:
         uint32_t prefix, uint32_t subBlock, uint64_t slotBase)
     {
         auto data = Plane(0);
-        auto gate = Plane(1);
-        auto anchor = Plane(2);
-        auto exponent = Plane(3);
+        auto gate = Plane(kLowerMatrixPlanes);
+        auto anchor = Plane(2 * kLowerMatrixPlanes);
+        auto exponent = Plane(3 * kLowerMatrixPlanes);
         const uint32_t cols = K_DIM / 2;
         const uint32_t col = subBlock * cols;
         const uint32_t anchorRow =
@@ -857,15 +868,15 @@ private:
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t future,
         uint32_t subBlock, uint64_t slotBase)
     {
-        // data/gate/anchor/exponent may each contain 16 x 128 FP32 values.
-        // Give every matrix two adjacent 4 KiB planes; beta temporaries start
-        // after those non-overlapping 8 KiB regions.
+        // data/gate/anchor/exponent each own one complete pack batch.  Compute
+        // the plane stride from kUpperPackRows so the A5 32-row matrices and
+        // the A2/A3 16-row matrices use the same code without overlap.
         auto data = Plane(0);
-        auto gate = Plane(2);
-        auto anchor = Plane(4);
-        auto exponent = Plane(6);
-        auto beta = Plane(8);
-        auto betaBroadcast = Plane(9);
+        auto gate = Plane(kUpperMatrixPlanes);
+        auto anchor = Plane(2 * kUpperMatrixPlanes);
+        auto exponent = Plane(3 * kUpperMatrixPlanes);
+        auto beta = Plane(4 * kUpperMatrixPlanes);
+        auto betaBroadcast = Plane(4 * kUpperMatrixPlanes + 1);
         const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
                                      rowStart + 8 : task.end - task.begin - 1;
         const uint32_t anchorRow = task.begin + anchorLocal;
