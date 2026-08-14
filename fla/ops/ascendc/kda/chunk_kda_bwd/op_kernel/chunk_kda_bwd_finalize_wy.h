@@ -1438,6 +1438,27 @@ private:
             const uint32_t headCount =
                 headBase + kWyFusedHeadsPerWindow <= headNum ?
                 kWyFusedHeadsPerWindow : headNum - headBase;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // A5 has two AIV sub-blocks and the steady-state window owns two
+            // heads.  Give one complete head to each AIV instead of making
+            // both AIVs split every head and then serially visit the second
+            // head.  Each AIV still processes 64 rows in total, so the UB
+            // footprint is unchanged.  A one-head tail keeps the proven
+            // half-row split so both AIVs remain useful.
+            const bool headParallel =
+                headCount == kWyFusedHeadsPerWindow &&
+                subBlockNum == kWyFusedHeadsPerWindow;
+#else
+            const bool headParallel = false;
+#endif
+            const uint32_t rowSubBlockIdx =
+                headParallel ? 0U : subBlockIdx;
+            const uint32_t rowSubBlockNum =
+                headParallel ? 1U : subBlockNum;
+            const uint32_t rowLaneBegin =
+                headParallel ? subBlockIdx : 0U;
+            const uint32_t rowLaneEnd =
+                headParallel ? subBlockIdx + 1U : headCount;
             const WyChunkTask task = GetWyChunkTask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
@@ -1453,20 +1474,20 @@ private:
                 AscendC::CrossCoreWaitFlag(kS0Ready);
             }
 #endif
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 if (tiling_.isVarLen == 0) {
                     BuildKE<false>(task, headBase + lane, validLen, slot,
-                                   subBlockIdx, subBlockNum);
+                                   rowSubBlockIdx, rowSubBlockNum);
                 } else {
                     BuildKE<true>(task, headBase + lane, validLen, slot,
-                                  subBlockIdx, subBlockNum);
+                                  rowSubBlockIdx, rowSubBlockNum);
                 }
 #else
                 BuildKE<false>(task, headBase + lane, validLen, slot,
-                               subBlockIdx, subBlockNum);
+                               rowSubBlockIdx, rowSubBlockNum);
 #endif
             }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -1482,27 +1503,29 @@ private:
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishBaseStage(task, headBase + lane, validLen, slot,
-                                subBlockIdx, subBlockNum, 0);
+                                subBlockIdx, subBlockNum, lane, 0);
             }
 #endif
             // S1: consume dk_raw and finish dk_state.
             AscendC::CrossCoreWaitFlag(kS1Ready);
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
+                const uint32_t stateLane = headParallel ? 0U : lane;
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishBaseStage(task, headBase + lane, validLen, slot,
-                                subBlockIdx, subBlockNum, 1);
+                                rowSubBlockIdx, rowSubBlockNum, stateLane, 1);
             }
             // S2 is ready, but dv_scan is also the final dv storage in the
             // fused contract.  Do not overwrite it until S3a has completed
             // every final read of the original dv_scan values.
             AscendC::CrossCoreWaitFlag(kS2Ready);
             AscendC::CrossCoreWaitFlag(kS3aReady);
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
+                const uint32_t stateLane = headParallel ? 0U : lane;
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishBaseStage(task, headBase + lane, validLen, slot,
-                                subBlockIdx, subBlockNum, 2);
+                                rowSubBlockIdx, rowSubBlockNum, stateLane, 2);
             }
 
             // The S1 state partials are now complete on both AIV sub-blocks.
@@ -1515,16 +1538,16 @@ private:
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 PrepareStateGate(
-                    task, headBase + lane, validLen, slot, subBlockNum);
+                    task, headBase + lane, validLen, slot, rowSubBlockNum);
             }
 
             // S3b: consume zW and form the saved BF16 Zb tile.
             AscendC::CrossCoreWaitFlag(kS0Ready);
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 BuildZbStage(task, headBase + lane, validLen, slot,
-                             subBlockIdx, subBlockNum);
+                             rowSubBlockIdx, rowSubBlockNum);
             }
             SignalVectorDependency(kZbReady);
 
@@ -1532,14 +1555,15 @@ private:
             // Only the lightweight final state add remains on the S5 path;
             // its h*dh reduction was overlapped with AIC above.
             AscendC::CrossCoreWaitFlag(kS1Ready);
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 uint32_t begin = 0;
                 uint32_t end = 0;
-                NormalRows(validLen, subBlockIdx, subBlockNum, begin, end);
+                NormalRows(validLen, rowSubBlockIdx, rowSubBlockNum, begin, end);
+                const uint32_t stateLane = headParallel ? 0U : lane;
                 FinishGradientRows(task, headBase + lane, validLen,
-                                   slot, begin, end);
+                                   slot, begin, end, stateLane);
             }
             Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
             for (uint32_t lane = subBlockIdx;
@@ -1551,11 +1575,11 @@ private:
             }
             // S7: final dAkk mask/sign/writeback.
             AscendC::CrossCoreWaitFlag(kS3aReady);
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
+            for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishDA(task, headBase + lane, validLen, slot,
-                         subBlockIdx, subBlockNum);
+                         rowSubBlockIdx, rowSubBlockNum);
             }
             SignalVectorDependency(kTaskDone);
 
@@ -1597,11 +1621,10 @@ private:
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     __aicore__ inline AscendC::LocalTensor<float> DkStateTile(
-        uint32_t head, uint32_t ownedRow)
+        uint32_t storageLane, uint32_t ownedRow)
     {
-        const uint32_t lane = head % kWyFusedHeadsPerWindow;
         const uint32_t offset =
-            (lane * kDkStateRowsPerHead + ownedRow) * kWyKeyDim;
+            (storageLane * kDkStateRowsPerHead + ownedRow) * kWyKeyDim;
         return dkStateBuffer_.Get<float>()[offset];
     }
 #endif
@@ -1951,7 +1974,8 @@ private:
 
     __aicore__ inline void FinishBaseStage(
         const WyChunkTask &task, uint32_t head, uint32_t validLen, uint64_t slot,
-        uint32_t subBlockIdx, uint32_t subBlockNum, uint32_t stage)
+        uint32_t subBlockIdx, uint32_t subBlockNum, uint32_t stateLane,
+        uint32_t stage)
     {
         uint32_t begin = 0;
         uint32_t end = 0;
@@ -1998,7 +2022,7 @@ private:
             auto x = Plane(0);
             auto y = Plane(1);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            auto z = stage == 1 ? DkStateTile(head, row - begin) : Plane(2);
+            auto z = stage == 1 ? DkStateTile(stateLane, row - begin) : Plane(2);
 #else
             auto z = Plane(2);
 #endif
@@ -2112,7 +2136,7 @@ private:
 
     __aicore__ inline void FinishGradientRows(
         const WyChunkTask &task, uint32_t head, uint32_t validLen, uint64_t slot,
-        uint32_t begin, uint32_t end)
+        uint32_t begin, uint32_t end, uint32_t stateLane)
     {
         const uint64_t tokenBase = WyTokenOffset(tiling_, task.batchIdx, head, task.begin, 128);
         const uint64_t scalarBase = WyTokenOffset(
@@ -2138,7 +2162,7 @@ private:
             auto e = Plane(2);
             auto tmp = Plane(3);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            auto acc = DkStateTile(head, row - begin);
+            auto acc = DkStateTile(stateLane, row - begin);
 #else
             auto acc = Plane(4);
 #endif
