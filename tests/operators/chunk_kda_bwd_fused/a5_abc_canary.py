@@ -1,4 +1,4 @@
-"""Dense precision/performance canary for the public three-kernel wrapper."""
+"""Precision/performance canary for the single-launch A/B/C backward op."""
 
 from __future__ import annotations
 
@@ -278,7 +278,7 @@ def run(args):
     print("ABC_PERF", {"shape": [bsz, heads, seqlen, key_dim, value_dim],
           "median_ms": statistics.median(samples), "min_ms": min(samples),
           "max_ms": max(samples), "workspace_bytes": workspace.numel(),
-          "varlen": args.varlen},
+          "varlen": args.varlen, "samples_ms": samples},
           flush=True)
     runtime.destroy(*descriptors.values())
     if cu_handle is not None:
