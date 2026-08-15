@@ -30,15 +30,23 @@ __aicore__ inline void RunChunkKdaBwd(
         tiling.kernelC.chunkNumPerBatch,
         tiling.kernelC.isVarLen,
         tiling.kernelC.usedCoreNum};
-    // Phase A keeps its original (chunk, value-head) owner.  The unified
-    // entry is MIX for phases B/C, so AIV sub-blocks wait at the phase fence.
+    // Phase A is a true MIX stage on A5: AIC publishes raw dAqk into four
+    // per-core slots and the paired AIVs finish scale+tril into final dAqk.
+    bool aActive = false;
     if ASCEND_IS_AIC {
-        if (AscendC::GetBlockIdx() <
-            static_cast<uint32_t>(aTiling.usedCoreNum)) {
-            RunChunkKdaBwdA<DataT, V_DIM>(
-                aqk, vNew, h, dO, cuSeqlens, chunkIndices,
-                dv0, dqRaw, dAqk, aTiling);
-        }
+        aActive = AscendC::GetBlockIdx() <
+            static_cast<uint32_t>(aTiling.usedCoreNum);
+    }
+    if ASCEND_IS_AIV {
+        aActive = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum() <
+            static_cast<uint32_t>(aTiling.usedCoreNum);
+    }
+    if (aActive) {
+        RunChunkKdaBwdA<DataT, V_DIM>(
+            aqk, vNew, h, dO, cuSeqlens, chunkIndices,
+            dv0, dqRaw, dAqk,
+            userWorkspace + tiling.kernelCWorkspaceOffset,
+            aTiling, tiling.kernelC);
     }
     AscendC::SyncAll<false>();
 

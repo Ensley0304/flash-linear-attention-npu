@@ -1348,11 +1348,24 @@ private:
                 CIntraMatrixOffset(
                     tiling_, task.batchIdx, head, task.begin + rowStart);
             LoadRows(work, source[srcOffset], validRows, prefix, MatrixRowElements());
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (subBlock == 0 && validRows == kProcessRowBlock) {
+                const uint64_t dstOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraALowerOffset / sizeof(float) +
+                    static_cast<uint64_t>(rowBase) * lowerK;
+                StoreRows(
+                    workspaceGm_[dstOffset], work,
+                    kProcessRowBlock, prefix, lowerK);
+                return;
+            }
+#else
             if (subBlock == 0) {
                 AscendC::Muls(
                     work, work, tiling_.scale, validRows * prefix);
                 AscendC::PipeBarrier<PIPE_V>();
             }
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseMaskLowerA(
                 (__ubuf__ float *)masked.GetPhyAddr(),
@@ -1388,8 +1401,15 @@ private:
                     CIntraMatrixOffset(
                         tiling_, task.batchIdx, head, task.begin + rowStart + row);
                 Load(work, source[srcOffset], validCols);
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
                 AscendC::Muls(work, work, inputScale, validCols);
                 AscendC::PipeBarrier<PIPE_V>();
+#else
+                if (subBlock != 0) {
+                    AscendC::Muls(work, work, inputScale, validCols);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
+#endif
             }
             const uint64_t dstOffset =
                 slotBase / sizeof(float) + tiling_.intraALowerOffset / sizeof(float) +
@@ -1416,11 +1436,13 @@ private:
         LoadRows(
             work, source[srcOffset], future, kProcessRowBlock,
             MatrixRowElements());
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
         if (subBlock == 0) {
             AscendC::Muls(
                 work, work, tiling_.scale, future * kProcessRowBlock);
             AscendC::PipeBarrier<PIPE_V>();
         }
+#endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseMaskUpperA(
