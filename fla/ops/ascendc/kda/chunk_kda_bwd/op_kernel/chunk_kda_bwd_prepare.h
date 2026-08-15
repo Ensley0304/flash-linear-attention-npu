@@ -217,7 +217,10 @@ private:
     static constexpr int32_t EVENT_SCRATCH1 = 2;
     static constexpr int32_t EVENT_L0A = 0;
     static constexpr int32_t EVENT_L0B = 1;
+    static constexpr int32_t EVENT_L0A1 = 2;
+    static constexpr int32_t EVENT_L0B1 = 3;
     static constexpr int32_t EVENT_L0_READY = 0;
+    static constexpr int32_t EVENT_L0_READY1 = 1;
     static constexpr int32_t EVENT_L0C = 0;
     static constexpr int32_t EVENT_L0C1 = 1;
 
@@ -246,6 +249,10 @@ public:
 #endif
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A1);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B1);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
@@ -375,6 +382,10 @@ public:
 #endif
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A1);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B1);
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
@@ -882,16 +893,21 @@ private:
             ownerBase + OWNER_H_OFFSET);
         auto l1B1 = resource.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_V_OFFSET);
-        auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
-        auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
         auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
         constexpr uint32_t kPackedN = KDA_BWD_A_K + KDA_BWD_A_C;
+        constexpr uint32_t kL0ATileBytes =
+            KDA_BWD_A_C * 64 * sizeof(T);
+        constexpr uint32_t kL0BTileBytes =
+            64 * kPackedN * sizeof(T);
         static_assert(
             KDA_BWD_A_C * kPackedN * sizeof(float) <= ArchTag::L0C_SIZE,
             "Kernel A packed N=192 FP32 L0C exceeds capacity.");
         static_assert(
-            64 * kPackedN * sizeof(T) <= ArchTag::L0B_SIZE,
-            "Kernel A packed N=192 L0B exceeds capacity.");
+            2 * kL0ATileBytes <= ArchTag::L0A_SIZE,
+            "Kernel A packed GEMM L0A ping-pong exceeds capacity.");
+        static_assert(
+            2 * kL0BTileBytes <= ArchTag::L0B_SIZE,
+            "Kernel A packed GEMM L0B ping-pong exceeds capacity.");
 
         auto l1B0Tensor = tla::MakeTensor(
             l1B0, tla::MakeLayout<T, typename DqCopy::LayoutTagL1B>(
@@ -926,6 +942,17 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
         for (uint32_t k0 = 0; k0 < V_DIM; k0 += 64) {
             const bool lastK = k0 + 64 >= V_DIM;
+            const uint32_t l0Slot = (k0 / 64) & 1U;
+            const int32_t l0AEvent =
+                l0Slot == 0 ? EVENT_L0A : EVENT_L0A1;
+            const int32_t l0BEvent =
+                l0Slot == 0 ? EVENT_L0B : EVENT_L0B1;
+            const int32_t l0ReadyEvent =
+                l0Slot == 0 ? EVENT_L0_READY : EVENT_L0_READY1;
+            auto l0A = resource.l0ABuf.template GetBufferByByte<T>(
+                l0Slot * kL0ATileBytes);
+            auto l0B = resource.l0BBuf.template GetBufferByByte<T>(
+                l0Slot * kL0BTileBytes);
             auto l0ATensor = tla::MakeTensor(
                 l0A, tla::MakeLayout<T, typename DqCopy::LayoutTagL0A>(m, 64),
                 Catlass::Arch::PositionL0A{});
@@ -951,17 +978,17 @@ private:
                 l0BTensor, tla::MakeCoord(0, 0),
                 tla::MakeShape(64, packedN));
 
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
             copyA(l0ATensor, tileA);
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
             copyB(tileL0B0, tileB0);
             copyB(tileL0B1, tileB1);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
             mm(tileL0C, l0ATensor, tileL0B, k0 == 0,
                lastK ? 0b11 : 0b10);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
 
