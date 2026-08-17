@@ -58,6 +58,11 @@ public:
         this->Attr("safe_gate").AttrType(REQUIRED).Bool(true);
         this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(false);
         this->Attr("lower_bound").AttrType(OPTIONAL).Float(-5.0f);
+        // Reserved CUDA-compatible controls. The current fused implementation
+        // consumes forward-saved intermediates and keeps the exp2 path, so only
+        // true/true is accepted until the alternative kernels are implemented.
+        this->Attr("disable_recompute").AttrType(OPTIONAL).Bool(true);
+        this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

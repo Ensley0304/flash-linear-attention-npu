@@ -19,7 +19,7 @@ def configure(runtime):
     query.argtypes = (
         [ctypes.c_void_p] * 20
         + [ctypes.c_double, ctypes.c_int64, ctypes.c_bool,
-           ctypes.c_bool, ctypes.c_double]
+           ctypes.c_bool, ctypes.c_double, ctypes.c_bool, ctypes.c_bool]
         + [ctypes.c_void_p] * 8
         + [ctypes.POINTER(ctypes.c_uint64),
            ctypes.POINTER(ctypes.c_void_p)]
@@ -208,7 +208,7 @@ def run(args):
         handle(aqk), handle(akk), handle(w), handle(qg), handle(kg),
         handle(vnew), handle(h), handle(do),
         None, None, None, None, None, cu_handle, chunk_handle,
-        args.scale, chunk, True, False, args.lower_bound,
+        args.scale, chunk, True, False, args.lower_bound, True, True,
         handle(dq), handle(dk), handle(dv), handle(db), handle(dg),
         None, None, None,
     ]

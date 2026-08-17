@@ -45,6 +45,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclIntArray *chunkIndicesOptional,
     double scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, double lowerBound,
+    bool disableRecompute, bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut,
     const aclTensor *dvOut, const aclTensor *dbOut,
     const aclTensor *dgOut, const aclTensor *dh0OutOptional,
@@ -57,7 +58,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                rawGOptional, aLogOptional, dtBiasOptional,
                initialStateOptional, dhtOptional, cuSeqlensOptional,
                chunkIndicesOptional, scale, chunkSize, safeGate,
-               useGateInKernel, lowerBound),
+               useGateInKernel, lowerBound, disableRecompute, useExp2),
         DFX_OUT(dqOut, dkOut, dvOut, dbOut, dgOut, dh0OutOptional,
                 dAOutOptional, dBiasOutOptional));
 
@@ -73,6 +74,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     }
     CHECK_COND(chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
                "ChunkKdaBwd requires chunk_size=64.");
+    CHECK_COND(disableRecompute, ACLNN_ERR_PARAM_INVALID,
+               "disable_recompute=false is reserved but not supported.");
+    CHECK_COND(useExp2, ACLNN_ERR_PARAM_INVALID,
+               "use_exp2=false is reserved but not supported.");
     CHECK_COND((cuSeqlensOptional == nullptr) ==
                    (chunkIndicesOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID,
@@ -127,7 +132,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         q, k, v, beta, gk, aqk, akk, w, qg, kg, vNew, h, dO,
         rawGOptional, aLogOptional, dtBiasOptional, cuTensor, chunkTensor,
         static_cast<float>(scale), chunkSize, safeGate, useGateInKernel,
-        static_cast<float>(lowerBound), dqOut, dkOut, dvOut, dbOut, dgOut,
+        static_cast<float>(lowerBound), disableRecompute, useExp2,
+        dqOut, dkOut, dvOut, dbOut, dgOut,
         dAForKernel, dBiasForKernel, executorPtr);
     for (size_t i = 0; i < 5; ++i) {
         CHECK_RET(result[i] != nullptr, ACLNN_ERR_INNER_NULLPTR);

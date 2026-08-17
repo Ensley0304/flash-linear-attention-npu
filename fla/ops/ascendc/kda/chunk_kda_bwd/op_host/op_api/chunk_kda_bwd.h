@@ -20,6 +20,7 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     const aclTensor *chunkIndicesOptional,
     float scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, float lowerBound,
+    bool disableRecompute, bool useExp2,
     const aclTensor *dq,
     const aclTensor *dk, const aclTensor *dv,
     const aclTensor *db, const aclTensor *dg,

@@ -49,6 +49,8 @@ enum AttrIndex : size_t {
     ATTR_SAFE_GATE,
     ATTR_USE_GATE,
     ATTR_LOWER_BOUND,
+    ATTR_DISABLE_RECOMPUTE,
+    ATTR_USE_EXP2,
 };
 
 uint64_t AlignUp(uint64_t value, uint64_t align)
@@ -192,11 +194,24 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     const auto *safeGate = attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE);
     const auto *useGate = attrs->GetAttrPointer<bool>(ATTR_USE_GATE);
     const auto *lowerBound = attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND);
+    const auto *disableRecompute =
+        attrs->GetAttrPointer<bool>(ATTR_DISABLE_RECOMPUTE);
+    const auto *useExp2 = attrs->GetAttrPointer<bool>(ATTR_USE_EXP2);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
     OP_CHECK_NULL_WITH_CONTEXT(context, useGate);
     OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
+    OP_CHECK_NULL_WITH_CONTEXT(context, disableRecompute);
+    OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
+    OP_CHECK_IF(!*disableRecompute,
+                OP_LOGE(context->GetNodeName(),
+                        "disable_recompute=false is reserved but not supported"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!*useExp2,
+                OP_LOGE(context->GetNodeName(),
+                        "use_exp2=false is reserved but not supported"),
+                return ge::GRAPH_FAILED);
 
     const uint32_t blockDim =
         std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);

@@ -20,6 +20,7 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     const aclTensor *chunkIndicesOptional,
     float scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, float lowerBound,
+    bool disableRecompute, bool useExp2,
     const aclTensor *dq,
     const aclTensor *dk, const aclTensor *dv,
     const aclTensor *db, const aclTensor *dg,
@@ -29,7 +30,8 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     L0_DFX(KdaChunkBackward, q, k, v, beta, gk, aqk, akk, w, qg, kg,
            vNew, h, dO, rawGOptional, aLogOptional, dtBiasOptional,
            cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize,
-           safeGate, useGateInKernel, lowerBound, dq, dk, dv, db, dg,
+           safeGate, useGateInKernel, lowerBound, disableRecompute, useExp2,
+           dq, dk, dv, db, dg,
            dAOptional, dBiasOptional);
 
     const auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
@@ -38,7 +40,8 @@ ChunkKdaBwdOutputs KdaChunkBackward(
                  rawGOptional, aLogOptional, dtBiasOptional,
                  cuSeqlensOptional, chunkIndicesOptional),
         OP_OUTPUT(dq, dk, dv, db, dg, dAOptional, dBiasOptional),
-        OP_ATTR(scale, chunkSize, safeGate, useGateInKernel, lowerBound));
+        OP_ATTR(scale, chunkSize, safeGate, useGateInKernel, lowerBound,
+                disableRecompute, useExp2));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
