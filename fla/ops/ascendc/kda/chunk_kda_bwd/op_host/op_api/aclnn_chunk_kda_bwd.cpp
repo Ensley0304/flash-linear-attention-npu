@@ -36,8 +36,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
     const aclTensor *beta, const aclTensor *gk,
     const aclTensor *aqk, const aclTensor *akk,
-    const aclTensor *w, const aclTensor *qg, const aclTensor *kg,
-    const aclTensor *vNew, const aclTensor *h, const aclTensor *dO,
+    const aclTensor *wOptional, const aclTensor *qgOptional,
+    const aclTensor *kgOptional, const aclTensor *vNewOptional,
+    const aclTensor *hOptional, const aclTensor *dO,
     const aclTensor *rawGOptional, const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional, const aclTensor *initialStateOptional,
     const aclTensor *dhtOptional,
@@ -45,7 +46,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclIntArray *chunkIndicesOptional,
     double scale, int64_t chunkSize, bool safeGate,
     bool useGateInKernel, double lowerBound,
-    bool disableRecompute, bool useExp2,
+    bool disableRecompute, bool useExp2, bool stateVFirst,
     const aclTensor *dqOut, const aclTensor *dkOut,
     const aclTensor *dvOut, const aclTensor *dbOut,
     const aclTensor *dgOut, const aclTensor *dh0OutOptional,
@@ -54,11 +55,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
 {
     L2_DFX_PHASE_1(
         aclnnChunkKdaBwd,
-        DFX_IN(q, k, v, beta, gk, aqk, akk, w, qg, kg, vNew, h, dO,
+        DFX_IN(q, k, v, beta, gk, aqk, akk, wOptional, qgOptional,
+               kgOptional, vNewOptional, hOptional, dO,
                rawGOptional, aLogOptional, dtBiasOptional,
                initialStateOptional, dhtOptional, cuSeqlensOptional,
                chunkIndicesOptional, scale, chunkSize, safeGate,
-               useGateInKernel, lowerBound, disableRecompute, useExp2),
+               useGateInKernel, lowerBound, disableRecompute, useExp2,
+               stateVFirst),
         DFX_OUT(dqOut, dkOut, dvOut, dbOut, dgOut, dh0OutOptional,
                 dAOutOptional, dBiasOutOptional));
 
@@ -66,7 +69,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize and executor must not be nullptr.");
     const aclTensor *required[] = {
-        q, k, v, beta, gk, aqk, akk, w, qg, kg, vNew, h, dO,
+        q, k, v, beta, gk, aqk, akk, dO,
         dqOut, dkOut, dvOut, dbOut, dgOut};
     for (const aclTensor *tensor : required) {
         CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
@@ -78,6 +81,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                "disable_recompute=false is reserved but not supported.");
     CHECK_COND(useExp2, ACLNN_ERR_PARAM_INVALID,
                "use_exp2=false is reserved but not supported.");
+    CHECK_COND(!stateVFirst, ACLNN_ERR_PARAM_INVALID,
+               "state_v_first=true is reserved but not supported.");
+    CHECK_COND(!useGateInKernel, ACLNN_ERR_PARAM_INVALID,
+               "use_gate_in_kernel=true is reserved but not supported yet: "
+               "the single-launch raw-gate reverse scan is not precision-closed.");
+    CHECK_COND(wOptional != nullptr && qgOptional != nullptr &&
+                   kgOptional != nullptr && vNewOptional != nullptr &&
+                   hOptional != nullptr,
+               ACLNN_ERR_PARAM_NULLPTR,
+               "w, qg, kg, v_new and h are required when disable_recompute=true.");
     CHECK_COND((cuSeqlensOptional == nullptr) ==
                    (chunkIndicesOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID,
@@ -93,12 +106,23 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                     dAOutOptional != nullptr),
                ACLNN_ERR_PARAM_INVALID,
                "raw_g, a_log and dA are required for raw-gate backward.");
-    CHECK_COND(dtBiasOptional == nullptr || dBiasOutOptional != nullptr,
+    CHECK_COND(useGateInKernel ||
+                   (rawGOptional == nullptr && aLogOptional == nullptr &&
+                    dtBiasOptional == nullptr && dAOutOptional == nullptr &&
+                    dBiasOutOptional == nullptr),
+               ACLNN_ERR_PARAM_INVALID,
+               "raw_g, a_log, dt_bias, dA and dbias require use_gate_in_kernel=true.");
+    CHECK_COND(!useGateInKernel || dtBiasOptional != nullptr ||
+                   dBiasOutOptional == nullptr,
+               ACLNN_ERR_PARAM_INVALID,
+               "dt_bias is required when dbias output is requested.");
+    CHECK_COND(!useGateInKernel || dtBiasOptional == nullptr ||
+                   dBiasOutOptional != nullptr,
                ACLNN_ERR_PARAM_INVALID,
                "dbias output is required when dt_bias is present.");
 
     const op::Shape &qShape = q->GetViewShape();
-    const op::Shape &hShape = h->GetViewShape();
+    const op::Shape &hShape = hOptional->GetViewShape();
     const bool isVarLen = cuSeqlensOptional != nullptr;
     CHECK_COND(qShape.GetDimNum() == (isVarLen ? 3U : 4U) &&
                    hShape.GetDimNum() == (isVarLen ? 4U : 5U),
@@ -129,10 +153,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *dBiasForKernel =
         dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
     const auto result = l0op::KdaChunkBackward(
-        q, k, v, beta, gk, aqk, akk, w, qg, kg, vNew, h, dO,
+        q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
+        vNewOptional, hOptional, dO,
         rawGOptional, aLogOptional, dtBiasOptional, cuTensor, chunkTensor,
         static_cast<float>(scale), chunkSize, safeGate, useGateInKernel,
         static_cast<float>(lowerBound), disableRecompute, useExp2,
+        stateVFirst,
         dqOut, dkOut, dvOut, dbOut, dgOut,
         dAForKernel, dBiasForKernel, executorPtr);
     for (size_t i = 0; i < 5; ++i) {

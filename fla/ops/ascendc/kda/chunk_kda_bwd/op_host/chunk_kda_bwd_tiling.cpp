@@ -51,6 +51,7 @@ enum AttrIndex : size_t {
     ATTR_LOWER_BOUND,
     ATTR_DISABLE_RECOMPUTE,
     ATTR_USE_EXP2,
+    ATTR_STATE_V_FIRST,
 };
 
 uint64_t AlignUp(uint64_t value, uint64_t align)
@@ -197,6 +198,8 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     const auto *disableRecompute =
         attrs->GetAttrPointer<bool>(ATTR_DISABLE_RECOMPUTE);
     const auto *useExp2 = attrs->GetAttrPointer<bool>(ATTR_USE_EXP2);
+    const auto *stateVFirst =
+        attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
@@ -204,6 +207,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
     OP_CHECK_NULL_WITH_CONTEXT(context, disableRecompute);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
+    OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
     OP_CHECK_IF(!*disableRecompute,
                 OP_LOGE(context->GetNodeName(),
                         "disable_recompute=false is reserved but not supported"),
@@ -211,6 +215,29 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     OP_CHECK_IF(!*useExp2,
                 OP_LOGE(context->GetNodeName(),
                         "use_exp2=false is reserved but not supported"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(*stateVFirst,
+                OP_LOGE(context->GetNodeName(),
+                        "state_v_first=true is reserved but not supported"),
+                return ge::GRAPH_FAILED);
+
+    const auto *wShape = context->GetOptionalInputShape(INPUT_W);
+    const auto *qgShape = context->GetOptionalInputShape(INPUT_QG);
+    const auto *kgShape = context->GetOptionalInputShape(INPUT_KG);
+    const auto *vNewShape = context->GetOptionalInputShape(INPUT_V_NEW);
+    const auto *hShape = context->GetOptionalInputShape(INPUT_H);
+    const auto *wDesc = context->GetInputDesc(INPUT_W);
+    const auto *qgDesc = context->GetInputDesc(INPUT_QG);
+    const auto *kgDesc = context->GetInputDesc(INPUT_KG);
+    const auto *vNewDesc = context->GetInputDesc(INPUT_V_NEW);
+    const auto *hDesc = context->GetInputDesc(INPUT_H);
+    OP_CHECK_IF(wShape == nullptr || qgShape == nullptr ||
+                    kgShape == nullptr || vNewShape == nullptr ||
+                    hShape == nullptr || wDesc == nullptr ||
+                    qgDesc == nullptr || kgDesc == nullptr ||
+                    vNewDesc == nullptr || hDesc == nullptr,
+                OP_LOGE(context->GetNodeName(),
+                        "w, qg, kg, v_new and h are required when disable_recompute=true"),
                 return ge::GRAPH_FAILED);
 
     const uint32_t blockDim =
@@ -221,14 +248,14 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     ChunkKdaBwdATilingContext aCtx{
         context->GetNodeName(),
         context->GetRequiredInputShape(INPUT_AQK),
-        context->GetRequiredInputShape(INPUT_V_NEW),
-        context->GetRequiredInputShape(INPUT_H),
+        vNewShape,
+        hShape,
         context->GetRequiredInputShape(INPUT_DO),
         context->GetOptionalInputShape(INPUT_CU_SEQLENS),
         context->GetOptionalInputShape(INPUT_CHUNK_INDICES),
         context->GetInputDesc(INPUT_AQK)->GetDataType(),
-        context->GetInputDesc(INPUT_V_NEW)->GetDataType(),
-        context->GetInputDesc(INPUT_H)->GetDataType(),
+        vNewDesc->GetDataType(),
+        hDesc->GetDataType(),
         context->GetInputDesc(INPUT_DO)->GetDataType(),
         *chunkSize, blockDim, systemWorkspace};
     KDA::ChunkKdaBwdATilingData aTiling{};
@@ -254,9 +281,16 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         INPUT_CU_SEQLENS, INPUT_CHUNK_INDICES};
     for (size_t i = 0; i < KDA_C_INPUT_COUNT; ++i) {
         const size_t inputIndex = cInputMap[i];
-        cCtx.shapes[i] = i < KDA_C_REQUIRED_INPUT_COUNT ?
-            context->GetRequiredInputShape(inputIndex) :
-            context->GetOptionalInputShape(inputIndex);
+        const bool schemaOptional =
+            inputIndex == INPUT_W || inputIndex == INPUT_QG ||
+            inputIndex == INPUT_KG || inputIndex == INPUT_V_NEW ||
+            inputIndex == INPUT_H || inputIndex == INPUT_RAW_G ||
+            inputIndex == INPUT_A_LOG || inputIndex == INPUT_DT_BIAS ||
+            inputIndex == INPUT_CU_SEQLENS ||
+            inputIndex == INPUT_CHUNK_INDICES;
+        cCtx.shapes[i] = schemaOptional ?
+            context->GetOptionalInputShape(inputIndex) :
+            context->GetRequiredInputShape(inputIndex);
         const auto *desc = context->GetInputDesc(inputIndex);
         if (desc != nullptr) {
             cCtx.types[i] = desc->GetDataType();

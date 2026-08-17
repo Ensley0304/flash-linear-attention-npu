@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import math
 import os
 import statistics
 
@@ -19,7 +20,8 @@ def configure(runtime):
     query.argtypes = (
         [ctypes.c_void_p] * 20
         + [ctypes.c_double, ctypes.c_int64, ctypes.c_bool,
-           ctypes.c_bool, ctypes.c_double, ctypes.c_bool, ctypes.c_bool]
+           ctypes.c_bool, ctypes.c_double, ctypes.c_bool, ctypes.c_bool,
+           ctypes.c_bool]
         + [ctypes.c_void_p] * 8
         + [ctypes.POINTER(ctypes.c_uint64),
            ctypes.POINTER(ctypes.c_void_p)]
@@ -85,7 +87,8 @@ def run_b_only(args):
 
 
 def reference(aqk, qg, kg, w, vnew, h, do, gk, scale, data,
-              sequence_chunks=None):
+              sequence_chunks=None, raw_g=None, a_log=None,
+              lower_bound=-5.0):
     bsz, heads, seqlen, chunk = aqk.shape
     chunks, key_dim, value_dim = seqlen // chunk, qg.shape[-1], do.shape[-1]
     dv0 = torch.empty_like(do)
@@ -129,7 +132,29 @@ def reference(aqk, qg, kg, w, vnew, h, do, gk, scale, data,
                     vnew[b, head, begin:end] @ dh[b, head, ci].T)
                 dg[b, head, begin:end] = (
                     h[b, ci, head] * dh[b, head, ci]).sum(dim=-1)
-    return dq, dk, dg
+    d_a = None
+    if raw_g is None:
+        # The dense aligned A5 Intra merge directly writes the accumulated
+        # gate gradient, so the standalone Gate pass is skipped.
+        pass
+    else:
+        d_a = torch.zeros((heads,), dtype=torch.float32)
+        for b in range(bsz):
+            for head in range(heads):
+                exp_a = torch.exp(a_log[head])
+                for ci in range(chunks):
+                    begin, end = ci * chunk, (ci + 1) * chunk
+                    upstream = torch.flip(
+                        torch.cumsum(torch.flip(
+                            dg[b, head, begin:end], dims=(0,)), dim=0),
+                        dims=(0,))
+                    raw = raw_g[b, head, begin:end]
+                    sigmoid = torch.sigmoid(exp_a * raw)
+                    grad = (upstream * lower_bound * exp_a * sigmoid *
+                            (1.0 - sigmoid))
+                    dg[b, head, begin:end] = grad
+                    d_a[head] += (grad * raw).sum()
+    return dq, dk, dg, d_a
 
 
 def run(args):
@@ -162,6 +187,12 @@ def run(args):
     h = rand((*state_prefix, key_dim, value_dim), gain=0.02)
     do = rand((*token_prefix, value_dim))
     gk = zero((*token_prefix, key_dim), torch.float32)
+    raw_g = (rand((*token_prefix, key_dim), gain=0.02,
+                  dtype=torch.float32)
+             if args.use_gate_in_kernel else None)
+    a_log = (torch.full((heads,), -1.0, dtype=torch.float32,
+                        device="npu")
+             if args.use_gate_in_kernel else None)
     if args.check:
         q = zero((*token_prefix, key_dim))
         k = zero((*token_prefix, key_dim))
@@ -178,11 +209,14 @@ def run(args):
     dv = torch.empty_like(v)
     db = torch.empty(token_prefix, dtype=torch.float32, device="npu")
     dg = torch.empty_like(gk)
+    d_a = (torch.empty((heads,), dtype=torch.float32, device="npu")
+           if args.use_gate_in_kernel else None)
 
     runtime = CanaryRuntime(args.op_api)
     query, launch = configure(runtime)
     values = [q, k, v, beta, gk, aqk, akk, w, qg, kg, vnew, h, do,
               dq, dk, dv, db, dg]
+    values += [x for x in (raw_g, a_log, d_a) if x is not None]
     descriptors = {id(x): runtime.tensor(x) for x in values}
     handle = lambda x: descriptors[id(x)].handle
     cu_handle = None
@@ -207,10 +241,13 @@ def run(args):
         handle(q), handle(k), handle(v), handle(beta), handle(gk),
         handle(aqk), handle(akk), handle(w), handle(qg), handle(kg),
         handle(vnew), handle(h), handle(do),
-        None, None, None, None, None, cu_handle, chunk_handle,
-        args.scale, chunk, True, False, args.lower_bound, True, True,
+        handle(raw_g) if raw_g is not None else None,
+        handle(a_log) if a_log is not None else None,
+        None, None, None, cu_handle, chunk_handle,
+        args.scale, chunk, True, args.use_gate_in_kernel,
+        args.lower_bound, True, True, False,
         handle(dq), handle(dk), handle(dv), handle(db), handle(dg),
-        None, None, None,
+        None, handle(d_a) if d_a is not None else None, None,
     ]
     stream = ctypes.c_void_p(torch.npu.current_stream().npu_stream)
     workspace = None
@@ -242,8 +279,15 @@ def run(args):
                                list(range(chunks // 2, chunks))]
         else:
             sequence_chunks = None
-        dq_ref, dk_ref, dg_ref = reference(
-            *cpu, args.scale, data, sequence_chunks)
+        raw_cpu = (raw_g.detach().cpu().float().unsqueeze(0)
+                   if args.varlen and raw_g is not None else
+                   raw_g.detach().cpu().float()
+                   if raw_g is not None else None)
+        a_log_cpu = (a_log.detach().cpu().float()
+                     if a_log is not None else None)
+        dq_ref, dk_ref, dg_ref, d_a_ref = reference(
+            *cpu, args.scale, data, sequence_chunks, raw_cpu, a_log_cpu,
+            args.lower_bound)
         if args.varlen:
             dq_ref = dq_ref.squeeze(0)
             dk_ref = dk_ref.squeeze(0)
@@ -253,13 +297,26 @@ def run(args):
             "dk": _error("dk", dk, dk_ref),
             "dg": _error("dg", dg, dg_ref),
         }
+        if d_a is not None:
+            reports["dA"] = _error("dA", d_a, d_a_ref)
+        if args.debug_values:
+            rows = (0, 1, chunk - 2, chunk - 1)
+            print("DG_DEBUG", {
+                (head, row): (float(dg[0, head, row, 0].cpu()),
+                              float(dg_ref[0, head, row, 0]))
+                for head in range(min(heads, 2)) for row in rows
+            }, flush=True)
         zeros = {name: float(x.float().abs().max().cpu()) for name, x in
                  (("dv", dv), ("db", db))}
         print("ABC_PRECISION", reports, zeros, flush=True)
         failed = [name for name, report in reports.items()
-                  if report["max_abs"] > 1e-6 and
-                  (report["cos"] < 0.99 or report["mean_abs"] > 3e-3)]
-        failed += [name for name, maximum in zeros.items() if maximum > 1e-6]
+                  if not all(math.isfinite(report[key])
+                             for key in ("max_abs", "mean_abs", "cos")) or
+                  (report["max_abs"] > 1e-6 and
+                   (report["cos"] < 0.99 or
+                    report["mean_abs"] > 3e-3))]
+        failed += [name for name, maximum in zeros.items()
+                   if not math.isfinite(maximum) or maximum > 1e-6]
         if failed:
             raise AssertionError(f"precision failed: {failed}")
 
@@ -298,6 +355,8 @@ def main():
     parser.add_argument("--lower-bound", type=float, default=-5.0)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--varlen", action="store_true")
+    parser.add_argument("--use-gate-in-kernel", action="store_true")
+    parser.add_argument("--debug-values", action="store_true")
     parser.add_argument("--b-only", action="store_true")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=9)

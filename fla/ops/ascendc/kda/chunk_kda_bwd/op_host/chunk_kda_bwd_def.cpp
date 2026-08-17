@@ -31,11 +31,15 @@ public:
         this->Input("gk").ParamType(REQUIRED).DataType(fp32).Format(nd).UnknownShapeFormat(nd);
         this->Input("Aqk").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
         this->Input("Akk").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
-        this->Input("w").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
-        this->Input("qg").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
-        this->Input("kg").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
-        this->Input("v_new").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
-        this->Input("h").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
+        // Forward-saved intermediates. They are required by the currently
+        // implemented disable_recompute=true path, but stay optional in the
+        // public schema so disable_recompute=false can recompute them later
+        // without another ABI change.
+        this->Input("w").ParamType(OPTIONAL).DataType(data).Format(nd).UnknownShapeFormat(nd);
+        this->Input("qg").ParamType(OPTIONAL).DataType(data).Format(nd).UnknownShapeFormat(nd);
+        this->Input("kg").ParamType(OPTIONAL).DataType(data).Format(nd).UnknownShapeFormat(nd);
+        this->Input("v_new").ParamType(OPTIONAL).DataType(data).Format(nd).UnknownShapeFormat(nd);
+        this->Input("h").ParamType(OPTIONAL).DataType(data).Format(nd).UnknownShapeFormat(nd);
         this->Input("d_o").ParamType(REQUIRED).DataType(data).Format(nd).UnknownShapeFormat(nd);
         this->Input("raw_g").ParamType(OPTIONAL).DataType(gate).Format(nd).UnknownShapeFormat(nd);
         this->Input("a_log").ParamType(OPTIONAL).DataType(fp32).Format(nd).UnknownShapeFormat(nd);
@@ -63,6 +67,7 @@ public:
         // true/true is accepted until the alternative kernels are implemented.
         this->Attr("disable_recompute").AttrType(OPTIONAL).Bool(true);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
+        this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
