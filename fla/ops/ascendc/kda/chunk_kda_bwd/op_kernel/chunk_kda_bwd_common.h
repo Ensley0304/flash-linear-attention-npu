@@ -59,6 +59,7 @@ struct ChunkKdaBwdCTilingData {
     int8_t dhHeadMajor;
     int8_t useGateInKernel;
     int8_t hasDtBias;
+    int8_t deferGatePost;
     int32_t kEOffset;
     int32_t dqRawOffset;
     int32_t dkRawOffset;

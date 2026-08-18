@@ -8,6 +8,8 @@ using namespace op;
 
 namespace l0op {
 OP_TYPE_REGISTER(ChunkKdaBwd);
+OP_TYPE_REGISTER(KdaGateBwdPost);
+OP_TYPE_REGISTER(KdaGateBwdPostVarlen);
 
 ChunkKdaBwdOutputs KdaChunkBackward(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
@@ -36,19 +38,47 @@ ChunkKdaBwdOutputs KdaChunkBackward(
            stateVFirst, dq, dk, dv, db, dg,
            dAOptional, dBiasOptional);
 
-    const auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
+    // Kernel C writes the chunk-local, unscanned gate gradient into the
+    // final dg storage.  The following AIV gate kernel consumes and updates
+    // that storage in place, avoiding a full-size cross-kernel workspace.
+    const aclTensor *dgBase = dg;
+
+    auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaBwd,
         OP_INPUT(q, k, v, beta, gk, aqk, akk, wOptional, qgOptional,
                  kgOptional, vNewOptional, hOptional, dO,
                  rawGOptional, aLogOptional, dtBiasOptional,
                  cuSeqlensOptional, chunkIndicesOptional),
-        OP_OUTPUT(dq, dk, dv, db, dg, dAOptional, dBiasOptional),
-        OP_ATTR(scale, chunkSize, safeGate, useGateInKernel, lowerBound,
-                disableRecompute, useExp2, stateVFirst));
+        OP_OUTPUT(dq, dk, dv, db, dgBase, dAOptional, dBiasOptional),
+        OP_ATTR(scale, chunkSize, safeGate, false, lowerBound,
+                disableRecompute, useExp2, stateVFirst,
+                useGateInKernel));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
         return {};
+    }
+    if (useGateInKernel) {
+        if (cuSeqlensOptional != nullptr) {
+            ret = ADD_TO_LAUNCHER_LIST_AICORE(
+                KdaGateBwdPostVarlen,
+                OP_INPUT(dgBase, rawGOptional, aLogOptional, dtBiasOptional,
+                         cuSeqlensOptional, chunkIndicesOptional),
+                OP_OUTPUT(dg, dAOptional, dBiasOptional),
+                OP_ATTR(chunkSize, safeGate, lowerBound, false));
+        } else {
+            ret = ADD_TO_LAUNCHER_LIST_AICORE(
+                KdaGateBwdPost,
+                OP_INPUT(dgBase, rawGOptional, aLogOptional, dtBiasOptional,
+                         cuSeqlensOptional, chunkIndicesOptional),
+                OP_OUTPUT(dg, dAOptional, dBiasOptional),
+                OP_ATTR(chunkSize, safeGate, lowerBound, false));
+        }
+        if (ret != ACLNN_SUCCESS) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "ADD_TO_LAUNCHER_LIST_AICORE GatePost failed.");
+            return {};
+        }
     }
     return {dq, dk, dv, db, dg, dAOptional, dBiasOptional};
 }

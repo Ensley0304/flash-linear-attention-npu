@@ -510,9 +510,15 @@ private:
     {
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
-        AscendC::DataCopyPad(
-            dgGm_[offset], value,
-            {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0});
+        // A5 may silently drop a full 32 KiB UB->GM DataCopyPad transfer.
+        // The row width is naturally aligned, so emit the same proven
+        // 128-FP32 row-sized stores used by the standalone Gate post kernel.
+        const uint32_t rows = count / 128U;
+        for (uint32_t row = 0; row < rows; ++row) {
+            AscendC::DataCopy(
+                dgGm_[offset + static_cast<uint64_t>(row) * 128U],
+                value[row * 128U], 128U);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
     }

@@ -83,9 +83,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                "use_exp2=false is reserved but not supported.");
     CHECK_COND(!stateVFirst, ACLNN_ERR_PARAM_INVALID,
                "state_v_first=true is reserved but not supported.");
-    CHECK_COND(!useGateInKernel, ACLNN_ERR_PARAM_INVALID,
-               "use_gate_in_kernel=true is reserved but not supported yet: "
-               "the single-launch raw-gate reverse scan is not precision-closed.");
     CHECK_COND(wOptional != nullptr && qgOptional != nullptr &&
                    kgOptional != nullptr && vNewOptional != nullptr &&
                    hOptional != nullptr,
@@ -120,7 +117,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    dBiasOutOptional != nullptr,
                ACLNN_ERR_PARAM_INVALID,
                "dbias output is required when dt_bias is present.");
-
     const op::Shape &qShape = q->GetViewShape();
     const op::Shape &hShape = hOptional->GetViewShape();
     const bool isVarLen = cuSeqlensOptional != nullptr;
@@ -182,6 +178,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwd(
     CHECK_COND(
         CommonOpExecutorRun(workspace, workspaceSize, executor, stream) ==
             ACLNN_SUCCESS,
-        ACLNN_ERR_INNER, "ChunkKdaBwd single kernel launch failed.");
+        ACLNN_ERR_INNER, "ChunkKdaBwd executor launch failed.");
     return ACLNN_SUCCESS;
 }

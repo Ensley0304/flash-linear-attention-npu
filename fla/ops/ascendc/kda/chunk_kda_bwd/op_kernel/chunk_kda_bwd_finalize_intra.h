@@ -651,13 +651,18 @@ private:
                     FinishHeadA5Dense32(
                         task, head, rowStart, kProcessRowBlock, slot);
                 } else {
-                    auto carry = reduceTmp_.Get<float>()[7 * kPlaneElements];
-                    KdaRegbaseFill(
-                        (__ubuf__ float *)carry.GetPhyAddr(),
-                        0.0f, K_DIM);
+                    if (tiling_.deferGatePost == 0) {
+                        auto carry =
+                            reduceTmp_.Get<float>()[7 * kPlaneElements];
+                        KdaRegbaseFill(
+                            (__ubuf__ float *)carry.GetPhyAddr(),
+                            0.0f, K_DIM);
+                    }
                     FinishHeadA5Dense32(
                         task, head, rowStart, kProcessRowBlock, slot);
-                    FinishPendingDgA5(task, head);
+                    if (tiling_.deferGatePost == 0) {
+                        FinishPendingDgA5(task, head);
+                    }
                 }
                 CompleteDirectOutputGeneration();
             }
@@ -2031,7 +2036,19 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
-        if (rowStart != 0) {
+        if (tiling_.deferGatePost != 0) {
+            if (rowStart == 0) {
+                StoreRowsDirect(
+                    dgOutGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, tokenBegin, 0)],
+                    dgTile, ownedRows, cols, TensorRowElements());
+            } else {
+                StorePreparedRows(
+                    dgOutGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, tokenBegin, 0)],
+                    dgTile, ownedRows, cols, TensorRowElements());
+            }
+        } else if (rowStart != 0) {
             auto carry = reduce[7 * kPlaneElements];
             KdaRegbaseReverseScanCarry(
                 (__ubuf__ float *)dgTile.GetPhyAddr(),

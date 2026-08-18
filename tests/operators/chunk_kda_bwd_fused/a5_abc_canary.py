@@ -88,7 +88,7 @@ def run_b_only(args):
 
 def reference(aqk, qg, kg, w, vnew, h, do, gk, scale, data,
               sequence_chunks=None, raw_g=None, a_log=None,
-              lower_bound=-5.0):
+              lower_bound=-5.0, safe_gate=True, dt_bias=None):
     bsz, heads, seqlen, chunk = aqk.shape
     chunks, key_dim, value_dim = seqlen // chunk, qg.shape[-1], do.shape[-1]
     dv0 = torch.empty_like(do)
@@ -133,12 +133,15 @@ def reference(aqk, qg, kg, w, vnew, h, do, gk, scale, data,
                 dg[b, head, begin:end] = (
                     h[b, ci, head] * dh[b, head, ci]).sum(dim=-1)
     d_a = None
+    d_bias = None
     if raw_g is None:
         # The dense aligned A5 Intra merge directly writes the accumulated
         # gate gradient, so the standalone Gate pass is skipped.
         pass
     else:
         d_a = torch.zeros((heads,), dtype=torch.float32)
+        if dt_bias is not None:
+            d_bias = torch.zeros((heads, key_dim), dtype=torch.float32)
         for b in range(bsz):
             for head in range(heads):
                 exp_a = torch.exp(a_log[head])
@@ -149,12 +152,23 @@ def reference(aqk, qg, kg, w, vnew, h, do, gk, scale, data,
                             dg[b, head, begin:end], dims=(0,)), dim=0),
                         dims=(0,))
                     raw = raw_g[b, head, begin:end]
-                    sigmoid = torch.sigmoid(exp_a * raw)
-                    grad = (upstream * lower_bound * exp_a * sigmoid *
-                            (1.0 - sigmoid))
+                    x = (raw + dt_bias[head]
+                         if dt_bias is not None else raw)
+                    if safe_gate:
+                        sigmoid = torch.sigmoid(exp_a * x)
+                        grad = (upstream * lower_bound * exp_a * sigmoid *
+                                (1.0 - sigmoid))
+                        d_a[head] += (grad * x).sum()
+                    else:
+                        a = -exp_a
+                        grad = upstream * a * torch.sigmoid(x)
+                        d_a[head] += (
+                            upstream * a * torch.nn.functional.softplus(x)
+                        ).sum()
                     dg[b, head, begin:end] = grad
-                    d_a[head] += (grad * raw).sum()
-    return dq, dk, dg, d_a
+                    if d_bias is not None:
+                        d_bias[head] += grad.sum(dim=0)
+    return dq, dk, dg, d_a, d_bias
 
 
 def run(args):
@@ -193,6 +207,8 @@ def run(args):
     a_log = (torch.full((heads,), -1.0, dtype=torch.float32,
                         device="npu")
              if args.use_gate_in_kernel else None)
+    dt_bias = (rand((heads, key_dim), gain=0.01, dtype=torch.float32)
+               if args.use_gate_in_kernel and args.with_dt_bias else None)
     if args.check:
         q = zero((*token_prefix, key_dim))
         k = zero((*token_prefix, key_dim))
@@ -211,12 +227,16 @@ def run(args):
     dg = torch.empty_like(gk)
     d_a = (torch.empty((heads,), dtype=torch.float32, device="npu")
            if args.use_gate_in_kernel else None)
+    d_bias = (torch.empty((heads, key_dim), dtype=torch.float32,
+                          device="npu")
+              if dt_bias is not None else None)
 
     runtime = CanaryRuntime(args.op_api)
     query, launch = configure(runtime)
     values = [q, k, v, beta, gk, aqk, akk, w, qg, kg, vnew, h, do,
               dq, dk, dv, db, dg]
-    values += [x for x in (raw_g, a_log, d_a) if x is not None]
+    values += [x for x in (raw_g, a_log, dt_bias, d_a, d_bias)
+               if x is not None]
     descriptors = {id(x): runtime.tensor(x) for x in values}
     handle = lambda x: descriptors[id(x)].handle
     cu_handle = None
@@ -226,15 +246,22 @@ def run(args):
     if args.varlen:
         if chunks < 2:
             raise ValueError("varlen canary requires at least two chunks")
-        split_chunk = chunks // 2
-        cu_values = [0, split_chunk * chunk, seqlen]
-        chunk_values = [
-            item
-            for seq_idx, chunk_range in enumerate(
-                (range(split_chunk), range(split_chunk, chunks)))
-            for global_chunk in chunk_range
-            for item in (seq_idx, global_chunk - chunk_range.start)
-        ]
+        if chunks == 2:
+            # Keep one two-chunk sequence so dh/dg are nonzero; splitting it
+            # into two one-chunk sequences makes the reverse state zero and
+            # cannot validate the Gate path.
+            cu_values = [0, seqlen]
+            chunk_values = [0, 0, 0, 1]
+        else:
+            split_chunk = chunks // 2
+            cu_values = [0, split_chunk * chunk, seqlen]
+            chunk_values = [
+                item
+                for seq_idx, chunk_range in enumerate(
+                    (range(split_chunk), range(split_chunk, chunks)))
+                for global_chunk in chunk_range
+                for item in (seq_idx, global_chunk - chunk_range.start)
+            ]
         cu_handle, cu_backing = runtime.int_array(cu_values)
         chunk_handle, chunk_backing = runtime.int_array(chunk_values)
     query_args = [
@@ -243,11 +270,13 @@ def run(args):
         handle(vnew), handle(h), handle(do),
         handle(raw_g) if raw_g is not None else None,
         handle(a_log) if a_log is not None else None,
-        None, None, None, cu_handle, chunk_handle,
-        args.scale, chunk, True, args.use_gate_in_kernel,
+        handle(dt_bias) if dt_bias is not None else None,
+        None, None, cu_handle, chunk_handle,
+        args.scale, chunk, args.safe_gate, args.use_gate_in_kernel,
         args.lower_bound, True, True, False,
         handle(dq), handle(dk), handle(dv), handle(db), handle(dg),
-        None, handle(d_a) if d_a is not None else None, None,
+        None, handle(d_a) if d_a is not None else None,
+        handle(d_bias) if d_bias is not None else None,
     ]
     stream = ctypes.c_void_p(torch.npu.current_stream().npu_stream)
     workspace = None
@@ -275,8 +304,11 @@ def run(args):
         if args.varlen:
             cpu = [x.unsqueeze(0) for x in cpu[:5]] + [
                 cpu[5].unsqueeze(0)] + [x.unsqueeze(0) for x in cpu[6:]]
-            sequence_chunks = [list(range(0, chunks // 2)),
-                               list(range(chunks // 2, chunks))]
+            sequence_chunks = (
+                [list(range(chunks))] if chunks == 2 else
+                [list(range(0, chunks // 2)),
+                 list(range(chunks // 2, chunks))]
+            )
         else:
             sequence_chunks = None
         raw_cpu = (raw_g.detach().cpu().float().unsqueeze(0)
@@ -285,9 +317,11 @@ def run(args):
                    if raw_g is not None else None)
         a_log_cpu = (a_log.detach().cpu().float()
                      if a_log is not None else None)
-        dq_ref, dk_ref, dg_ref, d_a_ref = reference(
+        dt_bias_cpu = (dt_bias.detach().cpu().float()
+                       if dt_bias is not None else None)
+        dq_ref, dk_ref, dg_ref, d_a_ref, d_bias_ref = reference(
             *cpu, args.scale, data, sequence_chunks, raw_cpu, a_log_cpu,
-            args.lower_bound)
+            args.lower_bound, args.safe_gate, dt_bias_cpu)
         if args.varlen:
             dq_ref = dq_ref.squeeze(0)
             dk_ref = dk_ref.squeeze(0)
@@ -299,12 +333,19 @@ def run(args):
         }
         if d_a is not None:
             reports["dA"] = _error("dA", d_a, d_a_ref)
+        if d_bias is not None:
+            reports["dbias"] = _error("dbias", d_bias, d_bias_ref)
         if args.debug_values:
-            rows = (0, 1, chunk - 2, chunk - 1)
+            rows = (0, 1, chunk - 2, chunk - 1,
+                    chunk, chunk + 1, seqlen - 2, seqlen - 1)
+            def dg_value(tensor, head, row):
+                return (tensor[head, row, 0] if args.varlen else
+                        tensor[0, head, row, 0])
             print("DG_DEBUG", {
-                (head, row): (float(dg[0, head, row, 0].cpu()),
-                              float(dg_ref[0, head, row, 0]))
+                (head, row): (float(dg_value(dg, head, row).cpu()),
+                              float(dg_value(dg_ref, head, row)))
                 for head in range(min(heads, 2)) for row in rows
+                if row < seqlen
             }, flush=True)
         zeros = {name: float(x.float().abs().max().cpu()) for name, x in
                  (("dv", dv), ("db", db))}
@@ -356,6 +397,10 @@ def main():
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--varlen", action="store_true")
     parser.add_argument("--use-gate-in-kernel", action="store_true")
+    parser.add_argument("--unsafe-gate", dest="safe_gate",
+                        action="store_false")
+    parser.add_argument("--with-dt-bias", action="store_true")
+    parser.set_defaults(safe_gate=True)
     parser.add_argument("--debug-values", action="store_true")
     parser.add_argument("--b-only", action="store_true")
     parser.add_argument("--warmup", type=int, default=3)

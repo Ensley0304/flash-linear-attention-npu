@@ -8,6 +8,7 @@
 
 #include "chunk_kda_bwd_a_tiling_processor.h"
 #include "chunk_kda_bwd_c_tiling_processor.h"
+#include "../op_kernel/kda_gate_bwd_post_common.h"
 
 namespace optiling {
 namespace {
@@ -52,6 +53,7 @@ enum AttrIndex : size_t {
     ATTR_DISABLE_RECOMPUTE,
     ATTR_USE_EXP2,
     ATTR_STATE_V_FIRST,
+    ATTR_DEFER_GATE_POST,
 };
 
 uint64_t AlignUp(uint64_t value, uint64_t align)
@@ -200,6 +202,8 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     const auto *useExp2 = attrs->GetAttrPointer<bool>(ATTR_USE_EXP2);
     const auto *stateVFirst =
         attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
+    const auto *deferGatePost =
+        attrs->GetAttrPointer<bool>(ATTR_DEFER_GATE_POST);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
@@ -208,6 +212,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, disableRecompute);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
     OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
+    OP_CHECK_NULL_WITH_CONTEXT(context, deferGatePost);
     OP_CHECK_IF(!*disableRecompute,
                 OP_LOGE(context->GetNodeName(),
                         "disable_recompute=false is reserved but not supported"),
@@ -310,6 +315,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     ChunkKdaBwdCTilingProcessor cProcessor(cCtx, tiling->kernelC);
     OP_CHECK_IF(cProcessor.Process() != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
+    tiling->kernelC.deferGatePost = *deferGatePost ? 1 : 0;
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
     OP_CHECK_IF(cTotalWorkspace < systemWorkspace,
@@ -376,5 +382,193 @@ ge::graphStatus TilingPrepare4ChunkKdaBwd(gert::TilingParseContext *context)
 IMPL_OP_OPTILING(ChunkKdaBwd)
     .Tiling(Tiling4ChunkKdaBwd)
     .TilingParse<ChunkKdaBwdCompileInfo>(TilingPrepare4ChunkKdaBwd);
+
+ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
+{
+    constexpr size_t INPUT_DG_ACT = 0;
+    constexpr size_t INPUT_RAW_G = 1;
+    constexpr size_t INPUT_A_LOG = 2;
+    constexpr size_t INPUT_DT_BIAS = 3;
+    constexpr size_t INPUT_CU_SEQLENS = 4;
+    constexpr size_t INPUT_CHUNK_INDICES = 5;
+    constexpr size_t ATTR_CHUNK_SIZE = 0;
+    constexpr size_t ATTR_SAFE_GATE = 1;
+    constexpr size_t ATTR_LOWER_BOUND = 2;
+    constexpr size_t ATTR_INPUT_SCANNED = 3;
+
+    const auto *attrs = context->GetAttrs();
+    const auto *dgShapeStorage =
+        context->GetRequiredInputShape(INPUT_DG_ACT);
+    const auto *rawShapeStorage =
+        context->GetRequiredInputShape(INPUT_RAW_G);
+    const auto *aLogShapeStorage =
+        context->GetRequiredInputShape(INPUT_A_LOG);
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dgShapeStorage);
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawShapeStorage);
+    OP_CHECK_NULL_WITH_CONTEXT(context, aLogShapeStorage);
+
+    const auto *chunkSize =
+        attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
+    const auto *safeGate = attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE);
+    const auto *lowerBound =
+        attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND);
+    const auto *inputScanned =
+        attrs->GetAttrPointer<bool>(ATTR_INPUT_SCANNED);
+    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
+    OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
+    OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
+    OP_CHECK_NULL_WITH_CONTEXT(context, inputScanned);
+    OP_CHECK_IF(*chunkSize != 64,
+                OP_LOGE(context->GetNodeName(),
+                        "KdaGateBwdPost requires chunk_size=64"),
+                return ge::GRAPH_FAILED);
+
+    const gert::Shape dgShape = dgShapeStorage->GetOriginShape();
+    const gert::Shape rawShape = rawShapeStorage->GetOriginShape();
+    const bool isVarLen = dgShape.GetDimNum() == 3U;
+    const bool hasCuSeqlens =
+        context->GetOptionalInputShape(INPUT_CU_SEQLENS) != nullptr;
+    const bool hasChunkIndices =
+        context->GetOptionalInputShape(INPUT_CHUNK_INDICES) != nullptr;
+    OP_CHECK_IF(hasCuSeqlens != hasChunkIndices ||
+                    isVarLen != hasCuSeqlens,
+                OP_LOGE(context->GetNodeName(),
+                        "rank-3 GatePost requires cu_seqlens/chunk_indices and rank-4 GatePost forbids them"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dgShape.GetDimNum() != (isVarLen ? 3U : 4U) ||
+                    rawShape.GetDimNum() != dgShape.GetDimNum() ||
+                    rawShape.GetShapeSize() != dgShape.GetShapeSize(),
+                OP_LOGE(context->GetNodeName(),
+                        "dg_act/raw_g shapes must match canonical BHTK/HTK layout"),
+                return ge::GRAPH_FAILED);
+
+    const size_t headAxis = isVarLen ? 0U : 1U;
+    const size_t tokenAxis = isVarLen ? 1U : 2U;
+    const size_t keyAxis = isVarLen ? 2U : 3U;
+    const int64_t batch = isVarLen ? 1 : dgShape.GetDim(0);
+    const int64_t heads = dgShape.GetDim(headAxis);
+    const int64_t seqlen = dgShape.GetDim(tokenAxis);
+    const int64_t keyDim = dgShape.GetDim(keyAxis);
+    OP_CHECK_IF(batch <= 0 || heads <= 0 || seqlen <= 0 || keyDim != 128,
+                OP_LOGE(context->GetNodeName(),
+                        "KdaGateBwdPost requires positive B/H/T and K=128"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(aLogShapeStorage->GetOriginShape().GetShapeSize() != heads,
+                OP_LOGE(context->GetNodeName(),
+                        "a_log must contain one FP32 value per head"),
+                return ge::GRAPH_FAILED);
+
+    int64_t chunkNum = 0;
+    const int64_t chunkNumPerBatch = CeilDiv(seqlen, *chunkSize);
+    if (isVarLen) {
+        const auto *chunkShape =
+            context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
+        OP_CHECK_NULL_WITH_CONTEXT(context, chunkShape);
+        const int64_t metadataElems =
+            chunkShape->GetOriginShape().GetShapeSize();
+        OP_CHECK_IF(metadataElems <= 0 || metadataElems % 2 != 0,
+                    OP_LOGE(context->GetNodeName(),
+                            "chunk_indices must contain (sequence, local_chunk) pairs"),
+                return ge::GRAPH_FAILED);
+        chunkNum = metadataElems / 2;
+        OP_CHECK_IF(chunkNum > KDA::KDA_GATE_POST_MAX_CHUNKS,
+                    OP_LOGE(context->GetNodeName(),
+                            "KdaGateBwdPost supports at most %d packed chunks",
+                            KDA::KDA_GATE_POST_MAX_CHUNKS),
+                    return ge::GRAPH_FAILED);
+    } else {
+        chunkNum = batch * chunkNumPerBatch;
+    }
+
+    const auto platform =
+        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const uint32_t availableAiv = std::max<uint32_t>(
+        static_cast<uint32_t>(platform.GetCoreNumAiv()), 1U);
+    const uint32_t usedCoreNum = std::max<uint32_t>(
+        std::min<uint32_t>(static_cast<uint32_t>(heads), availableAiv), 1U);
+    auto *tiling =
+        context->GetTilingData<KDA::KdaGateBwdPostTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    tiling->batch = static_cast<int32_t>(batch);
+    tiling->seqlen = static_cast<int32_t>(seqlen);
+    tiling->headNum = static_cast<int32_t>(heads);
+    tiling->keyDim = static_cast<int32_t>(keyDim);
+    tiling->chunkSize = static_cast<int32_t>(*chunkSize);
+    tiling->chunkNum = static_cast<int32_t>(chunkNum);
+    tiling->chunkNumPerBatch = static_cast<int32_t>(chunkNumPerBatch);
+    tiling->usedCoreNum = static_cast<int32_t>(usedCoreNum);
+    tiling->isVarLen = isVarLen ? 1 : 0;
+    tiling->hasDtBias =
+        context->GetOptionalInputShape(INPUT_DT_BIAS) != nullptr ? 1 : 0;
+    tiling->inputScanned = *inputScanned ? 1 : 0;
+    tiling->reserved1 = 0;
+    tiling->lowerBound = *lowerBound;
+    if (isVarLen) {
+        const auto *cuTensor =
+            context->GetOptionalInputTensor(INPUT_CU_SEQLENS);
+        const auto *chunkTensor =
+            context->GetOptionalInputTensor(INPUT_CHUNK_INDICES);
+        OP_CHECK_NULL_WITH_CONTEXT(context, cuTensor);
+        OP_CHECK_NULL_WITH_CONTEXT(context, chunkTensor);
+        const int64_t *cu = cuTensor->GetData<int64_t>();
+        const int64_t *chunks = chunkTensor->GetData<int64_t>();
+        OP_CHECK_NULL_WITH_CONTEXT(context, cu);
+        OP_CHECK_NULL_WITH_CONTEXT(context, chunks);
+        const int64_t cuElems =
+            cuTensor->GetStorageShape().GetShapeSize();
+        int64_t packedCursor = 0;
+        for (int64_t task = 0; task < chunkNum; ++task) {
+            const int64_t sequence = chunks[2 * task];
+            const int64_t localChunk = chunks[2 * task + 1];
+            OP_CHECK_IF(sequence < 0 || sequence + 1 >= cuElems ||
+                            localChunk < 0,
+                        OP_LOGE(context->GetNodeName(),
+                                "invalid chunk_indices entry at task %ld", task),
+                        return ge::GRAPH_FAILED);
+            const int64_t seqBegin = cu[sequence];
+            const int64_t seqEnd = cu[sequence + 1];
+            const int64_t begin = seqBegin + localChunk * *chunkSize;
+            const int64_t end = std::min<int64_t>(begin + *chunkSize, seqEnd);
+            OP_CHECK_IF(seqBegin < 0 || seqEnd < seqBegin ||
+                            seqEnd > seqlen || begin < seqBegin ||
+                            begin >= seqEnd || end <= begin ||
+                            begin != packedCursor,
+                        OP_LOGE(context->GetNodeName(),
+                                "chunk_indices must use canonical packed order at task %ld",
+                                task),
+                        return ge::GRAPH_FAILED);
+            packedCursor = end;
+        }
+        OP_CHECK_IF(packedCursor != seqlen,
+                    OP_LOGE(context->GetNodeName(),
+                            "canonical packed chunks must cover all tokens"),
+                    return ge::GRAPH_FAILED);
+    }
+
+    context->SetBlockDim(usedCoreNum);
+    // Task decoding and token addressing use tiling.isVarLen at runtime.
+    // Reuse the same device specialization for dense and packed layouts so
+    // the proven A5 reverse-scan pipeline is compiled only once.
+    context->SetTilingKey(*safeGate ? 1U : 3U);
+    context->GetWorkspaceSizes(1)[0] =
+        platform.GetLibApiWorkSpaceSize();
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus TilingPrepare4KdaGateBwdPost(
+    gert::TilingParseContext *context)
+{
+    (void)context;
+    return ge::GRAPH_SUCCESS;
+}
+
+IMPL_OP_OPTILING(KdaGateBwdPost)
+    .Tiling(Tiling4KdaGateBwdPost)
+    .TilingParse<ChunkKdaBwdCompileInfo>(TilingPrepare4KdaGateBwdPost);
+
+IMPL_OP_OPTILING(KdaGateBwdPostVarlen)
+    .Tiling(Tiling4KdaGateBwdPost)
+    .TilingParse<ChunkKdaBwdCompileInfo>(TilingPrepare4KdaGateBwdPost);
 
 } // namespace optiling

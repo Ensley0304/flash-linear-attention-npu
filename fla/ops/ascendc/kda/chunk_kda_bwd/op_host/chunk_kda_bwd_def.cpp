@@ -68,6 +68,10 @@ public:
         this->Attr("disable_recompute").AttrType(OPTIONAL).Bool(true);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        // Private L0 scheduling marker. Public callers never set this
+        // directly; KdaChunkBackward uses it to defer reverse-cumsum and raw
+        // gate chain rule to the delivery fallback post kernel.
+        this->Attr("defer_gate_post").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

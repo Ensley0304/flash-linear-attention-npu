@@ -18,6 +18,7 @@ def test_reserved_attrs_default_to_current_implementation():
     assert 'Attr("disable_recompute").AttrType(OPTIONAL).Bool(true)' in op_def
     assert 'Attr("use_exp2").AttrType(OPTIONAL).Bool(true)' in op_def
     assert 'Attr("state_v_first").AttrType(OPTIONAL).Bool(false)' in op_def
+    assert 'Attr("defer_gate_post").AttrType(OPTIONAL).Bool(false)' in op_def
 
 
 def test_aclnn_and_l0_keep_the_same_reserved_attr_order():
@@ -28,8 +29,8 @@ def test_aclnn_and_l0_keep_the_same_reserved_attr_order():
     assert signature in _normalize_whitespace(aclnn_header)
     assert signature in _normalize_whitespace(l0_header)
     assert (
-        "OP_ATTR(scale, chunkSize, safeGate, useGateInKernel, lowerBound, "
-        "disableRecompute, useExp2, stateVFirst)"
+        "OP_ATTR(scale, chunkSize, safeGate, false, lowerBound, "
+        "disableRecompute, useExp2, stateVFirst, useGateInKernel)"
     ) in _normalize_whitespace(l0_source)
 
 
@@ -64,11 +65,15 @@ def test_forward_saved_intermediates_are_conditionally_optional():
 
 def test_gate_modes_have_explicit_contracts():
     aclnn = _read("op_host/op_api/aclnn_chunk_kda_bwd.cpp")
-    assert "CHECK_COND(!useGateInKernel" in aclnn
-    assert (
-        "the single-launch raw-gate reverse scan is not precision-closed"
-        in aclnn
-    )
+    l0 = _read("op_host/op_api/chunk_kda_bwd.cpp")
+    # Rejecting the true branch outright would use the condition as the
+    # complete CHECK_COND predicate. Input-contract checks may still begin
+    # with `!useGateInKernel || ...` and are required.
+    assert "CHECK_COND(!useGateInKernel, ACLNN_ERR" not in aclnn
+    assert "OP_TYPE_REGISTER(KdaGateBwdPost)" in l0
+    assert "OP_ATTR(scale, chunkSize, safeGate, false, lowerBound" in l0
+    assert "if (useGatePost)" in l0
+    assert "KdaGateBwdPost" in l0
     assert "raw_g, a_log and dA are required for raw-gate backward" in aclnn
     assert (
         "raw_g, a_log, dt_bias, dA and dbias require "
