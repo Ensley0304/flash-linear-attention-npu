@@ -428,19 +428,22 @@ namespace KDA {
 
 template <
     uint32_t K_DIM, uint32_t CHUNK_SIZE, bool SAFE_GATE, bool VARLEN_TND,
-    bool PUBLIC_VARLEN, typename DataT, typename BetaT>
+    bool PUBLIC_VARLEN, typename DataT, typename BetaT, typename RawGateT>
 class ChunkKdaBwdCIntraVectorProcess {
 public:
     __aicore__ ChunkKdaBwdCIntraVectorProcess(
         GM_ADDR q, GM_ADDR k, GM_ADDR gk, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
         GM_ADDR dqBaseRaw, GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg,
         GM_ADDR dqOut, GM_ADDR dkOut, GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR cuSeqlens,
-        GM_ADDR chunkMetadata, GM_ADDR workspace)
+        GM_ADDR chunkMetadata, GM_ADDR rawG, GM_ADDR aLog, GM_ADDR dtBias,
+        GM_ADDR dA, GM_ADDR dBias, GM_ADDR workspace)
         : q_(q), k_(k), gk_(gk), beta_(beta), dAqk_(dAqk), dAkk_(dAkk),
           dqBaseRaw_(dqBaseRaw), dq_(dq), dk_(dk), db_(db), dg_(dg),
           dqOut_(dqOut), dkOut_(dkOut), dbOut_(dbOut), dgOut_(dgOut),
           cuSeqlens_(cuSeqlens),
           chunkMetadata_(chunkMetadata),
+          rawG_(rawG), aLog_(aLog), dtBias_(dtBias),
+          dA_(dA), dBias_(dBias),
           workspace_(workspace)
     {
         static_assert(K_DIM == 128, "Kernel C requires K=128.");
@@ -467,6 +470,17 @@ public:
         dkOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dkOut_));
         dbOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dbOut_));
         dgOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dgOut_));
+        if (tiling_.useGateInKernel != 0) {
+            rawGGm_.SetGlobalBuffer(reinterpret_cast<__gm__ RawGateT *>(rawG_));
+            aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog_));
+            if (tiling_.hasDtBias != 0) {
+                dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias_));
+            }
+            dAGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dA_));
+            if (tiling_.hasDtBias != 0) {
+                dBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dBias_));
+            }
+        }
         if constexpr (VARLEN_TND) {
             chunkMetadataGm_.SetGlobalBuffer(
                 reinterpret_cast<__gm__ int64_t *>(chunkMetadata_));
@@ -633,7 +647,7 @@ private:
         const uint32_t rowStart =
             static_cast<uint32_t>(windowIdx & 1U) * kProcessRowBlock;
 
-        if (tiling_.useGateInKernel == 0) {
+        {
             const uint32_t ownedHead = AscendC::GetSubBlockIdx();
             // Every AIV consumes the complete ready stream so the paired
             // AIC/AIV generation counters stay aligned.  Only the matching
@@ -660,21 +674,12 @@ private:
                     }
                     FinishHeadA5Dense32(
                         task, head, rowStart, kProcessRowBlock, slot);
-                    if (tiling_.deferGatePost == 0) {
+                    if (tiling_.deferGatePost == 0 &&
+                        tiling_.useGateInKernel == 0) {
                         FinishPendingDgA5(task, head);
                     }
                 }
                 CompleteDirectOutputGeneration();
-            }
-        } else {
-            for (uint32_t headInWindow = 0;
-                 headInWindow < headCount; ++headInWindow) {
-                Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
-                const uint32_t slot =
-                    CIntraWorkspaceSlot(windowIdx, headInWindow);
-                FinishHead(
-                    task, headBase + headInWindow, rowStart,
-                    kProcessRowBlock, slot);
             }
         }
     }
@@ -1859,6 +1864,122 @@ private:
 #endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline float ReadGateScalarA5(
+        AscendC::LocalTensor<float> value)
+    {
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
+        return value.GetValue(0);
+    }
+
+    __aicore__ inline void ApplyFusedSafeGateA5(
+        const CIntraTask &task, uint32_t head,
+        AscendC::LocalTensor<float> laterDg, uint32_t rows)
+    {
+        auto pending = pendingDg_.Get<float>();
+        auto reduce = reduceTmp_.Get<float>();
+        auto carry = reduce[7 * kPlaneElements];
+        auto dbAcc = reduce;
+        auto dAAcc = reduce[128];
+        auto bias = reduce[2 * kPlaneElements];
+        auto scalar = bias[128];
+        auto raw = Plane(0);
+
+        KdaRegbaseFill(
+            (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, 136);
+
+        // First materialize dg_hv for both resident halves.  The second
+        // reverse scan below is the raw-gate upstream chain and therefore
+        // must not replace this Intra reconstruction scan.
+        KdaRegbaseReverseScanCarry(
+            (__ubuf__ float *)laterDg.GetPhyAddr(),
+            (__ubuf__ float *)carry.GetPhyAddr(), rows);
+        KdaRegbaseReverseScanCarry(
+            (__ubuf__ float *)pending.GetPhyAddr(),
+            (__ubuf__ float *)carry.GetPhyAddr(), rows);
+
+        Load(scalar, aLogGm_[head], 1);
+        AscendC::Exp(scalar, scalar, 1);
+        AscendC::PipeBarrier<PIPE_V>();
+        const float expA = ReadGateScalarA5(scalar);
+        if (tiling_.hasDtBias != 0) {
+            Load(
+                bias,
+                dtBiasGm_[static_cast<uint64_t>(head) * K_DIM], K_DIM);
+        }
+
+        KdaRegbaseFill(
+            (__ubuf__ float *)carry.GetPhyAddr(), 0.0f, K_DIM);
+        const uint64_t laterOffset = CIntraTensorOffset(
+            tiling_, task.batchIdx, head,
+            task.begin + kProcessRowBlock, 0);
+        Load(raw, rawGGm_[laterOffset], rows * K_DIM);
+        if (tiling_.hasDtBias != 0) {
+            KdaBwdCSafeGateBackwardA5<true>(
+                (__ubuf__ float *)laterDg.GetPhyAddr(),
+                (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)dAAcc.GetPhyAddr(),
+                (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)laterDg.GetPhyAddr(),
+                (__ubuf__ float *)bias.GetPhyAddr(),
+                (__ubuf__ float *)carry.GetPhyAddr(),
+                static_cast<uint16_t>(rows), expA, tiling_.lowerBound);
+        } else {
+            KdaBwdCSafeGateBackwardA5<false>(
+                (__ubuf__ float *)laterDg.GetPhyAddr(),
+                (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)dAAcc.GetPhyAddr(),
+                (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)laterDg.GetPhyAddr(),
+                (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)carry.GetPhyAddr(),
+                static_cast<uint16_t>(rows), expA, tiling_.lowerBound);
+        }
+
+        const uint64_t firstOffset = CIntraTensorOffset(
+            tiling_, task.batchIdx, head, task.begin, 0);
+        Load(raw, rawGGm_[firstOffset], rows * K_DIM);
+        if (tiling_.hasDtBias != 0) {
+            KdaBwdCSafeGateBackwardA5<true>(
+                (__ubuf__ float *)pending.GetPhyAddr(),
+                (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)dAAcc.GetPhyAddr(),
+                (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)pending.GetPhyAddr(),
+                (__ubuf__ float *)bias.GetPhyAddr(),
+                (__ubuf__ float *)carry.GetPhyAddr(),
+                static_cast<uint16_t>(rows), expA, tiling_.lowerBound);
+        } else {
+            KdaBwdCSafeGateBackwardA5<false>(
+                (__ubuf__ float *)pending.GetPhyAddr(),
+                (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)dAAcc.GetPhyAddr(),
+                (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)pending.GetPhyAddr(),
+                (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)carry.GetPhyAddr(),
+                static_cast<uint16_t>(rows), expA, tiling_.lowerBound);
+        }
+
+        StorePreparedRows(
+            dgOutGm_[laterOffset], laterDg,
+            rows, K_DIM, TensorRowElements());
+        StoreRowsDirect(
+            dgOutGm_[firstOffset], pending,
+            rows, K_DIM, TensorRowElements());
+        AscendC::SetAtomicAdd<float>();
+        Store(dAGm_[head], dAAcc, 1U);
+        if (tiling_.hasDtBias != 0) {
+            Store(
+                dBiasGm_[static_cast<uint64_t>(head) * K_DIM],
+                dbAcc, K_DIM);
+        }
+        // Atomic mode is a DMA state.  Drain both writes before restoring
+        // normal stores for the next C stage/generation.
+        AscendC::PipeBarrier<PIPE_MTE3>();
+        AscendC::SetAtomicNone();
+    }
+
     __aicore__ inline void FinishPendingDgA5(
         const CIntraTask &task, uint32_t head)
     {
@@ -2036,7 +2157,9 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
-        if (tiling_.deferGatePost != 0) {
+        if (tiling_.useGateInKernel != 0 && rowStart != 0) {
+            ApplyFusedSafeGateA5(task, head, dgTile, ownedRows);
+        } else if (tiling_.deferGatePost != 0) {
             if (rowStart == 0) {
                 StoreRowsDirect(
                     dgOutGm_[CIntraTensorOffset(
@@ -2519,6 +2642,11 @@ private:
     GM_ADDR dgOut_;
     GM_ADDR cuSeqlens_;
     GM_ADDR chunkMetadata_;
+    GM_ADDR rawG_;
+    GM_ADDR aLog_;
+    GM_ADDR dtBias_;
+    GM_ADDR dA_;
+    GM_ADDR dBias_;
     GM_ADDR workspace_;
 
     ChunkKdaBwdCTilingData tiling_{};
@@ -2558,6 +2686,11 @@ private:
     AscendC::GlobalTensor<float> dkOutGm_;
     AscendC::GlobalTensor<float> dbOutGm_;
     AscendC::GlobalTensor<float> dgOutGm_;
+    AscendC::GlobalTensor<RawGateT> rawGGm_;
+    AscendC::GlobalTensor<float> aLogGm_;
+    AscendC::GlobalTensor<float> dtBiasGm_;
+    AscendC::GlobalTensor<float> dAGm_;
+    AscendC::GlobalTensor<float> dBiasGm_;
     AscendC::GlobalTensor<int64_t> chunkMetadataGm_;
     AscendC::GlobalTensor<float> workspaceGm_;
 };

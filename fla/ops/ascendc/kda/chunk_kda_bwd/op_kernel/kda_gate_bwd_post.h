@@ -969,6 +969,9 @@ private:
         // the rows backwards, keeps the reverse-scan carry in registers and
         // applies the chain rule in the same pass; the input here is the
         // unscanned dg_base emitted by Kernel C.
+        auto gateCarry = result_.Get<float>();
+        KdaBwdCGateFillA5(
+            (__ubuf__ float *)gateCarry.GetPhyAddr(), 0.0f, kKeyDim);
         if (tiling_.hasDtBias != 0) {
             KdaBwdCSafeGateBackwardA5<true>(
                 (__ubuf__ float *)gateOutput.GetPhyAddr(),
@@ -977,6 +980,7 @@ private:
                 (__ubuf__ float *)raw.GetPhyAddr(),
                 (__ubuf__ float *)upstream.GetPhyAddr(),
                 (__ubuf__ float *)bias.GetPhyAddr(),
+                (__ubuf__ float *)gateCarry.GetPhyAddr(),
                 static_cast<uint16_t>(rows), expA, tiling_.lowerBound);
         } else {
             KdaBwdCSafeGateBackwardA5<false>(
@@ -986,6 +990,7 @@ private:
                 (__ubuf__ float *)raw.GetPhyAddr(),
                 (__ubuf__ float *)upstream.GetPhyAddr(),
                 (__ubuf__ float *)raw.GetPhyAddr(),
+                (__ubuf__ float *)gateCarry.GetPhyAddr(),
                 static_cast<uint16_t>(rows), expA, tiling_.lowerBound);
         }
         AscendC::PipeBarrier<PIPE_V>();

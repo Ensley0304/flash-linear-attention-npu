@@ -3,6 +3,8 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include "acl/acl_base_rt.h"
+#include <string>
 
 using namespace op;
 
@@ -43,6 +45,14 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     // that storage in place, avoiding a full-size cross-kernel workspace.
     const aclTensor *dgBase = dg;
 
+    const char *socName = aclrtGetSocName();
+    const auto qShape = q->GetViewShape();
+    const bool fuseGateInC = useGateInKernel && safeGate &&
+        socName != nullptr && std::string(socName).find("950") != std::string::npos &&
+        cuSeqlensOptional == nullptr && qShape.GetDimNum() == 4 &&
+        qShape.GetDim(1) > 0 && qShape.GetDim(2) % chunkSize == 0;
+    const bool deferGatePost = useGateInKernel && !fuseGateInC;
+
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaBwd,
         OP_INPUT(q, k, v, beta, gk, aqk, akk, wOptional, qgOptional,
@@ -50,15 +60,15 @@ ChunkKdaBwdOutputs KdaChunkBackward(
                  rawGOptional, aLogOptional, dtBiasOptional,
                  cuSeqlensOptional, chunkIndicesOptional),
         OP_OUTPUT(dq, dk, dv, db, dgBase, dAOptional, dBiasOptional),
-        OP_ATTR(scale, chunkSize, safeGate, false, lowerBound,
+        OP_ATTR(scale, chunkSize, safeGate, fuseGateInC, lowerBound,
                 disableRecompute, useExp2, stateVFirst,
-                useGateInKernel));
+                deferGatePost));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
         return {};
     }
-    if (useGateInKernel) {
+    if (deferGatePost) {
         if (cuSeqlensOptional != nullptr) {
             ret = ADD_TO_LAUNCHER_LIST_AICORE(
                 KdaGateBwdPostVarlen,

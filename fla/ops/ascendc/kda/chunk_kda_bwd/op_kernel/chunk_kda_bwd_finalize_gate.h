@@ -14,6 +14,20 @@ namespace KDA {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 using namespace AscendC::MicroAPI;
 
+static __simd_vf__ inline void KdaBwdCGateFillA5(
+    __ubuf__ float *dst, float value, uint16_t count)
+{
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    RegTensor<float> valueReg;
+    Duplicate(valueReg, value);
+    uint32_t remaining = count;
+    for (uint32_t offset = 0; offset < count; offset += kRegElements) {
+        MaskReg mask = UpdateMask<float>(remaining);
+        DataCopy(dst + offset, valueReg, mask);
+    }
+}
+
 // Reverse inclusive scan over [rows, 128].  Two 64-column register blocks
 // keep the running sum resident while walking rows once.  This replaces the
 // six full-tile Hillis-Steele passes used by the portable path.
@@ -41,7 +55,8 @@ template <bool HAS_BIAS>
 static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
     __ubuf__ float *dg, __ubuf__ float *dbAcc, __ubuf__ float *dAAcc,
     __ubuf__ float *rawGate, __ubuf__ float *upstream,
-    __ubuf__ float *bias, uint16_t rows, float expA, float lowerBound)
+    __ubuf__ float *bias, __ubuf__ float *upstreamCarry,
+    uint16_t rows, float expA, float lowerBound)
 {
     constexpr uint32_t kCols = 128;
     constexpr uint32_t kRegCols =
@@ -56,7 +71,7 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
         RegTensor<float> upstreamAcc;
         DataCopy(dbReg, dbAcc + col);
         Duplicate(dASum, 0.0f, mask);
-        Duplicate(upstreamAcc, 0.0f, mask);
+        DataCopy(upstreamAcc, upstreamCarry + col);
         RegTensor<float> biasReg;
         if constexpr (HAS_BIAS) {
             DataCopy(biasReg, bias + col);
@@ -92,6 +107,7 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             DataCopy(dg + offset, gradient, mask);
         }
         DataCopy(dbAcc + col, dbReg, mask);
+        DataCopy(upstreamCarry + col, upstreamAcc, mask);
         RegTensor<float> dABlock;
         RegTensor<float> dATotal;
         ReduceSum(dABlock, dASum, mask);
@@ -381,6 +397,8 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
             const float a = ReadScalar(scalar);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            KdaBwdCGateFillA5(
+                (__ubuf__ float *)aux.GetPhyAddr(), 0.0f, 128);
             if (tiling_.hasDtBias != 0) {
                 auto bias = reduce_.Get<float>()[144];
                 KdaBwdCSafeGateBackwardA5<true>(
@@ -390,6 +408,7 @@ private:
                     (__ubuf__ float *)x.GetPhyAddr(),
                     (__ubuf__ float *)upstream.GetPhyAddr(),
                     (__ubuf__ float *)bias.GetPhyAddr(),
+                    (__ubuf__ float *)aux.GetPhyAddr(),
                     static_cast<uint16_t>(rows), a, tiling_.lowerBound);
             } else {
                 KdaBwdCSafeGateBackwardA5<false>(
@@ -399,6 +418,7 @@ private:
                     (__ubuf__ float *)x.GetPhyAddr(),
                     (__ubuf__ float *)upstream.GetPhyAddr(),
                     (__ubuf__ float *)x.GetPhyAddr(),
+                    (__ubuf__ float *)aux.GetPhyAddr(),
                     static_cast<uint16_t>(rows), a, tiling_.lowerBound);
             }
 #else
@@ -548,6 +568,50 @@ private:
     AscendC::TEventID vToMte3_;
     AscendC::TEventID mte3ToV_;
 };
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+__aicore__ inline void RunChunkKdaBwdCInitGateOutputsA5(
+    GM_ADDR dA, GM_ADDR dBias,
+    const ChunkKdaBwdCTilingData &tiling)
+{
+    if (AscendC::GetBlockIdx() != 0 || AscendC::GetSubBlockIdx() != 0) {
+        return;
+    }
+    AscendC::GlobalTensor<float> dAGm;
+    AscendC::GlobalTensor<float> dBiasGm;
+    dAGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dA));
+    if (tiling.hasDtBias != 0) {
+        dBiasGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dBias));
+    }
+
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> zeroBuffer;
+    constexpr uint32_t kZeroElements = 1024;
+    pipe.InitBuffer(zeroBuffer, kZeroElements * sizeof(float));
+    auto zero = zeroBuffer.Get<float>();
+    AscendC::Duplicate(zero, 0.0f, kZeroElements);
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(0);
+
+    const uint32_t headNum = static_cast<uint32_t>(tiling.headNum);
+    AscendC::DataCopyPad(
+        dAGm[0], zero,
+        {1, headNum * static_cast<uint32_t>(sizeof(float)), 0, 0, 0});
+    if (tiling.hasDtBias != 0) {
+        const uint32_t total = headNum * 128U;
+        for (uint32_t offset = 0; offset < total;
+             offset += kZeroElements) {
+            const uint32_t count =
+                offset + kZeroElements <= total ?
+                    kZeroElements : total - offset;
+            AscendC::DataCopyPad(
+                dBiasGm[offset], zero,
+                {1, count * static_cast<uint32_t>(sizeof(float)),
+                 0, 0, 0});
+        }
+    }
+}
+#endif
 
 } // namespace KDA
 

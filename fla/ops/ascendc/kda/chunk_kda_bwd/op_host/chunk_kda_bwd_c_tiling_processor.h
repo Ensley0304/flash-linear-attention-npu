@@ -277,22 +277,10 @@ public:
 
         const uint64_t headWindows =
             (static_cast<uint64_t>(tiling_.headNum) + 1U) / 2U;
-        // raw-gate reduction owns a complete head, hence every chunk of the
-        // same two-head window must remain on one core.  With blockDim equal
-        // to headWindows, flattened (chunk, headWindow) scheduling preserves
-        // exactly that invariant without a second launch or global barrier.
-        const uint64_t taskGroups = ctx_.useGateInKernel ? headWindows :
+        const uint64_t taskGroups =
             static_cast<uint64_t>(tiling_.chunkNum) * headWindows;
         blockDim_ = static_cast<uint32_t>(std::min<uint64_t>(
             taskGroups, static_cast<uint64_t>(ctx_.aicCoreNum)));
-        if (ctx_.useGateInKernel && headWindows > blockDim_) {
-            // The flattened scheduler advances by headWindows for the next
-            // chunk.  Pick a divisor so a head-window keeps the same core for
-            // every chunk; this makes its final dA/dbias reduction local.
-            while (blockDim_ > 1 && headWindows % blockDim_ != 0) {
-                --blockDim_;
-            }
-        }
         blockDim_ = blockDim_ == 0 ? 1 : blockDim_;
         tiling_.usedCoreNum = blockDim_;
 

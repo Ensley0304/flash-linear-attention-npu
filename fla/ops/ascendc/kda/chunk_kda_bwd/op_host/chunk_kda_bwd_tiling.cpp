@@ -247,6 +247,8 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
 
     const uint32_t blockDim =
         std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);
+    const bool isAscend950 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     const size_t systemWorkspace =
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize());
 
@@ -306,7 +308,14 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     cCtx.scale = *scale;
     cCtx.chunkSize = *chunkSize;
     cCtx.safeGate = *safeGate;
-    cCtx.useGateInKernel = *useGate;
+    const gert::Shape publicQShape =
+        context->GetRequiredInputShape(INPUT_Q)->GetOriginShape();
+    const bool denseGateFusion =
+        isAscend950 && *useGate && *safeGate && aTiling.isVarLen == 0 &&
+        publicQShape.GetDimNum() == 4 &&
+        publicQShape.GetDim(1) > 0 &&
+        publicQShape.GetDim(2) % *chunkSize == 0;
+    cCtx.useGateInKernel = denseGateFusion;
     cCtx.lowerBound = *lowerBound;
     cCtx.dhHeadMajor = true;
     cCtx.validateIntermediateShapes = false;

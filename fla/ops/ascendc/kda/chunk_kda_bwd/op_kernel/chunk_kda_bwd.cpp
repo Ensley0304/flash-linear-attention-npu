@@ -56,6 +56,15 @@ __aicore__ inline void RunChunkKdaBwd(
         qg, kg, w, dO, dv0, gk, cuSeqlens, chunkIndices,
         dh, dvScan, userWorkspace + tiling.kernelBWorkspaceOffset,
         tiling.kernelB);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (tiling.kernelC.useGateInKernel != 0) {
+        if ASCEND_IS_AIV {
+            RunChunkKdaBwdCInitGateOutputsA5(
+                dA, dBias, tiling.kernelC);
+            AscendC::PipeBarrier<PIPE_MTE3>();
+        }
+    }
+#endif
     AscendC::SyncAll<false>();
 
     // Phase C remaps blockIdx back to its original chunk/head owner.
