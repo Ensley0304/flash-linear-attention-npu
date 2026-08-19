@@ -2488,49 +2488,61 @@ private:
 
         const uint32_t cols = 128;
         const uint32_t count = ownedRows * cols;
-        LoadMatrixRowsPair(
+        const uint32_t qSlot = CopyInMatrixRows(
+            qGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        const uint32_t kSlot = CopyInMatrixRows(
+            kGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+
+        // The remaining inputs are already FP32 and have permanent arena
+        // destinations.  Move them there directly so Vector does not spend
+        // seven extra copies shuttling them through matrixInputPing/Pong.
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
+        CopyInMatrixRowsDirect(
             lowerAnchor,
             gkGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, lowerAnchorRow, 0)],
-            1, cols, TensorRowElements(),
+            1, cols, TensorRowElements());
+        CopyInMatrixRowsDirect(
             upperAnchor,
             gkGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, upperAnchorRow, 0)],
             1, cols, TensorRowElements());
-        LoadRows(
+        CopyInMatrixRowsDirect(
             dqBaseRaw,
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
         const uint64_t resultBase =
             slotBase / sizeof(float) + tiling_.intraResultRegionOffset / sizeof(float);
-        LoadMatrixRowsPair(
-            q,
-            qGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements(),
-            k,
-            kGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements());
-        LoadMatrixRowsPair(
+        CopyInMatrixRowsDirect(
             gate,
             gkGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements(),
+            ownedRows, cols, TensorRowElements());
+        CopyInMatrixRowsDirect(
             rawDq,
             workspaceGm_[resultBase + tiling_.intraResultDqOffset / sizeof(float) +
                          static_cast<uint64_t>(ownedBegin) * K_DIM],
             ownedRows, cols, K_DIM);
-        LoadMatrixRowsPair(
+        CopyInMatrixRowsDirect(
             rawDkLower,
             workspaceGm_[resultBase + tiling_.intraResultDkLowerOffset / sizeof(float) +
                          static_cast<uint64_t>(ownedBegin) * K_DIM],
-            ownedRows, cols, K_DIM,
+            ownedRows, cols, K_DIM);
+        CopyInMatrixRowsDirect(
             rawDkUpper,
             workspaceGm_[resultBase + tiling_.intraResultDkUpperOffset / sizeof(float) +
                          static_cast<uint64_t>(ownedBegin) * K_DIM],
             ownedRows, cols, K_DIM);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
+        ConsumeMatrixRows(q, MatrixInput<DataT>(qSlot), qSlot, count);
+        ConsumeMatrixRows(k, MatrixInput<DataT>(kSlot), kSlot, count);
+        AscendC::PipeBarrier<PIPE_V>();
 
         KdaRegbaseExp2(
             (__ubuf__ float *)anchorExp.GetPhyAddr(),
@@ -2650,6 +2662,8 @@ private:
             dbOutGm_[CIntraScalarOffset(
                 tiling_, task.batchIdx, head, tokenBegin)],
             dbAcc, ownedRows);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(directVToMte2Event_);
     }
 #endif
 
