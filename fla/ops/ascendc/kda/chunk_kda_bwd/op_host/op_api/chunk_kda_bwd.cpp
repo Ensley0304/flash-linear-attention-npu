@@ -3,6 +3,8 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include "acl/acl_base_rt.h"
+#include <string>
 
 using namespace op;
 
@@ -43,14 +45,17 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     // that storage in place, avoiding a full-size cross-kernel workspace.
     const aclTensor *dgBase = dg;
 
-    // The current A5 Kernel C uses the mature 16-row Intra schedule.  Its
-    // generic Vector-Post path produces the accumulated-gate gradient, but
-    // does not yet implement the raw-gate chain rule.  Route every public
-    // use_gate_in_kernel=true request through the proven Gate Post kernel;
-    // advertising the retired dense row32 fusion here leaves dg/dA unwritten.
-    // Keep the internal attribute false until the row16 fused path is complete.
-    const bool fuseGateInC = false;
-    const bool deferGatePost = useGateInKernel;
+    const char *socName = aclrtGetSocName();
+    const auto qShape = q->GetViewShape();
+    // The row16 Kernel C now emits a complete chunk-local dg tile.  Reuse the
+    // existing A5 register gate phase for the dense safe-gate case and retain
+    // the standalone post kernel as the fallback for every other layout/SOC.
+    const bool fuseGateInC = useGateInKernel && safeGate &&
+        socName != nullptr &&
+        std::string(socName).find("950") != std::string::npos &&
+        cuSeqlensOptional == nullptr && qShape.GetDimNum() == 4 &&
+        qShape.GetDim(1) > 0 && qShape.GetDim(2) % chunkSize == 0;
+    const bool deferGatePost = useGateInKernel && !fuseGateInC;
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaBwd,

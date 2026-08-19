@@ -306,16 +306,14 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        // The safe raw-gate path folds the reverse scan into the gate
-        // register pass.  Other paths still materialize the scan result.
-        auto upstream = src;
-        if (!applyRaw || !SAFE_GATE) {
-            KdaBwdCGateReverseScanA5(
-                (__ubuf__ float *)dst.GetPhyAddr(),
-                (__ubuf__ float *)src.GetPhyAddr(),
-                static_cast<uint16_t>(validC));
-            upstream = dst;
-        }
+        // Materialize the accumulated-gate gradient first.  The safe raw-gate
+        // register pass performs the second reverse scan while applying the
+        // chain rule, matching the proven standalone post-kernel contract.
+        KdaBwdCGateReverseScanA5(
+            (__ubuf__ float *)dst.GetPhyAddr(),
+            (__ubuf__ float *)src.GetPhyAddr(),
+            static_cast<uint16_t>(validC));
+        auto upstream = dst;
 #else
         bool srcIsInput = true;
         for (uint32_t step = 1; step < validC; step <<= 1U) {
