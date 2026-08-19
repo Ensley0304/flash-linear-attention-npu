@@ -664,6 +664,18 @@ public:
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                      kProcessRowBlock == kRowBlock) {
+            if (tiling_.isVarLen == 0 &&
+                tiling_.useGateInKernel != 0 &&
+                tiling_.seqlen % CHUNK_SIZE == 0) {
+                ProcessA5DenseRow16Pipeline(
+                    coreIdx, coreNum, headNum, headWindowCount,
+                    taskGroupCount);
+                ReleaseMatrixInputEvents();
+                return;
+            }
+        }
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == 32) {
             if (tiling_.isVarLen == 0 &&
                 tiling_.seqlen % CHUNK_SIZE == 0) {
@@ -746,6 +758,90 @@ public:
 
 private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void PrepareA5DenseRow16Window(
+        const CIntraTask &task, uint32_t headBase, uint32_t headCount,
+        uint32_t rowStart, uint64_t windowIdx)
+    {
+        for (uint32_t headInWindow = 0;
+             headInWindow < headCount; ++headInWindow) {
+            const uint32_t slot =
+                CIntraWorkspaceSlot(windowIdx, headInWindow);
+            PrepareHead(
+                task, headBase + headInWindow, rowStart,
+                kProcessRowBlock, slot);
+            // Both AIV sub-blocks write one half of the packed operands.
+            // Publish the generation only after both halves reach GM.
+            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                vecToCubeReadyFlag_);
+        }
+    }
+
+    __aicore__ inline void FinishA5DenseRow16Window(
+        const CIntraTask &task, uint32_t headBase, uint32_t headCount,
+        uint32_t rowStart, uint64_t windowIdx)
+    {
+        const uint32_t ownedHead = AscendC::GetSubBlockIdx();
+        for (uint32_t headInWindow = 0;
+             headInWindow < headCount; ++headInWindow) {
+            Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+            if (headInWindow == ownedHead) {
+                const uint32_t slot =
+                    CIntraWorkspaceSlot(windowIdx, headInWindow);
+                FinishHeadA5Dense16(
+                    task, headBase + headInWindow, rowStart,
+                    kProcessRowBlock, slot, 0);
+            }
+        }
+        // A parity slot contains both heads.  Do not let either AIV refill
+        // it until the other AIV has completed its owned head.
+        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+    }
+
+    __aicore__ inline void ProcessA5DenseRow16Pipeline(
+        uint32_t coreIdx, uint32_t coreNum, uint32_t headNum,
+        uint32_t headWindowCount, uint64_t taskGroupCount)
+    {
+        static_assert(kProcessRowBlock == kRowBlock,
+                      "The A5 row16 pipeline requires row16 tiles.");
+        uint64_t windowIdx = 0;
+        for (uint64_t taskGroupIdx = coreIdx;
+             taskGroupIdx < taskGroupCount;
+             taskGroupIdx += coreNum, windowIdx += 4U) {
+            const uint32_t taskIdx =
+                static_cast<uint32_t>(taskGroupIdx / headWindowCount);
+            const uint32_t headWindowIdx =
+                static_cast<uint32_t>(taskGroupIdx % headWindowCount);
+            const uint32_t headBase =
+                headWindowIdx * kHeadsPerWindow;
+            const uint32_t headCount =
+                headBase + 1U < headNum ? 2U : 1U;
+            const CIntraTask task = GetCIntraTask(
+                cuSeqlens_, chunkMetadata_, tiling_, taskIdx);
+
+            // Prime two parity slots.  Refill each slot only after its Post
+            // is complete.  Drain all four rows at the chunk boundary so
+            // the next chunk cannot overwrite row0's shared B while row48
+            // still consumes it.
+            PrepareA5DenseRow16Window(
+                task, headBase, headCount, 0, windowIdx);
+            PrepareA5DenseRow16Window(
+                task, headBase, headCount, 16, windowIdx + 1U);
+            FinishA5DenseRow16Window(
+                task, headBase, headCount, 0, windowIdx);
+            PrepareA5DenseRow16Window(
+                task, headBase, headCount, 32, windowIdx + 2U);
+            FinishA5DenseRow16Window(
+                task, headBase, headCount, 16, windowIdx + 1U);
+            PrepareA5DenseRow16Window(
+                task, headBase, headCount, 48, windowIdx + 3U);
+            FinishA5DenseRow16Window(
+                task, headBase, headCount, 32, windowIdx + 2U);
+            FinishA5DenseRow16Window(
+                task, headBase, headCount, 48, windowIdx + 3U);
+        }
+    }
+
     __aicore__ inline void PrepareA5DenseWindow(
         uint64_t windowIdx, uint32_t coreIdx, uint32_t coreNum,
         uint32_t headNum, uint32_t headWindowCount)
