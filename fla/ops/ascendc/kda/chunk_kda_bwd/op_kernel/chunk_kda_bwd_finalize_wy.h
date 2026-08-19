@@ -144,9 +144,9 @@ __aicore__ inline uint64_t WyWorkspaceSlotBase(
     const ChunkKdaBwdCTilingData &tiling, uint32_t logicalCore,
     uint32_t generation, uint32_t headInWindow)
 {
-    // Keep parity-addressed two-head windows in the ABI.  The current precise
-    // protocol fences each generation before reuse; retaining both windows
-    // leaves room for a future credit-based pipeline without changing tiling.
+    // Adjacent generations use disjoint two-head windows.  A5 returns a
+    // per-parity completion credit before a later generation reuses the slot;
+    // A2/A3 retain the single-generation fallback.
     const uint32_t slot = ((generation & 1U) * kWyFusedHeadsPerWindow) +
                           headInWindow;
     return (static_cast<uint64_t>(logicalCore) * tiling.workspaceSlotCount + slot) *
@@ -619,6 +619,15 @@ public:
         if ASCEND_IS_AIC {
             AscendC::SetMMLayoutTransform(true);
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr uint32_t kS0ReadyBegin = 0;
+        constexpr uint32_t kS1ReadyBegin = 2;
+        constexpr uint32_t kS2ReadyBegin = 4;
+        constexpr uint32_t kS3aReadyBegin = 6;
+        constexpr uint32_t kStageConsumedBegin = 8;
+        constexpr uint32_t kZbReadyBegin = 10;
+        constexpr uint32_t kTaskDoneBegin = 12;
+#else
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 4;
@@ -627,6 +636,7 @@ public:
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kS1Consumed = 6;
         constexpr uint32_t kTaskDone = 7;
+#endif
 
         const uint32_t coreIdx = AscendC::GetBlockIdx();
         const uint32_t coreNum = static_cast<uint32_t>(tiling_.usedCoreNum);
@@ -648,9 +658,34 @@ public:
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
-            if (localGeneration >= 1U) {
-                AscendC::CrossCoreWaitFlag(kTaskDone);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            const uint32_t parity = localGeneration & 1U;
+            const uint32_t s0Ready = kS0ReadyBegin + parity;
+            const uint32_t s1Ready = kS1ReadyBegin + parity;
+            const uint32_t s2Ready = kS2ReadyBegin + parity;
+            const uint32_t s3aReady = kS3aReadyBegin + parity;
+            const uint32_t s0Consumed = kStageConsumedBegin + parity;
+            const uint32_t s1Consumed = s0Consumed;
+            const uint32_t s3aConsumed = s0Consumed;
+            const uint32_t zbReady = kZbReadyBegin + parity;
+            const uint32_t taskDone = kTaskDoneBegin + parity;
+            if (localGeneration >= 2U) {
+                WaitVectorStage(taskDone);
             }
+#else
+            constexpr uint32_t s0Ready = kS0Ready;
+            constexpr uint32_t s1Ready = kS1Ready;
+            constexpr uint32_t s2Ready = kS2Ready;
+            constexpr uint32_t s3aReady = kS3aReady;
+            constexpr uint32_t s0Consumed = kS0Consumed;
+            constexpr uint32_t s1Consumed = kS1Consumed;
+            constexpr uint32_t s3aConsumed = kTaskDone;
+            constexpr uint32_t zbReady = kZbReady;
+            constexpr uint32_t taskDone = kTaskDone;
+            if (localGeneration >= 1U) {
+                WaitVectorStage(taskDone);
+            }
+#endif
             const uint32_t taskIdx =
                 static_cast<uint32_t>(taskGroupIdx / headWindowCount);
             const uint32_t headWindow =
@@ -666,7 +701,7 @@ public:
             // S0: dq_raw is produced by Kernel A.  Publish the dependency
             // credit immediately; AIV applies exp2(gk) and scale while AIC
             // starts the independent dk_raw contraction below.
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS0Ready);
+            PublishVectorStage(s0Ready);
             // S1: v_new @ dh^T -> dk_base, followed by gate postprocess.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint32_t head = headBase + lane;
@@ -683,7 +718,7 @@ public:
                     resource, vNew_, tokenV, dh_, dhOffset,
                     dk_, tokenK, validLen, 128, 128, V_DIM);
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS1Ready);
+            PublishVectorStage(s1Ready);
 
             // S2: A^T @ dv_scan -> dVb; AIV emits dv and db_base.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
@@ -699,7 +734,7 @@ public:
                     slot + tiling_.dVbOffset, validLen, validLen, V_DIM,
                     64, V_DIM, V_DIM);
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS2Ready);
+            PublishVectorStage(s2Ready);
 
             // S3a: dW_raw/zV.  Keep the shared dW operand unnegated so S3b
             // and S5 can consume it immediately.  Their downstream Vector
@@ -758,7 +793,7 @@ public:
                     slot + tiling_.zVOffset, validLen, validLen, 64, V_DIM);
 #endif
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
+            PublishVectorStage(s3aReady);
 
             // S3b produces zW_raw = dW_raw @ kE^T; AIV forms
             // Zb = tril(zV - zW_raw) * beta.
@@ -774,8 +809,8 @@ public:
             }
             // S0 is reused for zW only after both AIVs consumed the initial
             // dq-ready generation.
-            AscendC::CrossCoreWaitFlag(kS0Consumed);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS0Ready);
+            WaitVectorStage(s0Consumed);
+            PublishVectorStage(s0Ready);
 
             // S5 produces dKgb_raw = A^T @ dW_raw.  The gradient/gate Vector
             // stage consumes it with a negative sign, avoiding a materialized
@@ -794,10 +829,10 @@ public:
             }
             // Likewise, do not overwrite the first dk-base notification with
             // the dKgb notification until AIV has consumed it.
-            AscendC::CrossCoreWaitFlag(kS1Consumed);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS1Ready);
+            WaitVectorStage(s1Consumed);
+            PublishVectorStage(s1Ready);
             // S6 consumes Zb, while the S5 AIV gradient path is independent.
-            AscendC::CrossCoreWaitFlag(kZbReady);
+            WaitVectorStage(zbReady);
 
             // S6: Zb @ A^T -> Tza.  Keep Tza in the current slot; S7 is an
             // AIC consumer, so an AIC->GM->AIV->GM round trip is unnecessary.
@@ -829,22 +864,56 @@ public:
                     slot + tiling_.zaInputOffset,
                     validLen, validLen, validLen, 64, 64, 64);
             }
-            // kTaskDone carries two strictly ordered acknowledgements: first
-            // S3a-consumed, then final owner completion.  The second cannot
-            // be produced until this S3a generation is published.
-            AscendC::CrossCoreWaitFlag(kTaskDone);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
+            // Do not reuse the S3a channel until both AIVs consumed its first
+            // publication.  A5 tracks this per parity; A2/A3 keep the mature
+            // ordered kTaskDone stream.
+            WaitVectorStage(s3aConsumed);
+            PublishVectorStage(s3aReady);
         }
         // Drain the last generation that still owns workspace before the
         // following Intra phase reuses local resources and event ids.
-        const uint32_t outstanding = localGeneration == 0U ? 0U : 1U;
+        const uint32_t outstanding =
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            localGeneration < 2U ? localGeneration : 2U;
+#else
+            localGeneration == 0U ? 0U : 1U;
+#endif
         for (uint32_t i = 0; i < outstanding; ++i) {
-            AscendC::CrossCoreWaitFlag(kTaskDone);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            const uint32_t generation = localGeneration - outstanding + i;
+            WaitVectorStage(kTaskDoneBegin + (generation & 1U));
+#else
+            WaitVectorStage(kTaskDone);
+#endif
         }
         EndSharedLeftMmadPhase();
         if ASCEND_IS_AIC {
             AscendC::SetMMLayoutTransform(false);
         }
+    }
+
+    __aicore__ inline void PublishVectorStage(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr uint32_t kSubBlockFlagStride = 16;
+        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(flag);
+        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+            flag + kSubBlockFlagStride);
+#else
+        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(flag);
+#endif
+    }
+
+    __aicore__ inline void WaitVectorStage(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr uint32_t kSubBlockFlagStride = 16;
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(flag);
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+            flag + kSubBlockFlagStride);
+#else
+        AscendC::CrossCoreWaitFlag(flag);
+#endif
     }
 
     __aicore__ inline void BeginFusedMmadPhase()
@@ -1423,8 +1492,38 @@ private:
         AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(flag);
     }
 
+    __aicore__ inline void WaitCubeStage(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(flag);
+#else
+        AscendC::CrossCoreWaitFlag(flag);
+#endif
+    }
+
+    __aicore__ inline void SignalCubeStage(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Each AIV publishes its own 0x4 credit.  The paired AIC waits for
+        // both physical sub-block flags before advancing the parity slot.
+        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(flag);
+#else
+        SignalVectorDependency(flag);
+#endif
+    }
+
     __aicore__ inline void ProcessFused()
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr uint32_t kS0ReadyBegin = 0;
+        constexpr uint32_t kS1ReadyBegin = 2;
+        constexpr uint32_t kS2ReadyBegin = 4;
+        constexpr uint32_t kS3aReadyBegin = 6;
+        constexpr uint32_t kStageConsumedBegin = 8;
+        constexpr uint32_t kZbReadyBegin = 10;
+        constexpr uint32_t kTaskDoneBegin = 12;
+#else
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 4;
@@ -1433,6 +1532,7 @@ private:
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kS1Consumed = 6;
         constexpr uint32_t kTaskDone = 7;
+#endif
 
         const uint32_t subBlockNum = AscendC::GetSubBlockNum();
         const uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
@@ -1449,6 +1549,28 @@ private:
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            const uint32_t parity = localGeneration & 1U;
+            const uint32_t s0Ready = kS0ReadyBegin + parity;
+            const uint32_t s1Ready = kS1ReadyBegin + parity;
+            const uint32_t s2Ready = kS2ReadyBegin + parity;
+            const uint32_t s3aReady = kS3aReadyBegin + parity;
+            const uint32_t s0Consumed = kStageConsumedBegin + parity;
+            const uint32_t s1Consumed = s0Consumed;
+            const uint32_t s3aConsumed = s0Consumed;
+            const uint32_t zbReady = kZbReadyBegin + parity;
+            const uint32_t taskDone = kTaskDoneBegin + parity;
+#else
+            constexpr uint32_t s0Ready = kS0Ready;
+            constexpr uint32_t s1Ready = kS1Ready;
+            constexpr uint32_t s2Ready = kS2Ready;
+            constexpr uint32_t s3aReady = kS3aReady;
+            constexpr uint32_t s0Consumed = kS0Consumed;
+            constexpr uint32_t s1Consumed = kS1Consumed;
+            constexpr uint32_t s3aConsumed = kTaskDone;
+            constexpr uint32_t zbReady = kZbReady;
+            constexpr uint32_t taskDone = kTaskDone;
+#endif
             const uint32_t taskIdx =
                 static_cast<uint32_t>(taskGroupIdx / headWindowCount);
             const uint32_t headWindow =
@@ -1499,7 +1621,7 @@ private:
             // still producing S0, then consume the S0 generation before its
             // flag is reused.  Varlen keeps the mature standalone path.
             if (tiling_.isVarLen != 0) {
-                AscendC::CrossCoreWaitFlag(kS0Ready);
+                WaitCubeStage(s0Ready);
             }
 #endif
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
@@ -1524,14 +1646,14 @@ private:
             }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if (tiling_.isVarLen == 0) {
-                AscendC::CrossCoreWaitFlag(kS0Ready);
+                WaitCubeStage(s0Ready);
             }
 #endif
-            SignalVectorDependency(kS0Consumed);
+            SignalCubeStage(s0Consumed);
 
             // S0: consume dq_raw and finish dq_base.
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-            AscendC::CrossCoreWaitFlag(kS0Ready);
+            WaitCubeStage(s0Ready);
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
@@ -1540,7 +1662,7 @@ private:
             }
 #endif
             // S1: consume dk_raw and finish dk_state.
-            AscendC::CrossCoreWaitFlag(kS1Ready);
+            WaitCubeStage(s1Ready);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint32_t stateLane = headParallel ? 0U : lane;
                 const uint64_t slot = WyWorkspaceSlotBase(
@@ -1548,13 +1670,13 @@ private:
                 FinishBaseStage(task, headBase + lane, validLen, slot,
                                 rowSubBlockIdx, rowSubBlockNum, stateLane, 1);
             }
-            SignalVectorDependency(kS1Consumed);
+            SignalCubeStage(s1Consumed);
             // S2 is ready, but dv_scan is also the final dv storage in the
             // fused contract.  Do not overwrite it until S3a has completed
             // every final read of the original dv_scan values.
-            AscendC::CrossCoreWaitFlag(kS2Ready);
-            AscendC::CrossCoreWaitFlag(kS3aReady);
-            SignalVectorDependency(kTaskDone);
+            WaitCubeStage(s2Ready);
+            WaitCubeStage(s3aReady);
+            SignalCubeStage(s3aConsumed);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint32_t stateLane = headParallel ? 0U : lane;
                 const uint64_t slot = WyWorkspaceSlotBase(
@@ -1577,19 +1699,19 @@ private:
             }
 
             // S3b: consume zW and form the saved BF16 Zb tile.
-            AscendC::CrossCoreWaitFlag(kS0Ready);
+            WaitCubeStage(s0Ready);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 BuildZbStage(task, headBase + lane, validLen, slot,
                              rowSubBlockIdx, rowSubBlockNum);
             }
-            SignalVectorDependency(kZbReady);
+            SignalCubeStage(zbReady);
 
             // Gradient rows remain evenly split across both AIV sub-blocks.
             // Only the lightweight final state add remains on the S5 path;
             // its h*dh reduction was overlapped with AIC above.
-            AscendC::CrossCoreWaitFlag(kS1Ready);
+            WaitCubeStage(s1Ready);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
@@ -1609,14 +1731,14 @@ private:
                     task, headBase + lane, validLen, slot);
             }
             // S7: final dAkk mask/sign/writeback.
-            AscendC::CrossCoreWaitFlag(kS3aReady);
+            WaitCubeStage(s3aReady);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishDA(task, headBase + lane, validLen, slot,
                          rowSubBlockIdx, rowSubBlockNum);
             }
-            SignalVectorDependency(kTaskDone);
+            SignalCubeStage(taskDone);
 
         }
     }
