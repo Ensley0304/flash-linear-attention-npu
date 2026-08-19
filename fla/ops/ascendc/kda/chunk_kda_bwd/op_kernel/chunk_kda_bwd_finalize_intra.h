@@ -1819,7 +1819,6 @@ private:
         auto beta = Plane(9);
         constexpr uint32_t rows = kProcessRowBlock;
         constexpr uint32_t cols = K_DIM / 2;
-        constexpr uint32_t count = rows * cols;
         const uint32_t col = subBlock * cols;
         const uint32_t anchorRow = task.begin + rowStart + 8;
         Load(
@@ -1857,17 +1856,10 @@ private:
                     betaGm_[CIntraScalarOffset(
                         tiling_, task.batchIdx, head, token)],
                     rows);
-                KdaRegbaseCopy(
-                    (__ubuf__ float *)lowerData.GetPhyAddr(),
-                    (__ubuf__ float *)kData.GetPhyAddr(), count);
-                KdaRegbaseGateScale<true, false>(
-                    (__ubuf__ float *)lowerData.GetPhyAddr(),
-                    (__ubuf__ float *)gate.GetPhyAddr(),
-                    (__ubuf__ float *)anchor.GetPhyAddr(),
-                    (__ubuf__ float *)0, rows, cols);
-                KdaRegbaseGateScalePair(
+                KdaRegbaseGateScaleLowerPair(
                     (__ubuf__ float *)qData.GetPhyAddr(),
                     (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
                     (__ubuf__ float *)gate.GetPhyAddr(),
                     (__ubuf__ float *)anchor.GetPhyAddr(),
                     (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
