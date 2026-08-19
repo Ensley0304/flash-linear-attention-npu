@@ -222,17 +222,20 @@ static __simd_vf__ inline void KdaRegbaseGateScalePair(
     }
 }
 
+template <bool DUAL_ANCHOR = false>
 static __simd_vf__ inline void KdaRegbaseGateScaleLowerPair(
     __ubuf__ float *qData, __ubuf__ float *kData,
     __ubuf__ float *lowerData, __ubuf__ float *gate,
-    __ubuf__ float *anchor, __ubuf__ float *beta,
+    __ubuf__ float *lowerAnchor, __ubuf__ float *upperAnchor,
+    __ubuf__ float *beta,
     uint16_t rows, uint16_t cols)
 {
     RegTensor<float> qReg;
     RegTensor<float> kReg;
     RegTensor<float> lowerReg;
     RegTensor<float> gateReg;
-    RegTensor<float> anchorReg;
+    RegTensor<float> lowerAnchorReg;
+    RegTensor<float> upperAnchorReg;
     RegTensor<float> lowerScaleReg;
     RegTensor<float> upperScaleReg;
     RegTensor<float> betaReg;
@@ -245,14 +248,21 @@ static __simd_vf__ inline void KdaRegbaseGateScaleLowerPair(
             DataCopy(qReg, qData + row * cols + col);
             DataCopy(kReg, kData + row * cols + col);
             DataCopy(gateReg, gate + row * cols + col);
-            DataCopy(anchorReg, anchor + col);
+            DataCopy(lowerAnchorReg, lowerAnchor + col);
+            if constexpr (DUAL_ANCHOR) {
+                DataCopy(upperAnchorReg, upperAnchor + col);
+            }
 
-            Sub(lowerScaleReg, anchorReg, gateReg, mask);
+            Sub(lowerScaleReg, lowerAnchorReg, gateReg, mask);
             Muls(lowerScaleReg, lowerScaleReg, kLn2, mask);
             Exp(lowerScaleReg, lowerScaleReg, mask);
             Mul(lowerReg, kReg, lowerScaleReg, mask);
 
-            Sub(upperScaleReg, gateReg, anchorReg, mask);
+            if constexpr (DUAL_ANCHOR) {
+                Sub(upperScaleReg, gateReg, upperAnchorReg, mask);
+            } else {
+                Sub(upperScaleReg, gateReg, lowerAnchorReg, mask);
+            }
             Muls(upperScaleReg, upperScaleReg, kLn2, mask);
             Exp(upperScaleReg, upperScaleReg, mask);
             Mul(qReg, qReg, upperScaleReg, mask);
@@ -266,11 +276,12 @@ static __simd_vf__ inline void KdaRegbaseGateScaleLowerPair(
     }
 }
 
-template <bool FUSE_DQ_BASE>
+template <bool FUSE_DQ_BASE, bool DUAL_ANCHOR = false>
 static __simd_vf__ inline void KdaRegbaseFinishScale(
     __ubuf__ float *rawDq, __ubuf__ float *rawDkLower,
     __ubuf__ float *rawDkUpper, __ubuf__ float *k,
-    __ubuf__ float *gate, __ubuf__ float *anchor, __ubuf__ float *beta,
+    __ubuf__ float *gate, __ubuf__ float *lowerAnchor,
+    __ubuf__ float *upperAnchor, __ubuf__ float *beta,
     __ubuf__ float *dbAcc, __ubuf__ float *dqBaseRaw,
     __ubuf__ float *anchorExp, __ubuf__ float *dqFinal, float scale,
     uint16_t rows, uint16_t cols)
@@ -280,7 +291,8 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
     RegTensor<float> dkUpperReg;
     RegTensor<float> kReg;
     RegTensor<float> gateReg;
-    RegTensor<float> anchorReg;
+    RegTensor<float> lowerAnchorReg;
+    RegTensor<float> upperAnchorReg;
     RegTensor<float> posReg;
     RegTensor<float> negReg;
     RegTensor<float> productReg;
@@ -304,11 +316,17 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
             DataCopy(dkUpperReg, rawDkUpper + row * cols + col);
             DataCopy(kReg, k + row * cols + col);
             DataCopy(gateReg, gate + row * cols + col);
-            // The anchor is invariant across the owned row tile.
-            DataCopy(anchorReg, anchor + col);
+            DataCopy(lowerAnchorReg, lowerAnchor + col);
+            if constexpr (DUAL_ANCHOR) {
+                DataCopy(upperAnchorReg, upperAnchor + col);
+            }
 
-            Sub(posReg, gateReg, anchorReg, mask);
-            Sub(negReg, anchorReg, gateReg, mask);
+            Sub(posReg, gateReg, lowerAnchorReg, mask);
+            if constexpr (DUAL_ANCHOR) {
+                Sub(negReg, upperAnchorReg, gateReg, mask);
+            } else {
+                Sub(negReg, lowerAnchorReg, gateReg, mask);
+            }
             Muls(posReg, posReg, kLn2, mask);
             Muls(negReg, negReg, kLn2, mask);
             Exp(posReg, posReg, mask);

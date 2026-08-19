@@ -334,13 +334,46 @@ public:
                             tiling_.workspaceCoreSize +
                         static_cast<uint64_t>(slot) *
                             tiling_.workspaceSlotSize;
+                    uint64_t bSlotBase = slotBase;
+                    bool useSharedB = false;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    useSharedB = tiling_.isVarLen == 0 &&
+                                 tiling_.keyDim == 128 &&
+                                 tiling_.useGateInKernel != 0 &&
+                                 validC == kChunkSize &&
+                                 processRowBlock == kRowBlock;
+                    if (useSharedB) {
+                        const uint64_t groupFirstWindow =
+                            window - rowStart / processRowBlock;
+                        const uint32_t bSlot =
+                            CIntraWorkspaceSlot(groupFirstWindow, lane);
+                        bSlotBase =
+                            static_cast<uint64_t>(core) *
+                                tiling_.workspaceCoreSize +
+                            static_cast<uint64_t>(bSlot) *
+                                tiling_.workspaceSlotSize;
+                    }
+#endif
                     // Upper-A/B are padded to the physical row tile.  Keep M
                     // at that tile size even for a varlen tail; Vector-Post
                     // consumes only validRows.  A non-aligned M (for example
                     // six rows) is not a valid Cube tile and corrupts the
                     // final tail chunk.
-                    RunLower(lower, slotBase, lowerK, processRowBlock);
-                    RunUpper(upper, slotBase, future, processRowBlock);
+                    RunLower(
+                        lower, slotBase, bSlotBase,
+                        lowerK, processRowBlock);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    if (useSharedB) {
+                        RunUpperA5Shared(
+                            upper, slotBase, bSlotBase,
+                            processRowBlock);
+                    } else
+#endif
+                    {
+                        RunUpper(
+                            upper, slotBase, future,
+                            processRowBlock);
+                    }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                         cubeToVecReadyFlag_);
@@ -366,17 +399,36 @@ public:
 private:
     template <typename Mmad>
     __aicore__ inline void RunLower(
-        Mmad &mm, uint64_t slotBase, uint32_t lowerK,
+        Mmad &mm, uint64_t slotBase, uint64_t bSlotBase,
+        uint32_t lowerK,
         uint32_t processRowBlock)
     {
         Run<RowMajor>(
             mm, slotBase + tiling_.intraALowerOffset,
-            slotBase + tiling_.intraBLowerOffset,
+            bSlotBase + tiling_.intraBLowerOffset,
             slotBase + tiling_.intraResultRegionOffset +
                 tiling_.intraResultDqOffset,
             2 * processRowBlock, tiling_.keyDim, lowerK,
             lowerK, tiling_.keyDim, tiling_.keyDim);
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    template <typename Mmad>
+    __aicore__ inline void RunUpperA5Shared(
+        Mmad &mm, uint64_t slotBase, uint64_t bSlotBase,
+        uint32_t processRowBlock)
+    {
+        const uint32_t reduction = 2 * kChunkSize;
+        Run<ColumnMajor>(
+            mm, slotBase + tiling_.intraAUpperOffset,
+            bSlotBase + tiling_.intraBUpperOffset,
+            slotBase + tiling_.intraResultRegionOffset +
+                tiling_.intraResultDkUpperOffset,
+            processRowBlock, tiling_.keyDim, reduction,
+            reduction, tiling_.keyDim, tiling_.keyDim,
+            0, 0, processRowBlock, 0, reduction);
+    }
+#endif
 
     template <typename Mmad>
     __aicore__ inline void RunUpper(
@@ -1413,13 +1465,31 @@ private:
         const uint32_t future = task.end - task.begin - rowStart;
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
         PackLowerA(task, head, rowStart, validRows, prefix, subBlock, slotBase);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                      kProcessRowBlock == kRowBlock) {
+            if (tiling_.useGateInKernel != 0 &&
+                validRows == kProcessRowBlock &&
+                task.end - task.begin == CHUNK_SIZE) {
+                PackUpperA5Shared(
+                    task, head, rowStart, validRows, future,
+                    subBlock, slotBase);
+                if (rowStart == 0) {
+                    PackDenseA5B<true>(
+                        task, head, rowStart, prefix, future,
+                        subBlock, slotBase);
+                }
+                return;
+            }
+        }
+#endif
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == kRowBlock) {
             if (validRows == kProcessRowBlock &&
                 task.end - task.begin == CHUNK_SIZE) {
-                PackDenseA5B(
+                PackDenseA5B<false>(
                     task, head, rowStart, prefix, future,
                     subBlock, slotBase);
                 return;
@@ -1429,6 +1499,41 @@ private:
         PackLowerB(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperB(task, head, rowStart, future, subBlock, slotBase);
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void PackUpperA5Shared(
+        const CIntraTask &task, uint32_t head, uint32_t rowStart,
+        uint32_t validRows, uint32_t future, uint32_t subBlock,
+        uint64_t slotBase)
+    {
+        auto work = Plane(0);
+        auto masked = Plane(2);
+        auto &source = subBlock == 0 ? dAqkGm_ : dAkkGm_;
+        const uint64_t srcOffset = CIntraMatrixOffset(
+            tiling_, task.batchIdx, head,
+            task.begin + rowStart, rowStart);
+        LoadRows(
+            work, source[srcOffset], future, kProcessRowBlock,
+            MatrixRowElements());
+
+        KdaRegbaseFill(
+            (__ubuf__ float *)masked.GetPhyAddr(), 0.0f,
+            CHUNK_SIZE * kProcessRowBlock);
+        KdaRegbaseMaskUpperA(
+            (__ubuf__ float *)masked[rowStart * kProcessRowBlock].GetPhyAddr(),
+            (__ubuf__ float *)work.GetPhyAddr(),
+            future, validRows, kProcessRowBlock);
+
+        const uint32_t physicalRowBase = subBlock * CHUNK_SIZE;
+        const uint64_t dstOffset =
+            slotBase / sizeof(float) +
+            tiling_.intraAUpperOffset / sizeof(float) +
+            static_cast<uint64_t>(physicalRowBase) * kProcessRowBlock;
+        StoreRows(
+            workspaceGm_[dstOffset], masked,
+            CHUNK_SIZE, kProcessRowBlock, kProcessRowBlock);
+    }
+#endif
 
     __aicore__ inline void PackLowerA(
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
@@ -1804,6 +1909,7 @@ private:
     }
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    template <bool SHARED>
     __aicore__ inline void PackDenseA5B(
         const CIntraTask &task, uint32_t head, uint32_t rowStart,
         uint32_t prefix, uint32_t future, uint32_t subBlock,
@@ -1815,22 +1921,33 @@ private:
         auto kData = Plane(2);
         auto gate = Plane(4);
         auto lowerData = Plane(6);
-        auto anchor = Plane(8);
-        auto beta = Plane(9);
+        auto lowerAnchor = Plane(8);
+        auto upperAnchor = Plane(9);
+        auto beta = Plane(SHARED ? 10 : 9);
         constexpr uint32_t rows = kProcessRowBlock;
         constexpr uint32_t cols = K_DIM / 2;
         const uint32_t col = subBlock * cols;
-        const uint32_t anchorRow = task.begin + rowStart + 8;
+        const uint32_t lowerAnchorRow =
+            task.begin + (SHARED ? CHUNK_SIZE - 8 : rowStart + 8);
+        const uint32_t upperAnchorRow =
+            task.begin + (SHARED ? 8 : rowStart + 8);
         Load(
-            anchor,
+            lowerAnchor,
             gkGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, anchorRow, col)],
+                tiling_, task.batchIdx, head, lowerAnchorRow, col)],
             cols);
+        if constexpr (SHARED) {
+            Load(
+                upperAnchor,
+                gkGm_[CIntraTensorOffset(
+                    tiling_, task.batchIdx, head, upperAnchorRow, col)],
+                cols);
+        }
 
         for (uint32_t sourceRow = 0; sourceRow < CHUNK_SIZE;
              sourceRow += kProcessRowBlock) {
-            const bool needLower = sourceRow < prefix;
-            const bool needUpper = sourceRow >= rowStart;
+            const bool needLower = SHARED || sourceRow < prefix;
+            const bool needUpper = SHARED || sourceRow >= rowStart;
             const uint32_t token = task.begin + sourceRow;
 
             if (needLower && needUpper) {
@@ -1856,13 +1973,25 @@ private:
                     betaGm_[CIntraScalarOffset(
                         tiling_, task.batchIdx, head, token)],
                     rows);
-                KdaRegbaseGateScaleLowerPair(
-                    (__ubuf__ float *)qData.GetPhyAddr(),
-                    (__ubuf__ float *)kData.GetPhyAddr(),
-                    (__ubuf__ float *)lowerData.GetPhyAddr(),
-                    (__ubuf__ float *)gate.GetPhyAddr(),
-                    (__ubuf__ float *)anchor.GetPhyAddr(),
-                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+                if constexpr (SHARED) {
+                    KdaRegbaseGateScaleLowerPair<true>(
+                        (__ubuf__ float *)qData.GetPhyAddr(),
+                        (__ubuf__ float *)kData.GetPhyAddr(),
+                        (__ubuf__ float *)lowerData.GetPhyAddr(),
+                        (__ubuf__ float *)gate.GetPhyAddr(),
+                        (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                        (__ubuf__ float *)upperAnchor.GetPhyAddr(),
+                        (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+                } else {
+                    KdaRegbaseGateScaleLowerPair(
+                        (__ubuf__ float *)qData.GetPhyAddr(),
+                        (__ubuf__ float *)kData.GetPhyAddr(),
+                        (__ubuf__ float *)lowerData.GetPhyAddr(),
+                        (__ubuf__ float *)gate.GetPhyAddr(),
+                        (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                        (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                        (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+                }
             } else if (needLower) {
                 LoadMatrixRowsPair(
                     lowerData,
@@ -1876,7 +2005,7 @@ private:
                 KdaRegbaseGateScale<true, false>(
                     (__ubuf__ float *)lowerData.GetPhyAddr(),
                     (__ubuf__ float *)gate.GetPhyAddr(),
-                    (__ubuf__ float *)anchor.GetPhyAddr(),
+                    (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
                     (__ubuf__ float *)0, rows, cols);
             } else {
                 LoadMatrixRowsPair(
@@ -1898,12 +2027,21 @@ private:
                     betaGm_[CIntraScalarOffset(
                         tiling_, task.batchIdx, head, token)],
                     rows);
-                KdaRegbaseGateScalePair(
-                    (__ubuf__ float *)qData.GetPhyAddr(),
-                    (__ubuf__ float *)kData.GetPhyAddr(),
-                    (__ubuf__ float *)gate.GetPhyAddr(),
-                    (__ubuf__ float *)anchor.GetPhyAddr(),
-                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+                if constexpr (SHARED) {
+                    KdaRegbaseGateScalePair(
+                        (__ubuf__ float *)qData.GetPhyAddr(),
+                        (__ubuf__ float *)kData.GetPhyAddr(),
+                        (__ubuf__ float *)gate.GetPhyAddr(),
+                        (__ubuf__ float *)upperAnchor.GetPhyAddr(),
+                        (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+                } else {
+                    KdaRegbaseGateScalePair(
+                        (__ubuf__ float *)qData.GetPhyAddr(),
+                        (__ubuf__ float *)kData.GetPhyAddr(),
+                        (__ubuf__ float *)gate.GetPhyAddr(),
+                        (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                        (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+                }
             }
 
             if (needLower) {
@@ -1916,7 +2054,9 @@ private:
                     rows, cols, K_DIM);
             }
             if (needUpper) {
-                const uint32_t upperRow = sourceRow - rowStart;
+                const uint32_t upperRow =
+                    SHARED ? sourceRow : sourceRow - rowStart;
+                const uint32_t upperRows = SHARED ? CHUNK_SIZE : future;
                 const uint64_t qOffset =
                     slotBase / sizeof(float) +
                     tiling_.intraBUpperOffset / sizeof(float) +
@@ -1924,7 +2064,7 @@ private:
                 const uint64_t kOffset =
                     slotBase / sizeof(float) +
                     tiling_.intraBUpperOffset / sizeof(float) +
-                    static_cast<uint64_t>(future + upperRow) * K_DIM + col;
+                    static_cast<uint64_t>(upperRows + upperRow) * K_DIM + col;
                 StoreRows(
                     workspaceGm_[qOffset], qData,
                     rows, cols, K_DIM);
@@ -2195,6 +2335,7 @@ private:
             (__ubuf__ float *)k.GetPhyAddr(),
             (__ubuf__ float *)gate.GetPhyAddr(),
             (__ubuf__ float *)anchor.GetPhyAddr(),
+            (__ubuf__ float *)anchor.GetPhyAddr(),
             (__ubuf__ float *)beta.GetPhyAddr(),
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
             (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
@@ -2314,9 +2455,11 @@ private:
         auto k = Plane(6);           // planes 6-7
         auto gate = Plane(8);        // planes 8-9; reused by inputGrad
         auto q = Plane(10);          // planes 10-11
-        auto anchor = Plane(12);     // plane 12; reused by output
-        auto beta = Plane(13);       // plane 13; reused by output
-        auto dbAcc = Plane(14);      // plane 14
+        auto lowerAnchor = Plane(12);  // plane 12; reused by output
+        auto upperAnchor = Plane(13);  // plane 13; reused by output
+        auto scalars = Plane(14);
+        auto beta = scalars;
+        auto dbAcc = scalars[128];
         auto dqBaseRaw = Plane(15);  // planes 15-16
         auto anchorExp = Plane(17);  // first 128 elements
         auto dqFinal = Plane(18);    // planes 18-19
@@ -2324,9 +2467,16 @@ private:
         KdaRegbaseFill(
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
 
-        const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
-                                     rowStart + 8 : task.end - task.begin - 1;
-        const uint32_t anchorRow = task.begin + anchorLocal;
+        const bool useSharedB =
+            task.end - task.begin == CHUNK_SIZE &&
+            validRows == kProcessRowBlock;
+        const uint32_t localAnchor =
+            rowStart + 8 < task.end - task.begin ?
+                rowStart + 8 : task.end - task.begin - 1;
+        const uint32_t lowerAnchorRow =
+            task.begin + (useSharedB ? CHUNK_SIZE - 8 : localAnchor);
+        const uint32_t upperAnchorRow =
+            task.begin + (useSharedB ? 8 : localAnchor);
         LoadScalarRows(
             beta,
             betaGm_[CIntraScalarOffset(
@@ -2336,10 +2486,15 @@ private:
         const uint32_t cols = 128;
         const uint32_t count = ownedRows * cols;
         LoadMatrixRowsPair(
-            anchor,
+            lowerAnchor,
             gkGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, anchorRow, 0)],
+                tiling_, task.batchIdx, head, lowerAnchorRow, 0)],
             1, cols, TensorRowElements(),
+            upperAnchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, upperAnchorRow, 0)],
+            1, cols, TensorRowElements());
+        LoadRows(
             dqBaseRaw,
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
@@ -2376,20 +2531,38 @@ private:
 
         KdaRegbaseExp2(
             (__ubuf__ float *)anchorExp.GetPhyAddr(),
-            (__ubuf__ float *)anchor.GetPhyAddr(), cols);
-        KdaRegbaseFinishScale<true>(
-            (__ubuf__ float *)rawDq.GetPhyAddr(),
-            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
-            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
-            (__ubuf__ float *)k.GetPhyAddr(),
-            (__ubuf__ float *)gate.GetPhyAddr(),
-            (__ubuf__ float *)anchor.GetPhyAddr(),
-            (__ubuf__ float *)beta.GetPhyAddr(),
-            (__ubuf__ float *)dbAcc.GetPhyAddr(),
-            (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
-            (__ubuf__ float *)anchorExp.GetPhyAddr(),
-            (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
-            ownedRows, cols);
+            (__ubuf__ float *)lowerAnchor.GetPhyAddr(), cols);
+        if (useSharedB) {
+            KdaRegbaseFinishScale<true, true>(
+                (__ubuf__ float *)rawDq.GetPhyAddr(),
+                (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+                (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+                (__ubuf__ float *)k.GetPhyAddr(),
+                (__ubuf__ float *)gate.GetPhyAddr(),
+                (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                (__ubuf__ float *)upperAnchor.GetPhyAddr(),
+                (__ubuf__ float *)beta.GetPhyAddr(),
+                (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+                (__ubuf__ float *)anchorExp.GetPhyAddr(),
+                (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
+                ownedRows, cols);
+        } else {
+            KdaRegbaseFinishScale<true>(
+                (__ubuf__ float *)rawDq.GetPhyAddr(),
+                (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+                (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+                (__ubuf__ float *)k.GetPhyAddr(),
+                (__ubuf__ float *)gate.GetPhyAddr(),
+                (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
+                (__ubuf__ float *)beta.GetPhyAddr(),
+                (__ubuf__ float *)dbAcc.GetPhyAddr(),
+                (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+                (__ubuf__ float *)anchorExp.GetPhyAddr(),
+                (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
+                ownedRows, cols);
+        }
 
         auto output = Plane(12);  // planes 12-13, after anchor/beta's last use
 
@@ -2591,6 +2764,7 @@ private:
                 (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
                 (__ubuf__ float *)k.GetPhyAddr(),
                 (__ubuf__ float *)gate.GetPhyAddr(),
+                (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
