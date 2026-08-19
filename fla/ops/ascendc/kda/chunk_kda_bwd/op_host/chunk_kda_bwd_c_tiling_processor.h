@@ -398,10 +398,11 @@ private:
 
         const uint64_t c = 64;
         const uint64_t k = 128;
-        const uint64_t row = std::min<uint64_t>(
-            32, std::min<uint64_t>(8192 / (c * sizeof(float)),
-                                   8192 / (k * sizeof(float))));
-        const uint64_t bc = row;
+        // Kernel C uses the mature 16-row Intra tile on every architecture.
+        // Keep Host offsets derived from that same physical row count; using
+        // the retired A5 row32 layout moves dK_lower to a region that the
+        // row16 Cube result never writes.
+        const uint64_t bc = 16;
         tiling_.intraALowerOffset = 0;
         tiling_.intraBLowerOffset = static_cast<int64_t>(
             Align512(2 * bc * c * sizeof(float)));

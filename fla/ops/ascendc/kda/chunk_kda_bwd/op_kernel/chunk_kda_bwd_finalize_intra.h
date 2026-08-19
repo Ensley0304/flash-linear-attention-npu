@@ -25,10 +25,7 @@ constexpr float kLn2 = 0.69314718055994530942f;
 template <uint32_t K_DIM, bool VARLEN_TND>
 struct ProcessRowBlock {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    // A5 dense K=128 combines two legacy 16-row tiles.  Varlen retains the
-    // mature 16-row tail path.
-    static constexpr uint32_t value =
-        !VARLEN_TND && K_DIM == 128 ? 32 : kRowBlock;
+    static constexpr uint32_t value = kRowBlock;
 #else
     static constexpr uint32_t value = kRowBlock;
 #endif
@@ -170,10 +167,9 @@ public:
             resource_.l0CBuf.template GetBufferByByte<float>(0);
 
         const uint32_t m = shape.m() == 1 ? 16 : shape.m();
-        // A5 packed L1 layouts require compile-time physical extents.  Use
-        // the proven maximum lower/upper shapes and take the runtime tile
-        // from that base.  A generic 128x128 base changes the blocked mapping
-        // and permutes N columns.
+        // A5 FP32 packed-copy layouts require compile-time physical extents.
+        // Build the proven maximum lower/upper base and select the runtime
+        // tile from it.
         auto l1ABase = tla::MakeTensor(
             l1AStorage,
             tla::MakeLayout<float, typename Copy::LayoutTagL1A>(
@@ -263,6 +259,11 @@ public:
     {
         tiling_ = tiling;
         AscendC::SetHF32Mode(false);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // BlockMmad used to manage the A5 packed L0C/FixPipe mapping
+        // internally.  The direct TileMmadTla path owns that lifecycle.
+        AscendC::SetMMLayoutTransform(true);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(0);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(1);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(0);
@@ -280,10 +281,15 @@ public:
         using RowMajor = Catlass::layout::RowMajor;
         using ColumnMajor = Catlass::layout::ColumnMajor;
         Catlass::Arch::Resource<ArchTag> resource;
-        CIntraSingleTileMmad<RowMajor, 64, kCIntraChunkSize>
-            lower(resource);
-        CIntraSingleTileMmad<ColumnMajor, 32, 2 * kCIntraChunkSize>
-            upper(resource);
+        using LowerCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+            ArchTag, float, RowMajor, float, RowMajor, float, RowMajor>;
+        using UpperCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
+            ArchTag, float, ColumnMajor, float, RowMajor, float, RowMajor>;
+        // Direct packed TileMmad path.  BlockMmad is intentionally not used.
+        using LowerMmad = WyTileGemmDirect<ArchTag, float, LowerCopy, 128>;
+        using UpperMmad = WyTileGemmDirect<ArchTag, float, UpperCopy, 64>;
+        LowerMmad lower(resource);
+        UpperMmad upper(resource);
 
         const uint32_t core = AscendC::GetBlockIdx();
         const uint32_t headWindows =
@@ -303,8 +309,7 @@ public:
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validC = task.end - task.begin;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            const uint32_t processRowBlock =
-                tiling_.isVarLen == 0 ? 32U : kRowBlock;
+            const uint32_t processRowBlock = kRowBlock;
 #else
             const uint32_t processRowBlock = kRowBlock;
 #endif
@@ -317,7 +322,11 @@ public:
                 const uint32_t lowerK = (prefix + 15U) & ~15U;
                 const uint32_t future = validC - rowStart;
                 for (uint32_t lane = 0; lane < headCount; ++lane) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    Catlass::Arch::CrossCoreWaitFlag(vecToCubeReadyFlag_);
+#else
                     AscendC::CrossCoreWaitFlag(kCIntraVecReadyFlag);
+#endif
                     const uint32_t slot =
                         CIntraWorkspaceSlot(window, lane);
                     const uint64_t slotBase =
@@ -325,18 +334,33 @@ public:
                             tiling_.workspaceCoreSize +
                         static_cast<uint64_t>(slot) *
                             tiling_.workspaceSlotSize;
-                    RunLower(lower, slotBase, lowerK, processRowBlock);
                     // Upper-A/B are padded to the physical row tile.  Keep M
                     // at that tile size even for a varlen tail; Vector-Post
                     // consumes only validRows.  A non-aligned M (for example
                     // six rows) is not a valid Cube tile and corrupts the
                     // final tail chunk.
+                    RunLower(lower, slotBase, lowerK, processRowBlock);
                     RunUpper(upper, slotBase, future, processRowBlock);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                        cubeToVecReadyFlag_);
+#else
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
                         kCIntraCubeReadyFlag);
+#endif
                 }
             }
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Drain the reusable single-tile event credits before changing the
+        // matrix-layout mode or handing the AIC back to the outer kernel.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(1);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(1);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(0);
+        AscendC::SetMMLayoutTransform(false);
+#endif
     }
 
 private:
@@ -360,6 +384,51 @@ private:
         uint32_t processRowBlock)
     {
         const uint32_t reduction = 2 * future;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (processRowBlock == 32) {
+            // A5's proven Intra Upper tile is M=16.  The packed A operand is
+            // physically [32, 2*future] ColumnMajor, so expose each 16-row
+            // view with the original leading dimension.  WyTileGemmDirect
+            // then reduces K in 64-wide TileMmadTla slices; no BlockMmad is
+            // used and L0B never reaches the unstable 64-KiB full-capacity
+            // tile.
+            constexpr uint32_t kReductionTile = 64;
+            for (uint32_t kOffset = 0; kOffset < reduction;
+                 kOffset += kReductionTile) {
+                const uint32_t curK =
+                    reduction - kOffset < kReductionTile ?
+                        reduction - kOffset : kReductionTile;
+                const uint64_t partialOffset =
+                    static_cast<uint64_t>(kOffset / kReductionTile) *
+                    processRowBlock * tiling_.keyDim * sizeof(float);
+                for (uint32_t rowOffset = 0; rowOffset < 32;
+                     rowOffset += 16) {
+                    const uint64_t resultOffset =
+                        partialOffset +
+                        static_cast<uint64_t>(rowOffset) *
+                            tiling_.keyDim * sizeof(float);
+                    Run<ColumnMajor>(
+                        mm, slotBase + tiling_.intraAUpperOffset,
+                        slotBase + tiling_.intraBUpperOffset,
+                        slotBase + tiling_.intraResultRegionOffset +
+                            tiling_.intraResultDkUpperOffset + resultOffset,
+                        16, tiling_.keyDim, curK,
+                        reduction, tiling_.keyDim, tiling_.keyDim,
+                        kOffset, kOffset, processRowBlock, rowOffset,
+                        reduction);
+                }
+            }
+        } else {
+            Run<ColumnMajor>(
+                mm, slotBase + tiling_.intraAUpperOffset,
+                slotBase + tiling_.intraBUpperOffset,
+                slotBase + tiling_.intraResultRegionOffset +
+                    tiling_.intraResultDkUpperOffset,
+                processRowBlock, tiling_.keyDim, reduction,
+                reduction, tiling_.keyDim, tiling_.keyDim,
+                0, 0, processRowBlock, 0);
+        }
+#else
         Run<ColumnMajor>(
             mm, slotBase + tiling_.intraAUpperOffset,
             slotBase + tiling_.intraBUpperOffset,
@@ -367,6 +436,7 @@ private:
                 tiling_.intraResultDkUpperOffset,
             processRowBlock, tiling_.keyDim, reduction,
             reduction, tiling_.keyDim, tiling_.keyDim);
+#endif
     }
 
     template <typename LayoutA, typename Mmad>
@@ -374,7 +444,10 @@ private:
         Mmad &mm, uint64_t aByte, uint64_t bByte, uint64_t cByte,
         uint32_t m, uint32_t n, uint32_t k,
         uint32_t aPhysicalCols, uint32_t bPhysicalCols,
-        uint32_t cPhysicalCols)
+        uint32_t cPhysicalCols,
+        uint32_t aColOffset = 0, uint32_t bRowOffset = 0,
+        uint32_t aPhysicalRows = 0, uint32_t aRowOffset = 0,
+        uint32_t bPhysicalRows = 0)
     {
         using RowMajor = Catlass::layout::RowMajor;
         AscendC::GlobalTensor<float> a;
@@ -386,17 +459,22 @@ private:
             workspace_ + bByte));
         c.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             workspace_ + cByte));
+        const uint32_t physicalRows = aPhysicalRows == 0 ? m : aPhysicalRows;
         auto ta = tla::MakeTensor(
-            a, tla::MakeLayout<float, LayoutA>(m, aPhysicalCols),
+            a, tla::MakeLayout<float, LayoutA>(physicalRows, aPhysicalCols),
             Catlass::Arch::PositionGM{});
         auto tb = tla::MakeTensor(
-            b, tla::MakeLayout<float, RowMajor>(k, bPhysicalCols),
+            b, tla::MakeLayout<float, RowMajor>(
+                   bPhysicalRows == 0 ? k : bPhysicalRows,
+                   bPhysicalCols),
             Catlass::Arch::PositionGM{});
         auto tc = tla::MakeTensor(
             c, tla::MakeLayout<float, RowMajor>(m, cPhysicalCols),
             Catlass::Arch::PositionGM{});
-        auto ba = GetTile(ta, tla::MakeCoord(0, 0), tla::MakeShape(m, k));
-        auto bb = GetTile(tb, tla::MakeCoord(0, 0), tla::MakeShape(k, n));
+        auto ba = GetTile(
+            ta, tla::MakeCoord(aRowOffset, aColOffset), tla::MakeShape(m, k));
+        auto bb = GetTile(
+            tb, tla::MakeCoord(bRowOffset, 0), tla::MakeShape(k, n));
         auto bc = GetTile(tc, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
         mm(ba, bb, bc, Catlass::GemmCoord{m, n, k});
     }
@@ -405,6 +483,10 @@ private:
     GM_ADDR chunkIndices_;
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kCIntraVecReadyFlag};
+    Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCIntraCubeReadyFlag};
+#endif
 };
 
 } // namespace KDA
@@ -526,7 +608,8 @@ public:
         const uint64_t taskGroupCount =
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if constexpr (!PUBLIC_VARLEN && K_DIM == 128) {
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                      kProcessRowBlock == 32) {
             if (tiling_.isVarLen == 0 &&
                 tiling_.seqlen % CHUNK_SIZE == 0) {
                 ProcessA5DenseFourSlot(
@@ -568,11 +651,8 @@ public:
                     const uint32_t slot = CIntraWorkspaceSlot(windowIdx, headInWindow);
                     PrepareHead(task, headBase + headInWindow, rowStart, validRows, slot);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    // Kernel C has two AIV sub-blocks packing disjoint
-                    // operand halves.  Publish one generation only after
-                    // both MTE3 streams are visible to the paired AIC.
-                    Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeReadyFlag_);
+                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                        vecToCubeReadyFlag_);
 #else
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(kVecToCubeReadyFlag);
 #endif
@@ -698,10 +778,8 @@ private:
         const uint64_t windowCount = ownedGroups * 2U;
         const uint64_t primeCount = windowCount < 2U ? windowCount : 2U;
 
-        // Prime both generations.  Afterwards, Post(i) releases parity slot
-        // i before Pre(i+2) reuses it, while AIC advances through generation
-        // i+1.  The ready flags remain in the same logical FIFO order as the
-        // mature schedule; only their producer/consumer distance changes.
+        // Prime both row generations.  Post(i) releases parity slot i before
+        // Pre(i+2) reuses it, while AIC advances through generation i+1.
         for (uint64_t windowIdx = 0; windowIdx < primeCount; ++windowIdx) {
             PrepareA5DenseWindow(
                 windowIdx, coreIdx, coreNum, headNum, headWindowCount);
@@ -723,11 +801,8 @@ private:
         ProcessRowBlock<K_DIM, PUBLIC_VARLEN>::value;
     static constexpr uint32_t kPlaneElements = 8 * 128;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    // A5's larger UB lets each B-pack consume 32 rows per MTE2/Vector/MTE3
-    // batch.  The 16-KiB upper operand and 8-KiB lower operand remain aligned
-    // full-row transfers; A2/A3 retain the mature 16-row/8-KiB schedule.
-    static constexpr uint32_t kLowerPackRows = K_DIM == 128 ? 32 : 8;
-    static constexpr uint32_t kUpperPackRows = K_DIM == 128 ? 32 : 8;
+    static constexpr uint32_t kLowerPackRows = K_DIM == 128 ? 16 : 8;
+    static constexpr uint32_t kUpperPackRows = K_DIM == 128 ? 16 : 8;
     static constexpr uint32_t kIoBufferBytes = 16 * 1024;
     static constexpr uint32_t kUbBudgetBytes = 248 * 1024;
 #else
@@ -1322,17 +1397,6 @@ private:
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
         PackLowerA(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if constexpr (!PUBLIC_VARLEN && K_DIM == 128) {
-            if (validRows == kProcessRowBlock &&
-                task.end - task.begin == CHUNK_SIZE) {
-                PackDenseA5B(
-                    task, head, rowStart, prefix, future,
-                    subBlock, slotBase);
-                return;
-            }
-        }
-#endif
         PackLowerB(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperB(task, head, rowStart, future, subBlock, slotBase);
     }
@@ -1358,18 +1422,7 @@ private:
                 CIntraMatrixOffset(
                     tiling_, task.batchIdx, head, task.begin + rowStart);
             LoadRows(work, source[srcOffset], validRows, prefix, MatrixRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            if (subBlock == 0 && validRows == kProcessRowBlock) {
-                const uint64_t dstOffset =
-                    slotBase / sizeof(float) +
-                    tiling_.intraALowerOffset / sizeof(float) +
-                    static_cast<uint64_t>(rowBase) * lowerK;
-                StoreRows(
-                    workspaceGm_[dstOffset], work,
-                    kProcessRowBlock, prefix, lowerK);
-                return;
-            }
-#else
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
             if (subBlock == 0) {
                 AscendC::Muls(
                     work, work, tiling_.scale, validRows * prefix);
@@ -1476,7 +1529,6 @@ private:
                 work[maskedRows * kProcessRowBlock], 0.0f, tailElements);
         }
 #endif
-
         const uint64_t dstOffset =
             slotBase / sizeof(float) + tiling_.intraAUpperOffset / sizeof(float) +
             static_cast<uint64_t>(physicalRowBase) * kProcessRowBlock;
@@ -2079,12 +2131,28 @@ private:
                 resultBase +
                 tiling_.intraResultDkUpperOffset / sizeof(float)],
             ownedRows, cols, K_DIM);
+        if (rowStart == 0) {
+            const uint64_t secondUpperOffset =
+                tiling_.intraResultDkUpperOffset / sizeof(float) +
+                static_cast<uint64_t>(kProcessRowBlock) * K_DIM;
+            CopyInMatrixRowsDirect(
+                q,
+                workspaceGm_[resultBase + secondUpperOffset],
+                ownedRows, cols, K_DIM);
+        }
         CopyInMatrixRowsDirect(
             gate,
             gkGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
+        if (rowStart == 0) {
+            KdaRegbaseAdd2(
+                (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+                (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+                (__ubuf__ float *)q.GetPhyAddr(), count);
+        }
 
         LoadMatrixRowsPair(
             q,
@@ -2095,8 +2163,6 @@ private:
             kGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
-
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(directMte2ToVEvent_);
 
         KdaRegbaseExp2(
             (__ubuf__ float *)anchorExp.GetPhyAddr(),
@@ -2395,7 +2461,8 @@ private:
         uint32_t slot)
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if constexpr (!PUBLIC_VARLEN && K_DIM == 128) {
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                      kProcessRowBlock == 32) {
             FinishHeadA5Dense16(
                 task, head, rowStart, validRows, slot,
                 AscendC::GetSubBlockIdx() * 16U);

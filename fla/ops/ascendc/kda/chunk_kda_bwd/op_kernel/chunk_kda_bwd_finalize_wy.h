@@ -144,9 +144,9 @@ __aicore__ inline uint64_t WyWorkspaceSlotBase(
     const ChunkKdaBwdCTilingData &tiling, uint32_t logicalCore,
     uint32_t generation, uint32_t headInWindow)
 {
-    // Two adjacent generations use disjoint two-head windows.  AIC is bounded
-    // to at most two outstanding generations by the task-done credit, so the
-    // same parity slot is never overwritten before AIV has released it.
+    // Keep parity-addressed two-head windows in the ABI.  The current precise
+    // protocol fences each generation before reuse; retaining both windows
+    // leaves room for a future credit-based pipeline without changing tiling.
     const uint32_t slot = ((generation & 1U) * kWyFusedHeadsPerWindow) +
                           headInWindow;
     return (static_cast<uint64_t>(logicalCore) * tiling.workspaceSlotCount + slot) *
@@ -194,7 +194,8 @@ struct WyTileGemmDirectEvent {
 // boundaries are still fully drained, preserving the proven type-transition
 // safety while avoiding constructor/destructor synchronization for every
 // contraction.
-template <class ArchTag_, class ElementC_, class TileCopy_>
+template <class ArchTag_, class ElementC_, class TileCopy_,
+          uint32_t ReductionTile_ = 256>
 struct WyTileGemmDirect {
     using ArchTag = ArchTag_;
     using TileCopy = TileCopy_;
@@ -220,15 +221,15 @@ struct WyTileGemmDirect {
     // 64x256 and 256x128 respectively, both 32/64 KiB in FP16/BF16, so keep
     // the whole reduction in one MMAD.  Besides matching the proven PR190
     // direct-tile pattern, this avoids an unnecessary partial-sum lifecycle.
-    static constexpr uint32_t kReductionTile = 256;
+    static constexpr uint32_t kReductionTile = ReductionTile_;
     static constexpr uint32_t kL1PlaneBytes =
         128 * 256 * sizeof(ElementA);
     static_assert(2 * kL1PlaneBytes <= 512 * 1024,
                   "Kernel C direct MMAD L1 planes exceed A2/A3 L1");
     static_assert(64 * 256 * sizeof(ElementA) <= ArchTag::L0A_SIZE,
                   "Kernel C direct MMAD L0A exceeds capacity");
-    static_assert(128 * 256 * sizeof(ElementB) <= ArchTag::L0B_SIZE,
-                  "Kernel C V256 direct MMAD L0B exceeds capacity");
+    static_assert(128 * kReductionTile * sizeof(ElementB) <= ArchTag::L0B_SIZE,
+                  "Kernel C direct MMAD L0B tile exceeds capacity");
     static_assert(64 * 256 * sizeof(ElementAccumulator) <= ArchTag::L0C_SIZE,
                   "Kernel C V256 FP32 L0C exceeds capacity");
 
@@ -286,6 +287,12 @@ struct WyTileGemmDirect {
             l0C_, tla::MakeLayoutL0C(m, n),
             Catlass::Arch::PositionL0C{});
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kEventL0C);
+        // GM->L1 completes once for the complete logical operands.  The
+        // following reduction tiles only read disjoint views from the same
+        // resident L1 tensors, so consume the ready credits once rather than
+        // waiting for a new MTE2 producer on every k0 iteration.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1A);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B);
         for (uint32_t k0 = 0; k0 < k; k0 += kReductionTile) {
             const uint32_t curK =
                 k - k0 < kReductionTile ? k - k0 : kReductionTile;
@@ -301,17 +308,17 @@ struct WyTileGemmDirect {
                 l1A, tla::MakeCoord(0, k0), tla::MakeShape(m, curK));
             auto tileB = GetTile(
                 l1B, tla::MakeCoord(k0, 0), tla::MakeShape(curK, n));
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1A);
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
             copyL0A(l0A, tileA);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B);
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
             copyL0B(l0B, tileB);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B);
+            const bool lastK = k0 + curK == k;
+            if (lastK) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kEventL0C);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kEventL0C);
-            const bool lastK = k0 + curK == k;
             const uint8_t unitFlag = lastK ? 0b11 : 0b10;
             mm(l0C, l0A, l0B, m, n, curK, k0 == 0, unitFlag);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0A);
@@ -612,21 +619,14 @@ public:
         if ASCEND_IS_AIC {
             AscendC::SetMMLayoutTransform(true);
         }
-        // One notification stream is sufficient because both AIC and AIV
-        // traverse the same task/head/stage order.  Reverse acknowledgement
-        // is mandatory: a long sequence can emit far more than the hardware
-        // limit of 15 unacknowledged cross-core notifications.
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 4;
         constexpr uint32_t kS3aReady = 5;
+        constexpr uint32_t kS0Consumed = 2;
         constexpr uint32_t kZbReady = 3;
+        constexpr uint32_t kS1Consumed = 6;
         constexpr uint32_t kTaskDone = 7;
-        // kTaskDone is a two-generation credit rather than a per-task fence.
-        // Generations g and g+1 occupy separate two-head workspace windows;
-        // before g+2 reuses g's window, AIC consumes g's completion credit.
-        // This bounds every counted notification stream and lets AIC start the
-        // next owner while AIV is finishing the previous owner's epilogue.
 
         const uint32_t coreIdx = AscendC::GetBlockIdx();
         const uint32_t coreNum = static_cast<uint32_t>(tiling_.usedCoreNum);
@@ -648,7 +648,7 @@ public:
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
-            if (localGeneration >= 2U) {
+            if (localGeneration >= 1U) {
                 AscendC::CrossCoreWaitFlag(kTaskDone);
             }
             const uint32_t taskIdx =
@@ -663,7 +663,6 @@ public:
             const WyChunkTask task = GetWyChunkTask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-
             // S0: dq_raw is produced by Kernel A.  Publish the dependency
             // credit immediately; AIV applies exp2(gk) and scale while AIC
             // starts the independent dk_raw contraction below.
@@ -721,13 +720,27 @@ public:
                 // second half.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 if constexpr (V_DIM == 128) {
-                    RunSharedLeftDualTransposeB<
-                        Bf16C64DualRightMmad, RowMajor, ColumnMajor>(
-                        resource, dvScan_, tokenV,
-                        h_, hOffset, slot + tiling_.dWOffset,
-                        validLen, 128, 128, V_DIM,
-                        v_, tokenV, slot + tiling_.zVOffset,
-                        validLen, 64);
+                    if (headCount == kWyFusedHeadsPerWindow) {
+                        RunSharedLeftDualTransposeB<
+                            Bf16C64DualRightMmad, RowMajor, ColumnMajor>(
+                            resource, dvScan_, tokenV,
+                            h_, hOffset, slot + tiling_.dWOffset,
+                            validLen, 128, 128, V_DIM,
+                            v_, tokenV, slot + tiling_.zVOffset,
+                            validLen, 64);
+                    } else {
+                        // The one-head tail has no second owner to hide the
+                        // dual-output event lifecycle.  Use the proven single
+                        // output direct tiles; the H=96 fast path is unchanged.
+                        RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
+                            resource, dvScan_, tokenV, h_, hOffset,
+                            slot + tiling_.dWOffset,
+                            validLen, 128, 128, V_DIM);
+                        RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
+                            resource, dvScan_, tokenV, v_, tokenV,
+                            slot + tiling_.zVOffset,
+                            validLen, validLen, 64, V_DIM);
+                    }
                 } else {
                     RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
                         resource, dvScan_, tokenV, h_, hOffset,
@@ -759,6 +772,9 @@ public:
                     (slot + tiling_.kEOffset) / sizeof(DataT),
                     slot + tiling_.zWOffset, validLen, validLen, 64, 128);
             }
+            // S0 is reused for zW only after both AIVs consumed the initial
+            // dq-ready generation.
+            AscendC::CrossCoreWaitFlag(kS0Consumed);
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS0Ready);
 
             // S5 produces dKgb_raw = A^T @ dW_raw.  The gradient/gate Vector
@@ -776,6 +792,9 @@ public:
                     slot + tiling_.dKgbOffset, validLen, validLen, 128,
                     64, 128, 128);
             }
+            // Likewise, do not overwrite the first dk-base notification with
+            // the dKgb notification until AIV has consumed it.
+            AscendC::CrossCoreWaitFlag(kS1Consumed);
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS1Ready);
             // S6 consumes Zb, while the S5 AIV gradient path is independent.
             AscendC::CrossCoreWaitFlag(kZbReady);
@@ -810,11 +829,15 @@ public:
                     slot + tiling_.zaInputOffset,
                     validLen, validLen, validLen, 64, 64, 64);
             }
+            // kTaskDone carries two strictly ordered acknowledgements: first
+            // S3a-consumed, then final owner completion.  The second cannot
+            // be produced until this S3a generation is published.
+            AscendC::CrossCoreWaitFlag(kTaskDone);
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(kS3aReady);
         }
-        // Drain the at-most-two generations that still own workspace before
-        // the following Intra phase reuses local resources and event ids.
-        const uint32_t outstanding = localGeneration < 2U ? localGeneration : 2U;
+        // Drain the last generation that still owns workspace before the
+        // following Intra phase reuses local resources and event ids.
+        const uint32_t outstanding = localGeneration == 0U ? 0U : 1U;
         for (uint32_t i = 0; i < outstanding; ++i) {
             AscendC::CrossCoreWaitFlag(kTaskDone);
         }
@@ -1402,16 +1425,13 @@ private:
 
     __aicore__ inline void ProcessFused()
     {
-        // Four producer flags allow AIC to publish independent S0/S1/S2/S3a
-        // results without waiting for AIV after every stage.  They are reused
-        // only after the S3a acknowledgement proves that AIV consumed the
-        // first wave.  The four acknowledgement flags correspond exactly to
-        // the true data dependencies: -dW, Zb, and final workspace free.
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 4;
         constexpr uint32_t kS3aReady = 5;
+        constexpr uint32_t kS0Consumed = 2;
         constexpr uint32_t kZbReady = 3;
+        constexpr uint32_t kS1Consumed = 6;
         constexpr uint32_t kTaskDone = 7;
 
         const uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -1448,21 +1468,29 @@ private:
             const bool headParallel =
                 headCount == kWyFusedHeadsPerWindow &&
                 subBlockNum == kWyFusedHeadsPerWindow;
+            // A split single-head tail is intermittently unsafe for FP16 on
+            // A5 because both AIVs update the same logical owner through
+            // independent half-row state paths.  Let AIV0 own the complete
+            // tail head; AIV1 still participates in every collective event.
+            const bool singleHeadOwner =
+                headCount == 1U && subBlockNum == 2U;
 #else
             const bool headParallel = false;
+            const bool singleHeadOwner = false;
 #endif
+            const bool wholeHeadRows = headParallel || singleHeadOwner;
             const uint32_t rowSubBlockIdx =
-                headParallel ? 0U : subBlockIdx;
+                wholeHeadRows ? 0U : subBlockIdx;
             const uint32_t rowSubBlockNum =
-                headParallel ? 1U : subBlockNum;
+                wholeHeadRows ? 1U : subBlockNum;
             const uint32_t rowLaneBegin =
-                headParallel ? subBlockIdx : 0U;
+                headParallel ? subBlockIdx :
+                (singleHeadOwner && subBlockIdx != 0U ? headCount : 0U);
             const uint32_t rowLaneEnd =
                 headParallel ? subBlockIdx + 1U : headCount;
             const WyChunkTask task = GetWyChunkTask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-
             // kE has no AIC dependency.  Build it while AIC produces the
             // independent base GEMMs instead of serializing it behind S2.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -1479,8 +1507,12 @@ private:
                     tiling_, coreIdx, localGeneration, lane);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 if (tiling_.isVarLen == 0) {
-                    BuildKE<false>(task, headBase + lane, validLen, slot,
-                                   rowSubBlockIdx, rowSubBlockNum);
+                    // The generic 16-row Intra post path consumes dq_base
+                    // from GM.  The retired dense row32 post used to form it
+                    // locally, so dense WY skipped the write.  Complete dq
+                    // here before Intra reads it.
+                    BuildKE<true>(task, headBase + lane, validLen, slot,
+                                  rowSubBlockIdx, rowSubBlockNum);
                 } else {
                     BuildKE<true>(task, headBase + lane, validLen, slot,
                                   rowSubBlockIdx, rowSubBlockNum);
@@ -1495,6 +1527,7 @@ private:
                 AscendC::CrossCoreWaitFlag(kS0Ready);
             }
 #endif
+            SignalVectorDependency(kS0Consumed);
 
             // S0: consume dq_raw and finish dq_base.
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
@@ -1515,11 +1548,13 @@ private:
                 FinishBaseStage(task, headBase + lane, validLen, slot,
                                 rowSubBlockIdx, rowSubBlockNum, stateLane, 1);
             }
+            SignalVectorDependency(kS1Consumed);
             // S2 is ready, but dv_scan is also the final dv storage in the
             // fused contract.  Do not overwrite it until S3a has completed
             // every final read of the original dv_scan values.
             AscendC::CrossCoreWaitFlag(kS2Ready);
             AscendC::CrossCoreWaitFlag(kS3aReady);
+            SignalVectorDependency(kTaskDone);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint32_t stateLane = headParallel ? 0U : lane;
                 const uint64_t slot = WyWorkspaceSlotBase(
@@ -1627,6 +1662,7 @@ private:
             (storageLane * kDkStateRowsPerHead + ownedRow) * kWyKeyDim;
         return dkStateBuffer_.Get<float>()[offset];
     }
+
 #endif
 
     __aicore__ inline AscendC::LocalTensor<float> Plane(uint32_t idx)
