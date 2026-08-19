@@ -1397,6 +1397,18 @@ private:
         const uint32_t subBlock = AscendC::GetSubBlockIdx();
         PackLowerA(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                      kProcessRowBlock == kRowBlock) {
+            if (validRows == kProcessRowBlock &&
+                task.end - task.begin == CHUNK_SIZE) {
+                PackDenseA5B(
+                    task, head, rowStart, prefix, future,
+                    subBlock, slotBase);
+                return;
+            }
+        }
+#endif
         PackLowerB(task, head, rowStart, validRows, prefix, subBlock, slotBase);
         PackUpperB(task, head, rowStart, future, subBlock, slotBase);
     }
@@ -1780,12 +1792,12 @@ private:
         uint32_t prefix, uint32_t future, uint32_t subBlock,
         uint64_t slotBase)
     {
-        static_assert(kProcessRowBlock == 32,
-                      "A5 fused B-pack requires row32 tiles.");
-        auto qData = Plane(0);       // planes 0-1
-        auto kData = Plane(2);       // planes 2-3
-        auto gate = Plane(4);        // planes 4-5
-        auto lowerData = Plane(6);   // planes 6-7
+        static_assert(kProcessRowBlock == kRowBlock,
+                      "A5 fused B-pack requires stable row16 tiles.");
+        auto qData = Plane(0);
+        auto kData = Plane(2);
+        auto gate = Plane(4);
+        auto lowerData = Plane(6);
         auto anchor = Plane(8);
         auto beta = Plane(9);
         constexpr uint32_t rows = kProcessRowBlock;
