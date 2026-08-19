@@ -664,6 +664,23 @@ public:
                     AscendC::CrossCoreWaitFlag(kCubeToVecReadyFlag);
 #endif
                     const uint32_t slot = CIntraWorkspaceSlot(windowIdx, headInWindow);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                                  kProcessRowBlock == kRowBlock) {
+                        if (tiling_.isVarLen == 0 &&
+                            tiling_.useGateInKernel != 0) {
+                            // Both AIVs consume every ready generation, but
+                            // each completes one head so their Vector-Post
+                            // work can overlap across the two-head window.
+                            if (headInWindow == AscendC::GetSubBlockIdx()) {
+                                FinishHeadA5Dense16(
+                                    task, headBase + headInWindow,
+                                    rowStart, validRows, slot, 0);
+                            }
+                            continue;
+                        }
+                    }
+#endif
                     FinishHead(task, headBase + headInWindow, rowStart, validRows, slot);
                 }
                 ++windowIdx;
@@ -2283,8 +2300,8 @@ private:
                       "The A5 16-row Vector-Post path is specialized for K=128.");
         static_assert(!PUBLIC_VARLEN,
                       "The A5 16-row Vector-Post path is dense-only.");
-        static_assert(kProcessRowBlock == 32,
-                      "The A5 16-row Vector-Post path requires the proven row32 outer tile.");
+        static_assert(kProcessRowBlock == 16 || kProcessRowBlock == 32,
+                      "The A5 Vector-Post path requires a 16- or 32-row outer tile.");
 
         if (ownedBegin >= validRows) {
             return;
