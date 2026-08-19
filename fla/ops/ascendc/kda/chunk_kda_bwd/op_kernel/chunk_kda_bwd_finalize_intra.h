@@ -366,7 +366,7 @@ public:
                     if (useSharedB) {
                         RunUpperA5Shared(
                             upper, slotBase, bSlotBase,
-                            processRowBlock);
+                            rowStart, future, processRowBlock);
                     } else
 #endif
                     {
@@ -416,17 +416,20 @@ private:
     template <typename Mmad>
     __aicore__ inline void RunUpperA5Shared(
         Mmad &mm, uint64_t slotBase, uint64_t bSlotBase,
+        uint32_t rowStart, uint32_t future,
         uint32_t processRowBlock)
     {
-        const uint32_t reduction = 2 * kChunkSize;
+        const uint32_t reduction = 2 * future;
+        const uint32_t reductionOffset = 2 * rowStart;
         Run<ColumnMajor>(
             mm, slotBase + tiling_.intraAUpperOffset,
             bSlotBase + tiling_.intraBUpperOffset,
             slotBase + tiling_.intraResultRegionOffset +
                 tiling_.intraResultDkUpperOffset,
             processRowBlock, tiling_.keyDim, reduction,
-            reduction, tiling_.keyDim, tiling_.keyDim,
-            0, 0, processRowBlock, 0, reduction);
+            2 * kChunkSize, tiling_.keyDim, tiling_.keyDim,
+            reductionOffset, reductionOffset,
+            processRowBlock, 0, 2 * kChunkSize);
     }
 #endif
 
@@ -1516,22 +1519,21 @@ private:
             work, source[srcOffset], future, kProcessRowBlock,
             MatrixRowElements());
 
-        KdaRegbaseFill(
-            (__ubuf__ float *)masked.GetPhyAddr(), 0.0f,
-            CHUNK_SIZE * kProcessRowBlock);
         KdaRegbaseMaskUpperA(
-            (__ubuf__ float *)masked[rowStart * kProcessRowBlock].GetPhyAddr(),
+            (__ubuf__ float *)masked.GetPhyAddr(),
             (__ubuf__ float *)work.GetPhyAddr(),
             future, validRows, kProcessRowBlock);
 
-        const uint32_t physicalRowBase = subBlock * CHUNK_SIZE;
+        // Interleave Aq/Akk reduction rows so every row block can consume a
+        // compact suffix from the one shared [q,k] B matrix.
+        const uint32_t physicalRowBase = 2 * rowStart + subBlock;
         const uint64_t dstOffset =
             slotBase / sizeof(float) +
             tiling_.intraAUpperOffset / sizeof(float) +
             static_cast<uint64_t>(physicalRowBase) * kProcessRowBlock;
         StoreRows(
             workspaceGm_[dstOffset], masked,
-            CHUNK_SIZE, kProcessRowBlock, kProcessRowBlock);
+            future, kProcessRowBlock, 2 * kProcessRowBlock);
     }
 #endif
 
@@ -2054,9 +2056,8 @@ private:
                     rows, cols, K_DIM);
             }
             if (needUpper) {
-                const uint32_t upperRow =
-                    SHARED ? sourceRow : sourceRow - rowStart;
-                const uint32_t upperRows = SHARED ? CHUNK_SIZE : future;
+                const uint32_t upperRow = SHARED ? 2 * sourceRow :
+                                                  sourceRow - rowStart;
                 const uint64_t qOffset =
                     slotBase / sizeof(float) +
                     tiling_.intraBUpperOffset / sizeof(float) +
@@ -2064,13 +2065,15 @@ private:
                 const uint64_t kOffset =
                     slotBase / sizeof(float) +
                     tiling_.intraBUpperOffset / sizeof(float) +
-                    static_cast<uint64_t>(upperRows + upperRow) * K_DIM + col;
+                    static_cast<uint64_t>(
+                        SHARED ? upperRow + 1 : future + upperRow) *
+                        K_DIM + col;
                 StoreRows(
                     workspaceGm_[qOffset], qData,
-                    rows, cols, K_DIM);
+                    rows, cols, SHARED ? 2 * K_DIM : K_DIM);
                 StoreRows(
                     workspaceGm_[kOffset], kData,
-                    rows, cols, K_DIM);
+                    rows, cols, SHARED ? 2 * K_DIM : K_DIM);
             }
         }
     }
