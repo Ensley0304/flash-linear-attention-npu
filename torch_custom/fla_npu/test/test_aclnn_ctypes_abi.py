@@ -66,6 +66,69 @@ class FakeCallContext:
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_chunk_kda_bwd_wrapper_matches_aclnn_prototype(self):
+        fake_fp16 = object()
+        fake_bf16 = object()
+        fake_fp32 = object()
+        fake_torch = types.SimpleNamespace(
+            float16=fake_fp16,
+            bfloat16=fake_bf16,
+            float32=fake_fp32,
+        )
+
+        class Tensor:
+            def __init__(self, shape, dtype):
+                self.shape = tuple(shape)
+                self.dtype = dtype
+
+        class Context:
+            def tensor(self, tensor, name, **kwargs):
+                del tensor, name, kwargs
+                return ctypes.c_void_p(0x1000)
+
+            def int_array(self, values):
+                del values
+                return ctypes.c_void_p(0x2000)
+
+        captured = {}
+
+        def fake_empty(shape, like, **kwargs):
+            del like
+            return Tensor(shape, kwargs.get("dtype", fake_bf16))
+
+        def fake_empty_like(tensor, **kwargs):
+            return Tensor(tensor.shape, kwargs.get("dtype", tensor.dtype))
+
+        def fake_call(name, build_args, outputs):
+            captured["name"] = name
+            captured["args"] = build_args(Context())
+            return outputs
+
+        q = Tensor((1, 2, 128, 128), fake_bf16)
+        beta = Tensor((1, 2, 128), fake_bf16)
+        matrix = Tensor((1, 2, 128, 64), fake_bf16)
+        gk = Tensor((1, 2, 128, 128), fake_fp32)
+        h = Tensor((1, 2, 2, 128, 128), fake_bf16)
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}):
+            with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty), \
+                    mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like), \
+                    mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call):
+                outputs = ACLNN_CTYPES.npu_chunk_kda_bwd(
+                    q, q, q, beta, gk, matrix, matrix,
+                    q, q, q, q, h, q, 0.125,
+                )
+
+        self.assertEqual(captured["name"], "aclnnChunkKdaBwd")
+        self.assertEqual(len(outputs), 7)
+        self.assertEqual(
+            len(captured["args"]),
+            len(ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnChunkKdaBwd"]) - 2,
+        )
+        self.assertEqual(
+            [type(arg) for arg in captured["args"]],
+            ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnChunkKdaBwd"][:-2],
+        )
+
     def test_recurrent_gated_delta_rule_requires_at_least_one_gate_before_launch(self):
         with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call_aclnn:
             with self.assertRaisesRegex(
