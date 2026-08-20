@@ -212,6 +212,22 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
 
 namespace KDA {
 
+// CATLASS exposes the L0C epilogue under different names on the two
+// architecture families used by this operator.  Keep that API difference in
+// one place so the shared A/C kernels can use the same implementation.
+template <class TileCopy, class TensorC>
+struct KdaBwdCopyL0CToDstSelector {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using Type = typename TileCopy::template CopyL0CToDst<TensorC>;
+#else
+    using Type = typename TileCopy::template CopyL0CToGm<TensorC>;
+#endif
+};
+
+template <class TileCopy, class TensorC>
+using KdaBwdCopyL0CToDst =
+    typename KdaBwdCopyL0CToDstSelector<TileCopy, TensorC>::Type;
+
 struct ChunkKdaBwdTilingData {
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData kernelB;
     ChunkKdaBwdCTilingData kernelC;

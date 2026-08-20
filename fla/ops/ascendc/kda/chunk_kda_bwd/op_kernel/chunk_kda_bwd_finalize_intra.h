@@ -232,7 +232,7 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kEventL0B);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kEventL0C);
 
-        typename Copy::template CopyL0CToDst<TensorC> fix;
+        KdaBwdCopyL0CToDst<Copy, TensorC> fix;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kEventL0C);
         fix(c, l0C, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kEventL0C);
@@ -384,14 +384,16 @@ public:
                 }
             }
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         // Drain the reusable single-tile event credits before changing the
-        // matrix-layout mode or handing the AIC back to the outer kernel.
+        // matrix-layout mode or handing the AIC back to the outer kernel.  A2
+        // initializes the same credits in Init(), so it must drain them too;
+        // otherwise the next operator launch blocks on the first SetFlag.
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(1);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(0);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(1);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(0);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::SetMMLayoutTransform(false);
 #endif
     }

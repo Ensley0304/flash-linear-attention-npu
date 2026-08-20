@@ -258,8 +258,7 @@ struct WyTileGemmDirect {
             typename TileCopy::template CopyGmToL1A<TensorA>;
         using CopyGmToL1B =
             typename TileCopy::template CopyGmToL1B<TensorB>;
-        using CopyL0CToDst =
-            typename TileCopy::template CopyL0CToDst<TensorC>;
+        using CopyL0CToDst = KdaBwdCopyL0CToDst<TileCopy, TensorC>;
         CopyGmToL1A copyGmA;
         CopyGmToL1B copyGmB;
         CopyL1ToL0A copyL0A;
@@ -419,10 +418,8 @@ struct WyTileGemmSharedLeftDualRightDirect {
             typename TileCopy::template CopyGmToL1B<TensorB0>;
         using CopyGmToL1B1 =
             typename TileCopy::template CopyGmToL1B<TensorB1>;
-        using CopyL0CToDst0 =
-            typename TileCopy::template CopyL0CToDst<TensorC0>;
-        using CopyL0CToDst1 =
-            typename TileCopy::template CopyL0CToDst<TensorC1>;
+        using CopyL0CToDst0 = KdaBwdCopyL0CToDst<TileCopy, TensorC0>;
+        using CopyL0CToDst1 = KdaBwdCopyL0CToDst<TileCopy, TensorC1>;
         CopyGmToL1A copyGmA;
         CopyGmToL1B0 copyGmB0;
         CopyGmToL1B1 copyGmB1;

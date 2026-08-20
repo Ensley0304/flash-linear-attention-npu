@@ -681,7 +681,7 @@ private:
         auto blockOut = GetTile(
             outTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(task.validC, V_DIM));
-        typename DvCopy::template CopyL0CToDst<decltype(blockOut)> fix;
+        KdaBwdCopyL0CToDst<DvCopy, decltype(blockOut)> fix;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -765,7 +765,7 @@ private:
         auto blockOut = GetTile(
             outTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(KDA_BWD_A_K, V_DIM));
-        typename Q0Copy::template CopyL0CToDst<decltype(blockOut)> fix;
+        KdaBwdCopyL0CToDst<Q0Copy, decltype(blockOut)> fix;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -866,7 +866,7 @@ private:
         auto blockOut = GetTile(
             outTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(validC, outCols));
-        typename Copy::template CopyL0CToDst<decltype(blockOut)> fix;
+        KdaBwdCopyL0CToDst<Copy, decltype(blockOut)> fix;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fix(blockOut, l0CTensor, 0b11);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -1013,8 +1013,8 @@ private:
         auto dABlock = GetTile(
             dATensor, tla::MakeCoord(0, 0),
             tla::MakeShape(task.validC, task.validC));
-        typename DqCopy::template CopyL0CToDst<decltype(dqBlock)> fixDq;
-        typename DqCopy::template CopyL0CToDst<decltype(dABlock)> fixDA;
+        KdaBwdCopyL0CToDst<DqCopy, decltype(dqBlock)> fixDq;
+        KdaBwdCopyL0CToDst<DqCopy, decltype(dABlock)> fixDA;
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
         fixDq(dqBlock, tileL0CDq, 0b11);
         fixDA(dABlock, tileL0CDA, 0b11);
