@@ -60,15 +60,10 @@ __aicore__ inline void RunChunkKdaBwdC(
             ChunkKdaBwdCGateProcess<SAFE_GATE, DTYPE_RAW_G> process(
                 dg, rawG, aLog, dtBias, dA, dBias,
                 cuSeqlens, chunkIndices);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if (tiling->deferGatePost == 0) {
                 process.Init(*tiling, &pipe);
                 process.Process();
             }
-#else
-            process.Init(*tiling, &pipe);
-            process.Process();
-#endif
         }
     }
 }
