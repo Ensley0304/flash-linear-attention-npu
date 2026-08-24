@@ -1645,8 +1645,8 @@ private:
             if (tiling_.isVarLen == 0) {
                 WaitCubeStage(s0Ready);
             }
-#endif
             SignalCubeStage(s0Consumed);
+#endif
 
             // S0: consume dq_raw and finish dq_base.
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
@@ -1657,6 +1657,7 @@ private:
                 FinishBaseStage(task, headBase + lane, validLen, slot,
                                 subBlockIdx, subBlockNum, lane, 0);
             }
+            SignalCubeStage(s0Consumed);
 #endif
             // S1: consume dk_raw and finish dk_state.
             WaitCubeStage(s1Ready);

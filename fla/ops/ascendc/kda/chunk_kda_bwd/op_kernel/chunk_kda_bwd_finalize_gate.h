@@ -170,6 +170,8 @@ public:
             pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
         mte3ToV_ =
             pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
+        mte3ToMte2_ =
+            pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
     }
 
     __aicore__ inline void Process()
@@ -181,6 +183,8 @@ public:
         }
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(vToMte3_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(
+            mte3ToMte2_);
     }
 
 private:
@@ -201,18 +205,12 @@ private:
             const uint32_t headCount =
                 headBase + 1U < static_cast<uint32_t>(tiling_.headNum) ?
                     2U : 1U;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            // A5 launches two AIV sub-blocks for every logical AIC owner.
-            // Intra partitions its 32-row tile across those sub-blocks, but
-            // Gate owns a two-head window.  Give one head to each sub-block
-            // instead of redundantly scanning and storing both heads twice.
+            // The MIX launch has two AIV sub-blocks for one logical AIC
+            // owner.  Gate updates dg in place, so the two AIVs must own
+            // disjoint heads instead of scanning and storing both twice.
             const uint32_t laneBegin = AscendC::GetSubBlockIdx();
             const uint32_t laneEnd =
                 laneBegin < headCount ? laneBegin + 1U : laneBegin;
-#else
-            const uint32_t laneBegin = 0;
-            const uint32_t laneEnd = headCount;
-#endif
             for (uint32_t lane = laneBegin; lane < laneEnd; ++lane) {
                 ProcessChunk(
                     taskIdx, headBase + lane, false, nullptr, nullptr);
@@ -232,14 +230,9 @@ private:
           const uint32_t headCount =
               headBase + 1U < static_cast<uint32_t>(tiling_.headNum) ?
                   2U : 1U;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
           const uint32_t laneBegin = AscendC::GetSubBlockIdx();
           const uint32_t laneEnd =
               laneBegin < headCount ? laneBegin + 1U : laneBegin;
-#else
-          const uint32_t laneBegin = 0;
-          const uint32_t laneEnd = headCount;
-#endif
           for (uint32_t lane = laneBegin; lane < laneEnd; ++lane) {
             const uint32_t head = headBase + lane;
             auto dbAcc = reduce_.Get<float>();
@@ -529,16 +522,18 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
         // A5 may silently drop a full 32 KiB UB->GM DataCopyPad transfer.
-        // The row width is naturally aligned, so emit the same proven
-        // 128-FP32 row-sized stores used by the standalone Gate post kernel.
+        // The aligned row-sized stores are also valid on A2/A3.
         const uint32_t rows = count / 128U;
         for (uint32_t row = 0; row < rows; ++row) {
             AscendC::DataCopy(
                 dgGm_[offset + static_cast<uint64_t>(row) * 128U],
                 value[row * 128U], 128U);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        // The next chunk loads into the same UB plane through MTE2.  Waiting
+        // on MTE3_V does not protect that overwrite; use the real
+        // MTE3-to-MTE2 reuse dependency so every row reaches GM first.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
     }
 
     GM_ADDR dg_;
@@ -565,6 +560,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> reduce_;
     AscendC::TEventID vToMte3_;
     AscendC::TEventID mte3ToV_;
+    AscendC::TEventID mte3ToMte2_;
 };
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310

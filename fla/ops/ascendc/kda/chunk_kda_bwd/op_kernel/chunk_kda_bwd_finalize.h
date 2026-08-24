@@ -26,12 +26,6 @@ __aicore__ inline void RunChunkKdaBwdC(
             process.Init(*tiling);
             process.Process();
         }
-        {
-            ChunkKdaBwdCIntraCubeProcess process(
-                cuSeqlens, chunkIndices, workspace);
-            process.Init(*tiling);
-            process.Process();
-        }
     }
     if ASCEND_IS_AIV {
         {
@@ -43,6 +37,22 @@ __aicore__ inline void RunChunkKdaBwdC(
             process.Init(*tiling, &pipe);
             process.Process();
         }
+    }
+
+    // WY materializes the base gradients in GM and Intra immediately reads
+    // them back for the local correction.  Complete every WY store before
+    // remapping the same buffers to the Intra owner.
+    AscendC::SyncAll<false>();
+
+    if ASCEND_IS_AIC {
+        {
+            ChunkKdaBwdCIntraCubeProcess process(
+                cuSeqlens, chunkIndices, workspace);
+            process.Init(*tiling);
+            process.Process();
+        }
+    }
+    if ASCEND_IS_AIV {
         {
             AscendC::TPipe pipe;
             ChunkKdaBwdCIntraVectorProcess<
@@ -55,6 +65,14 @@ __aicore__ inline void RunChunkKdaBwdC(
             process.Init(*tiling, &pipe);
             process.Process();
         }
+    }
+
+    // Intra writes dg by half rows on both AIV sub-blocks, whereas Gate
+    // remaps the work to complete heads and updates dg in place.  Finish the
+    // whole Intra phase before any core starts the Gate read/scan/write phase.
+    AscendC::SyncAll<false>();
+
+    if ASCEND_IS_AIV {
         {
             AscendC::TPipe pipe;
             ChunkKdaBwdCGateProcess<SAFE_GATE, DTYPE_RAW_G> process(
