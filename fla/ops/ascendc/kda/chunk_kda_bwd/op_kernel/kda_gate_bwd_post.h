@@ -471,6 +471,8 @@ public:
         pipe_->InitBuffer(metadata_, 32);
         vToMte3_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
         mte3ToV_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
+        mte3ToMte2_ =
+            pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
         initMte2ToV_ =
             pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
         rawMte2ToV_ =
@@ -489,6 +491,7 @@ public:
         }
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(vToMte3_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(initMte2ToV_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(rawMte2ToV_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_S>(scalarVToS_);
@@ -1115,6 +1118,11 @@ private:
                 dgGm_[offset + static_cast<uint64_t>(row) * kKeyDim],
                 value[row * kKeyDim], kKeyDim);
         }
+        // The next chunk reuses ``value`` as BF16 MTE2 staging.  MTE3_V only
+        // orders Vector, not this producer/consumer pair, so wait on the
+        // actual MTE3-to-MTE2 dependency before that plane is overwritten.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
     }
@@ -1139,6 +1147,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> metadata_;
     AscendC::TEventID vToMte3_;
     AscendC::TEventID mte3ToV_;
+    AscendC::TEventID mte3ToMte2_;
     AscendC::TEventID initMte2ToV_;
     AscendC::TEventID rawMte2ToV_;
     AscendC::TEventID scalarVToS_;
