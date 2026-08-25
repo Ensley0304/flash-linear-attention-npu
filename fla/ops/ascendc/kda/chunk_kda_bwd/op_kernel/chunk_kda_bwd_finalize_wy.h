@@ -92,16 +92,6 @@ __aicore__ inline uint64_t WyTokenOffset(
             tiling.seqlen + tokenIdx) * width;
 }
 
-// Stage 3 stores BF16 Zb and stage 6 stores BF16 T_za in the two halves of
-// this task's final FP32 dAkk allocation.  Both temporaries therefore remain
-// inside the task's own byte range until stage 7 writes the final FP32 tile.
-__aicore__ inline uint64_t WyDAkkBf16TaskBase(
-    const ChunkKdaBwdCTilingData &tiling, uint32_t batchIdx,
-    uint32_t headIdx, uint32_t tokenIdx)
-{
-    return 2U * WyTokenOffset(tiling, batchIdx, headIdx, tokenIdx, 64);
-}
-
 // Saved h keeps the forward sequence/chunk-major layout. Kernel B's dh can
 // use PR291's head-major layout; C selects the matching offset directly, so
 // no transpose kernel or GM copy is introduced.
@@ -633,6 +623,7 @@ public:
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kS1Consumed = 6;
         constexpr uint32_t kTaskDone = 7;
+        constexpr uint32_t kS3aConsumed = 8;
 #endif
 
         const uint32_t coreIdx = AscendC::GetBlockIdx();
@@ -676,7 +667,7 @@ public:
             constexpr uint32_t s3aReady = kS3aReady;
             constexpr uint32_t s0Consumed = kS0Consumed;
             constexpr uint32_t s1Consumed = kS1Consumed;
-            constexpr uint32_t s3aConsumed = kTaskDone;
+            constexpr uint32_t s3aConsumed = kS3aConsumed;
             constexpr uint32_t zbReady = kZbReady;
             constexpr uint32_t taskDone = kTaskDone;
             if (localGeneration >= 1U) {
@@ -839,14 +830,20 @@ public:
                     tiling_, task.batchIdx, head, task.begin, 64);
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
-                const uint64_t zBase = WyDAkkBf16TaskBase(
-                    tiling_, task.batchIdx, head, task.begin);
+                const uint64_t zBase =
+                    (slot + tiling_.zaInputOffset) / sizeof(DataT);
                 RunLayouts<Bf16SquareRightTransposeMmad,
                            RowMajor, ColumnMajor>(
-                    resource, dAkk_, zBase, a_, token64,
+                    resource, workspace_, zBase, a_, token64,
                     slot + tiling_.zaOutputOffset,
                     validLen, validLen, validLen, 64, 64, 64);
             }
+            // S6 and S7 reuse the direct-MMAD L1/L0 arenas with different
+            // operand layouts and output dtypes.  Drain only that five-event
+            // lifecycle before rebinding the arenas; the shared-left event-2
+            // state remains untouched.
+            EndFusedMmadPhase();
+            BeginFusedMmadPhase();
             // S7: A^T @ Tza and final causal/sign postprocess for dAkk.
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint32_t head = headBase + lane;
@@ -862,8 +859,9 @@ public:
                     validLen, validLen, validLen, 64, 64, 64);
             }
             // Do not reuse the S3a channel until both AIVs consumed its first
-            // publication.  A5 tracks this per parity; A2/A3 keep the mature
-            // ordered kTaskDone stream.
+            // publication.  Keep this credit distinct from taskDone: the
+            // latter is emitted only after AIV finishes the final dAkk store
+            // and is what guards reuse of the whole workspace generation.
             WaitVectorStage(s3aConsumed);
             PublishVectorStage(s3aReady);
         }
@@ -1440,7 +1438,6 @@ public:
         dbGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(db_));
         dgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dg_));
         dAkkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk_));
-        dAkkBf16Gm_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(dAkk_));
         wsFp32_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_));
         wsBf16_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(workspace_));
 
@@ -1529,6 +1526,7 @@ private:
         constexpr uint32_t kZbReady = 3;
         constexpr uint32_t kS1Consumed = 6;
         constexpr uint32_t kTaskDone = 7;
+        constexpr uint32_t kS3aConsumed = 8;
 #endif
 
         const uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -1564,7 +1562,7 @@ private:
             constexpr uint32_t s3aReady = kS3aReady;
             constexpr uint32_t s0Consumed = kS0Consumed;
             constexpr uint32_t s1Consumed = kS1Consumed;
-            constexpr uint32_t s3aConsumed = kTaskDone;
+            constexpr uint32_t s3aConsumed = kS3aConsumed;
             constexpr uint32_t zbReady = kZbReady;
             constexpr uint32_t taskDone = kTaskDone;
 #endif
@@ -2423,8 +2421,11 @@ private:
             tiling_, task.batchIdx, head, task.begin, 1);
         const uint64_t zV = (slot + tiling_.zVOffset) / sizeof(DataT);
         const uint64_t zW = (slot + tiling_.zWOffset) / sizeof(DataT);
-        const uint64_t zB = WyDAkkBf16TaskBase(
-            tiling_, task.batchIdx, head, task.begin);
+        // Keep Zb in the owner slot until S6 consumes it, so the final dAkk
+        // allocation remains write-once FP32.  zaInput is dead before S7 and
+        // has enough room for this BF16 tile.
+        const uint64_t zB =
+            (slot + tiling_.zaInputOffset) / sizeof(DataT);
         auto beta = Plane(0);
         LoadBeta(beta, scalarBase, validLen);
         for (uint32_t row = begin; row < end; row += kRows) {
@@ -2472,7 +2473,7 @@ private:
             // vector post-processing paths.
             AscendC::PipeBarrier<PIPE_V>();
 #endif
-            Store(dAkkBf16Gm_[zB + row * 64], out, rows * 64);
+            Store(wsBf16_[zB + row * 64], out, rows * 64);
         }
     }
 
@@ -2658,7 +2659,6 @@ private:
     AscendC::GlobalTensor<float> dbGm_;
     AscendC::GlobalTensor<float> dgGm_;
     AscendC::GlobalTensor<float> dAkkGm_;
-    AscendC::GlobalTensor<DataT> dAkkBf16Gm_;
     AscendC::GlobalTensor<float> wsFp32_;
     AscendC::GlobalTensor<DataT> wsBf16_;
     AscendC::TQue<AscendC::TPosition::VECIN, 1> inputQueue_;
