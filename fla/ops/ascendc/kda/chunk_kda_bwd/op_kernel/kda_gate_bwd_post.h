@@ -770,10 +770,9 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
         }
 
-        // Kernel C defers both its Intra dg_hv reconstruction scan and the
-        // raw-gate upstream scan.  Each fixed six-step pass finishes in the
-        // first buffer because C is fixed at 64.
-        ReverseScanChunkA5(upstream, scanScratch, kChunkRows);
+        // Kernel C emits the local gate gradient before the public
+        // chunk-local reverse cumsum.  Perform that scan exactly once before
+        // applying the pointwise raw-gate chain rule.
         ReverseScanChunkA5(upstream, scanScratch, kChunkRows);
         auto scanned = upstream;
         auto chainScratch = scanScratch;
