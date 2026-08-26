@@ -16,10 +16,10 @@ __aicore__ inline void RunChunkKdaBwdC(
     GM_ADDR chunkIndices, GM_ADDR rawG, GM_ADDR aLog, GM_ADDR dtBias,
     GM_ADDR dq, GM_ADDR dk, GM_ADDR dv, GM_ADDR db, GM_ADDR dg,
     GM_ADDR dAkk, GM_ADDR dA, GM_ADDR dBias, GM_ADDR workspace,
-    const ChunkKdaBwdCTilingData *tiling)
+    const ChunkKdaBwdCTilingData *tiling, bool active)
 {
     if ASCEND_IS_AIC {
-        {
+        if (active) {
             ChunkKdaBwdCCubeProcess<DataT, V_DIM> process(
                 v, vNew, akk, h, dh, dvScan, dq, dk, dg, dAkk,
                 cuSeqlens, chunkIndices, workspace);
@@ -28,7 +28,7 @@ __aicore__ inline void RunChunkKdaBwdC(
         }
     }
     if ASCEND_IS_AIV {
-        {
+        if (active) {
             AscendC::TPipe pipe;
             ChunkKdaBwdCVectorProcess<DataT, V_DIM, BetaT> process(
                 q, k, v, gk, beta, h, dh, dqRaw,
@@ -45,7 +45,7 @@ __aicore__ inline void RunChunkKdaBwdC(
     AscendC::SyncAll<false>();
 
     if ASCEND_IS_AIC {
-        {
+        if (active) {
             ChunkKdaBwdCIntraCubeProcess process(
                 cuSeqlens, chunkIndices, workspace);
             process.Init(*tiling);
@@ -53,7 +53,7 @@ __aicore__ inline void RunChunkKdaBwdC(
         }
     }
     if ASCEND_IS_AIV {
-        {
+        if (active) {
             AscendC::TPipe pipe;
             ChunkKdaBwdCIntraVectorProcess<
                 128, 64, SAFE_GATE, false, VARLEN_TND,
@@ -73,7 +73,7 @@ __aicore__ inline void RunChunkKdaBwdC(
     AscendC::SyncAll<false>();
 
     if ASCEND_IS_AIV {
-        {
+        if (active) {
             AscendC::TPipe pipe;
             ChunkKdaBwdCGateProcess<SAFE_GATE, DTYPE_RAW_G> process(
                 dg, rawG, aLog, dtBias, dA, dBias,

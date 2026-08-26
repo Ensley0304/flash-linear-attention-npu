@@ -45,16 +45,11 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     // that storage in place, avoiding a full-size cross-kernel workspace.
     const aclTensor *dgBase = dg;
 
-    const char *socName = aclrtGetSocName();
-    const auto qShape = q->GetViewShape();
-    // The row16 Kernel C now emits a complete chunk-local dg tile.  Reuse the
-    // existing A5 register gate phase for the dense safe-gate case and retain
-    // the standalone post kernel as the fallback for every other layout/SOC.
-    const bool fuseGateInC = useGateInKernel && safeGate &&
-        socName != nullptr &&
-        std::string(socName).find("950") != std::string::npos &&
-        cuSeqlensOptional == nullptr && qShape.GetDimNum() == 4 &&
-        qShape.GetDim(1) > 0 && qShape.GetDim(2) % chunkSize == 0;
+    // The A5 chunk-wide shared-anchor path can produce 0 * Inf when a valid
+    // 64-token cumulative gate spans more than the FP32 exp2 range.  Keep the
+    // numerically stable local-anchor Intra path and apply the already
+    // supported raw-gate chain in the standalone post kernel.
+    const bool fuseGateInC = false;
     const bool deferGatePost = useGateInKernel && !fuseGateInC;
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(

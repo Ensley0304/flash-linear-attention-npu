@@ -494,7 +494,12 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t availableAiv = std::max<uint32_t>(
         static_cast<uint32_t>(platform.GetCoreNumAiv()), 1U);
-    const uint32_t usedCoreNum = std::max<uint32_t>(
+    // A5 scalar dA stores are only four bytes wide.  Serializing heads on one
+    // AIV avoids concurrent unaligned stores sharing and overwriting the same
+    // 32-byte GM block.  Other architectures retain the parallel head map.
+    const bool isAscend950 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    const uint32_t usedCoreNum = isAscend950 ? 1U : std::max<uint32_t>(
         std::min<uint32_t>(static_cast<uint32_t>(heads), availableAiv), 1U);
     auto *tiling =
         context->GetTilingData<KDA::KdaGateBwdPostTilingData>();

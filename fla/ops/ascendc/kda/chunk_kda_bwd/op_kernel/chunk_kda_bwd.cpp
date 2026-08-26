@@ -77,13 +77,16 @@ __aicore__ inline void RunChunkKdaBwd(
         cActive = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum() <
             static_cast<uint32_t>(tiling.kernelC.usedCoreNum);
     }
-    if (cActive) {
-        RunChunkKdaBwdC<DataT, V_DIM, BetaT, SAFE_GATE, VARLEN_TND>(
-            q, k, v, vNew, gk, beta, akk, h, dh, dvScan,
-            dqRaw, dAqk, cuSeqlens, chunkIndices, rawG, aLog, dtBias,
-            dq, dk, dv, db, dg, dAkk, dA, dBias,
-            userWorkspace + tiling.kernelCWorkspaceOffset, &tiling.kernelC);
-    }
+    // Every launched MIX block must reach the phase-C global barriers.  Keep
+    // inactive blocks out of the computation, but not out of RunChunkKdaBwdC:
+    // otherwise a short task list leaves active blocks waiting forever in
+    // SyncAll.
+    RunChunkKdaBwdC<DataT, V_DIM, BetaT, SAFE_GATE, VARLEN_TND>(
+        q, k, v, vNew, gk, beta, akk, h, dh, dvScan,
+        dqRaw, dAqk, cuSeqlens, chunkIndices, rawG, aLog, dtBias,
+        dq, dk, dv, db, dg, dAkk, dA, dBias,
+        userWorkspace + tiling.kernelCWorkspaceOffset, &tiling.kernelC,
+        cActive);
 }
 
 } // namespace KDA
