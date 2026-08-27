@@ -270,9 +270,10 @@ def main() -> None:
         bnsd_to_bsnd(got[2]),
         got[3].permute(0, 2, 1).contiguous(),
         bnsd_to_bsnd(got[4]),
-        got[5],
         got[6],
+        got[7],
     )
+    assert got[5] is None
     refs = (rdq, rdk, rdv, rdb, rdg, rd_a, rd_bias)
     names = ("dq", "dk", "dv", "db", "dg", "dA", "dbias")
     passed = True

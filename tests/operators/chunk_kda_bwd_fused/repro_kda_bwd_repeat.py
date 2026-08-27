@@ -18,7 +18,7 @@ from fla_npu.ops.triton import l2norm_fwd
 
 DEVICE = "npu:0"
 CHUNK_SIZE = 64
-OUTPUT_NAMES = ("dq", "dk", "dv", "db", "dg", "dA", "dbias")
+OUTPUT_NAMES = ("dq", "dk", "dv", "db", "dg", "dh0", "dA", "dbias")
 
 
 def is_true(value):

@@ -119,7 +119,8 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                 )
 
         self.assertEqual(captured["name"], "aclnnChunkKdaBwd")
-        self.assertEqual(len(outputs), 7)
+        self.assertEqual(len(outputs), 8)
+        self.assertIsNone(outputs[5])
         self.assertEqual(
             len(captured["args"]),
             len(ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnChunkKdaBwd"]) - 2,

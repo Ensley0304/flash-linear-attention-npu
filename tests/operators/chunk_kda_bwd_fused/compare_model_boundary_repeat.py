@@ -96,7 +96,7 @@ class AscendCModelBoundary(torch.autograd.Function):
         (q, q_rstd, k, k_rstd, v, raw_g, beta, a_log, dt_bias, gk, aqk,
          akk, w, qg, kg, v_new, h) = ctx.saved_tensors
         heads, key_dim = q.shape[2:]
-        dq_h, dk_h, dv_h, db_h, dg_h, d_a, d_bias = npu_chunk_kda_bwd(
+        dq_h, dk_h, dv_h, db_h, dg_h, dh0, d_a, d_bias = npu_chunk_kda_bwd(
             bsnd_to_bnsd(q), bsnd_to_bnsd(k), bsnd_to_bnsd(v),
             bsh_to_bhs(beta), gk, aqk, akk, w, qg, kg, v_new, h,
             bsnd_to_bnsd(d_o), ctx.scale, raw_g=bsnd_to_bnsd(raw_g),
@@ -106,6 +106,7 @@ class AscendCModelBoundary(torch.autograd.Function):
             lower_bound=ctx.lower_bound, use_gate_in_kernel=True,
             disable_recompute=True, use_exp2=True, state_v_first=False,
         )
+        assert dh0 is None
         dq = l2norm_bwd(q, q_rstd, bnsd_to_bsnd(dq_h))
         dk = l2norm_bwd(k, k_rstd, bnsd_to_bsnd(dk_h))
         d_bias = d_bias.reshape(dt_bias.shape)

@@ -36,7 +36,7 @@ INPUT_FILES = {
     "a_log": "gate_A_log.pt",
     "dt_bias": "gate_dt_bias.pt",
 }
-OUTPUT_NAMES = ("dq", "dk", "dv", "db", "dg", "dA", "dbias")
+OUTPUT_NAMES = ("dq", "dk", "dv", "db", "dg", "dh0", "dA", "dbias")
 
 
 def load_pt(path: pathlib.Path):

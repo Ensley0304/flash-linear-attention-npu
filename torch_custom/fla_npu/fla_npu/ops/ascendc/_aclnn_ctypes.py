@@ -1089,8 +1089,10 @@ def npu_chunk_kda_bwd(
     Dense tensors use ``[B, H, T, D]`` and packed tensors use ``[H, T, D]``.
     ``Aqk/Akk/w/qg/kg/v_new/h/gk`` are the saved intermediates returned by
     ``npu_chunk_kda_fwd(..., disable_recompute=True)`` after canonicalization.
-    The return value is always ``(dq, dk, dv, db, dg, dA, dbias)``; ``dA`` and
-    ``dbias`` are ``None`` unless raw-gate backward is enabled.
+    The return value is always ``(dq, dk, dv, db, dg, dh0, dA, dbias)`` to
+    match the upstream GPU interface. ``dh0`` is ``None`` because the current
+    fused path does not support ``initial_state``; ``dA`` and ``dbias`` are
+    ``None`` unless raw-gate backward is enabled.
     """
     import torch
 
@@ -1241,7 +1243,11 @@ def npu_chunk_kda_bwd(
     dv = _empty_like(v)
     db = _empty_like(beta, dtype=torch.float32)
     dg = _empty_like(gk)
-    outputs = (dq, dk, dv, db, dg, d_a, d_bias)
+    # Keep the public result contract aligned with the upstream GPU operator.
+    # The device ABI still has seven materialized outputs: initial_state/dh0 is
+    # reserved but unsupported, so its public slot is an explicit None.
+    dh0 = None
+    outputs = (dq, dk, dv, db, dg, dh0, d_a, d_bias)
 
     # ChunkKdaBwd consumes the canonical dense BNSD/varlen NTD tensors as ND.
     # A contiguous rank-4/5 NPU tensor can otherwise carry an NCHW/NCDHW tag;
