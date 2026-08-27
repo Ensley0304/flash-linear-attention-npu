@@ -17,6 +17,7 @@
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "catlass/layout/layout.hpp"
+#include "kernel_utils/tile/copy_l0c_to_ub.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
@@ -67,7 +68,8 @@ public:
             }
             for (int64_t head = 0; head < tiling_->NV; ++head, ++headGeneration) {
                 const uint32_t owner = static_cast<uint32_t>(headGeneration & 1U);
-                const uint32_t aivSlot = owner;
+                const uint32_t aivIdx = static_cast<uint32_t>(headGeneration & 1U);
+                const uint32_t aivSlot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
                 const int64_t aqkOffset = TokenOffset(*tiling_, chunk, head, tiling_->chunkSize);
                 const int64_t tokenOffset = TokenOffset(*tiling_, chunk, head, tiling_->V);
                 const int64_t stateOffset = StateOffset(*tiling_, chunk, head);
@@ -81,23 +83,30 @@ public:
                 LoadAStage(resource, owner, tokenOffset, rows);
                 LoadQStage(resource, owner, stateOffset);
                 LoadDStage(resource, owner, aqkOffset, rows);
-                RunResident<TileCopyA, float, true, false>(
+                const uint32_t aSlot = FormulaSlot(formulaGeneration++);
+                RunResident<TileCopyA, float, true, false, true, false>(
                     resource, STAGE_A,
                     owner, DO_OFFSET, VNEW_OFFSET, rows, rows, KDA_PREPARE_DIM,
                     dAqk_, aqkOffset, KDA_PREPARE_CHUNK,
-                    FormulaSlot(formulaGeneration++), aivSlot);
+                    aSlot, aSlot, aivIdx, aivSlot);
 
-                RunResident<TileCopyQ, float, false, false>(
+                // A and Q share dO as their left operand. Keep A's dO tile in
+                // L0A and let Q consume it directly; only Q's H tile enters
+                // the next L0B slot. Q releases the resident L0A tile after
+                // its MMAD has consumed it.
+                const uint32_t qSlot = FormulaSlot(formulaGeneration++);
+                RunResident<TileCopyQ, float, false, false, false, true>(
                     resource, STAGE_Q,
                     owner, DO_OFFSET, H_OFFSET, rows, KDA_PREPARE_DIM, KDA_PREPARE_DIM,
                     dqRaw_, tokenOffset, KDA_PREPARE_DIM,
-                    FormulaSlot(formulaGeneration++), 0);
+                    qSlot, aSlot, 0, 0);
 
-                RunResident<TileCopyD, bfloat16_t, false, true>(
+                const uint32_t dSlot = FormulaSlot(formulaGeneration++);
+                RunResident<TileCopyD, bfloat16_t, false, true, true, true>(
                     resource, STAGE_D,
                     owner, AQK_OFFSET, DO_OFFSET, rows, KDA_PREPARE_DIM, rows,
                     dv_, tokenOffset, KDA_PREPARE_DIM,
-                    FormulaSlot(formulaGeneration++), 0);
+                    dSlot, dSlot, 0, 0);
             }
         }
         DrainEvents();
@@ -112,6 +121,8 @@ private:
     using LayoutCM = Catlass::layout::ColumnMajor;
     using TileCopyA = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, DT, LayoutRM, DT, LayoutCM, float, LayoutRM>;
+    using TileCopyAToUB = Common::Tile::PackedTileCopyTlaToUB<
+        ArchTag, DT, LayoutRM, DT, LayoutCM, DT, LayoutRM>;
     using TileCopyQRow = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, DT, LayoutRM, DT, LayoutRM, float, LayoutRM>;
     using TileCopyQCol = Catlass::Gemm::Tile::PackedTileCopyTla<
@@ -227,13 +238,14 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, STAGE_D));
     }
 
-    template <typename TileCopy, typename OutT, bool PUBLISH_TO_AIV, bool RELEASE_OWNER>
+    template <typename TileCopy, typename OutT, bool PUBLISH_TO_AIV, bool RELEASE_OWNER,
+              bool COPY_L0A, bool RELEASE_L0A>
     __aicore__ inline void RunResident(
         Catlass::Arch::Resource<ArchTag> &resource, uint32_t stage,
         uint32_t owner, uint32_t l1AOffset, uint32_t l1BOffset,
         uint32_t m, uint32_t n, uint32_t k,
         GM_ADDR cAddr, int64_t cOffset, uint32_t cStride,
-        uint32_t slot, uint32_t aivSlot)
+        uint32_t slot, uint32_t l0ASlot, uint32_t aivIdx, uint32_t aivSlot)
     {
         using LayoutC = Catlass::layout::RowMajor;
         using LayoutL1A = typename TileCopy::LayoutTagL1A;
@@ -245,7 +257,7 @@ private:
         using TileMmad = Catlass::Gemm::Tile::TileMmadTla<ArchTag, DT, LayoutL1A>;
         auto l1A = resource.l1Buf.template GetBufferByByte<DT>(OwnerBase(owner) + l1AOffset);
         auto l1B = resource.l1Buf.template GetBufferByByte<DT>(OwnerBase(owner) + l1BOffset);
-        auto l0A = resource.l0ABuf.template GetBufferByByte<DT>(slot * L0_TILE_BYTES);
+        auto l0A = resource.l0ABuf.template GetBufferByByte<DT>(l0ASlot * L0_TILE_BYTES);
         auto l0B = resource.l0BBuf.template GetBufferByByte<DT>(slot * L0_TILE_BYTES);
         auto l0C = resource.l0CBuf.template GetBufferByByte<Acc>(slot * L0C_TILE_BYTES);
         auto tensorL1A = tla::MakeTensor(
@@ -268,8 +280,11 @@ private:
         TileMmad tileMmad;
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, stage));
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Free_[slot]);
-        copyL1ToL0A(tileL0A, tileL1A);
+        if constexpr (COPY_L0A) {
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[l0ASlot]);
+            copyL1ToL0A(tileL0A, tileL1A);
+        }
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[slot]);
         copyL1ToL0B(tileL0B, tileL1B);
         if constexpr (RELEASE_OWNER) {
             // D is the final consumer of this owner's complete A/Q/D batch.
@@ -280,26 +295,44 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0Ready_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0Ready_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
-        tileMmad(tileL0C, tileL0A, tileL0B, m, n, k, true, 0);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Free_[slot]);
+        // Each A/Q/D formula is a single-K-block GEMM.  Mark that block as
+        // both the first and last unit so the following FixPipe can retire
+        // the result instead of waiting for a later MMAD unit forever.
+        tileMmad(tileL0C, tileL0A, tileL0B, m, n, k, true, 0b11);
+        if constexpr (RELEASE_L0A) {
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[l0ASlot]);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[slot]);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0cReady_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0cReady_[slot]);
 
         if constexpr (PUBLISH_TO_AIV) {
+            const uint64_t flagOffset =
+                static_cast<uint64_t>(aivIdx) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
             AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
-                KDA_PREPARE_FREE_FLAG_BASE + aivSlot);
-        }
-        AscendC::GlobalTensor<OutT> gmC;
-        gmC.SetGlobalBuffer(reinterpret_cast<__gm__ OutT *>(cAddr) + cOffset);
-        auto tensorC = tla::MakeTensor(
-            gmC, tla::MakeLayout<OutT, LayoutC>(m, cStride), Catlass::Arch::PositionGM{});
-        auto blockC = tla::GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
-        using CopyL0CToDst = typename TileCopy::template CopyL0CToDst<decltype(blockC)>;
-        CopyL0CToDst copyL0CToDst;
-        copyL0CToDst(blockC, tileL0C, 0);
-        if constexpr (PUBLISH_TO_AIV) {
+                KDA_PREPARE_FREE_FLAG_BASE + flagOffset + aivSlot);
+            auto rawUb = resource.ubBuf.template GetBufferByByte<DT>(
+                aivSlot * KDA_PREPARE_RAW_BF16_BYTES);
+            auto tensorC = tla::MakeTensor(
+                rawUb, tla::MakeLayout<DT, LayoutC>(m, cStride), Catlass::Arch::PositionUB{});
+            auto blockC = tla::GetTile(
+                tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
+            using CopyL0CToUB = typename TileCopyAToUB::template CopyL0CToDst<decltype(blockC)>;
+            CopyL0CToUB copyL0CToUB;
+            copyL0CToUB(
+                blockC, tileL0C, m, static_cast<uint8_t>(aivIdx), 1, 0b11);
             AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
-                KDA_PREPARE_READY_FLAG_BASE + aivSlot);
+                KDA_PREPARE_READY_FLAG_BASE + flagOffset + aivSlot);
+        } else {
+            AscendC::GlobalTensor<OutT> gmC;
+            gmC.SetGlobalBuffer(reinterpret_cast<__gm__ OutT *>(cAddr) + cOffset);
+            auto tensorC = tla::MakeTensor(
+                gmC, tla::MakeLayout<OutT, LayoutC>(m, cStride), Catlass::Arch::PositionGM{});
+            auto blockC = tla::GetTile(
+                tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
+            using CopyL0CToDst = typename TileCopy::template CopyL0CToDst<decltype(blockC)>;
+            CopyL0CToDst copyL0CToDst;
+            copyL0CToDst(blockC, tileL0C, 0b11);
         }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
     }
@@ -312,11 +345,13 @@ private:
             // AIC TPipe destructor reserving/releasing M_MTE1 IDs 0..2.
             ownerCredit_[owner] = static_cast<AscendC::TEventID>(owner);
             l0Ready_[owner] = static_cast<AscendC::TEventID>(owner);
-            l0Free_[owner] = static_cast<AscendC::TEventID>(owner);
+            l0AFree_[owner] = static_cast<AscendC::TEventID>(owner);
+            l0BFree_[owner] = static_cast<AscendC::TEventID>(OWNER_COUNT + owner);
             l0cReady_[owner] = static_cast<AscendC::TEventID>(owner);
             l0cFree_[owner] = static_cast<AscendC::TEventID>(owner);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(ownerCredit_[owner]);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Free_[owner]);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[owner]);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[owner]);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0cFree_[owner]);
         }
     }
@@ -325,10 +360,15 @@ private:
     {
         for (uint32_t owner = 0; owner < OWNER_COUNT; ++owner) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ownerCredit_[owner]);
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Free_[owner]);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[owner]);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[owner]);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0cFree_[owner]);
-            AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
-                KDA_PREPARE_FREE_FLAG_BASE + owner);
+            for (uint32_t slot = 0; slot < KDA_PREPARE_RAW_SLOT_COUNT; ++slot) {
+                const uint64_t flagOffset =
+                    static_cast<uint64_t>(owner) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
+                AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
+                    KDA_PREPARE_FREE_FLAG_BASE + flagOffset + slot);
+            }
         }
     }
 
@@ -344,7 +384,8 @@ private:
     const ChunkKdaBwdPrepareTilingData *tiling_ = nullptr;
     AscendC::TEventID ownerCredit_[OWNER_COUNT];
     AscendC::TEventID l0Ready_[OWNER_COUNT];
-    AscendC::TEventID l0Free_[OWNER_COUNT];
+    AscendC::TEventID l0AFree_[OWNER_COUNT];
+    AscendC::TEventID l0BFree_[OWNER_COUNT];
     AscendC::TEventID l0cReady_[OWNER_COUNT];
     AscendC::TEventID l0cFree_[OWNER_COUNT];
 };

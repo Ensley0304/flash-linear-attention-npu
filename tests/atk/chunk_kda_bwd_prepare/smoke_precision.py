@@ -78,7 +78,9 @@ def run_dense(device, tokens, heads, state_v_first, seed):
     )
     torch.npu.synchronize()
     results = (
-        _check("d_aqk", actual[0], expected[0], atol=2.0e-3, rtol=2.0e-3),
+        # Kernel A intentionally transfers the FP32 L0C result to AIV UB as
+        # BF16 before applying the triangular scale mask.
+        _check("d_aqk", actual[0], expected[0], atol=2.0e-2, rtol=4.0e-3),
         _check("dv", actual[1], expected[1], atol=1.6e-2, rtol=1.0e-2),
         _check("dq_raw", actual[2], expected[2], atol=2.0e-2, rtol=2.0e-3),
     )
@@ -135,7 +137,8 @@ def run_varlen(device, heads, state_v_first, seed):
     )
     torch.npu.synchronize()
     results = (
-        _check("d_aqk", actual[0], d_aqk_ref, atol=2.0e-3, rtol=2.0e-3),
+        # Match the documented BF16 L0C-to-UB direct-transfer contract.
+        _check("d_aqk", actual[0], d_aqk_ref, atol=2.0e-2, rtol=4.0e-3),
         _check("dv", actual[1], dv_ref.to(torch.bfloat16), atol=1.6e-2, rtol=1.0e-2),
         _check("dq_raw", actual[2], dq_ref, atol=2.0e-2, rtol=2.0e-3),
     )

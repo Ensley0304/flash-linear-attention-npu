@@ -52,9 +52,9 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_prepare(
     (void)workspace;
     REGISTER_TILING_DEFAULT(KDA::ChunkKdaBwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KDA::ChunkKdaBwdPrepareTilingData, tilingData, tiling);
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     if (TILING_KEY_IS(1) || TILING_KEY_IS(2)) {
-        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_1);
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         KDA::ChunkKdaBwdPrepareImpl(
             aqk, vNew, dO, h, cuSeqlens, chunkIndices,
             dAqk, dv, dqRaw, &tilingData);

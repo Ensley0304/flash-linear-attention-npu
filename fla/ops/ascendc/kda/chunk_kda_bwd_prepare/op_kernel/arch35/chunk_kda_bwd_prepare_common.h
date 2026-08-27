@@ -15,15 +15,20 @@
 
 namespace KDA {
 
-// MIX_AIC_1_1 is loose-coupled on A5. Its AIC/AIV hand-off therefore uses
-// CrossCore mode 0x2 (FFTS messages), not mode 0x4 (intra-block events).
-constexpr uint8_t KDA_PREPARE_CROSS_CORE_MODE = 0x2;
-constexpr uint64_t KDA_PREPARE_FREE_FLAG_BASE = 8;
-constexpr uint64_t KDA_PREPARE_READY_FLAG_BASE = 10;
+// The A5 direct L0C-to-UB path requires a tightly coupled 1C2V block.  Follow
+// the mature DHU convention: each AIV publishes local FREE ids 0/1, while the
+// AIC observes AIV1 through the hardware sub-block flag stride.
+constexpr uint8_t KDA_PREPARE_CROSS_CORE_MODE = 0x4;
+constexpr uint64_t KDA_PREPARE_FREE_FLAG_BASE = 0;
+constexpr uint64_t KDA_PREPARE_READY_FLAG_BASE = 6;
+constexpr uint64_t KDA_PREPARE_SUBBLOCK_FLAG_STRIDE = 16;
 constexpr uint32_t KDA_PREPARE_RAW_SLOT_COUNT = 2;
 constexpr uint32_t KDA_PREPARE_CHUNK = 64;
 constexpr uint32_t KDA_PREPARE_DIM = 128;
-constexpr uint32_t KDA_PREPARE_RAW_BYTES = KDA_PREPARE_CHUNK * KDA_PREPARE_CHUNK * sizeof(float);
+constexpr uint32_t KDA_PREPARE_RAW_BF16_BYTES =
+    KDA_PREPARE_CHUNK * KDA_PREPARE_CHUNK * sizeof(bfloat16_t);
+constexpr uint32_t KDA_PREPARE_FP32_BYTES =
+    KDA_PREPARE_CHUNK * KDA_PREPARE_CHUNK * sizeof(float);
 
 struct ChunkInfo {
     int64_t b = 0;
