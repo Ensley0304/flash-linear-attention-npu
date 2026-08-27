@@ -165,11 +165,24 @@ def test_kernel_c_varlen_upper_mmad_keeps_full_physical_m_tile():
 
 
 def test_kernel_c_intra_waits_for_both_vector_subblocks():
-    vector = _read(C_ROOT / "op_kernel/chunk_kda_bwd_c_intra_vector.h")
+    vector = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_intra.h")
     prepare = vector.split("PrepareHead(task", 1)[1].split("FinishHead(task", 1)[0]
     assert "CrossCoreBarrier<0x1, PIPE_MTE3>()" in prepare
     assert prepare.index("CrossCoreBarrier<0x1, PIPE_MTE3>()") < prepare.index(
         "CrossCoreSetFlag<0x2, PIPE_MTE3>")
+    finish = vector.split("FinishHead(task", 1)[1].split("++windowIdx", 1)[0]
+    assert "CrossCoreBarrier<0x1, PIPE_MTE3>()" in finish
+
+
+def test_kernel_a_a5_packed_dq_da_uses_aligned_physical_tail_shape():
+    prepare = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_prepare.h")
+    packed = prepare.split("__aicore__ inline void RunDqDAqk(", 1)[1]
+    packed = packed.split("__aicore__ inline void RunDq(", 1)[0]
+    assert "const uint32_t physicalRows = (task.validC + 15U) & ~15U" in packed
+    assert "const uint32_t physicalDACols = (task.validC + 15U) & ~15U" in packed
+    assert "KDA_BWD_A_K + physicalDACols" in packed
+    assert "MakeLayoutL0C(m, packedN)" in packed
+    assert "64, packedN" in packed
 
 
 def test_kernel_c_a5_gate_partitions_head_window_across_subblocks():
@@ -275,8 +288,8 @@ def test_kernel_c_a5_build_zb_uses_explicit_vector_dependencies():
     wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
     build_zb = wy[wy.index("__aicore__ inline void BuildZb(") :]
     build_zb = build_zb[: build_zb.index("__aicore__ inline void PrepareStateGate(")]
-    assert "BroadcastRows(brcb, beta[row], rows);" in build_zb
-    assert "MulRowsByScalar(out, out, brcb, rows, 64);" in build_zb
+    assert "out, out, beta, 64, static_cast<uint8_t>(rows)" in build_zb
+    assert "{1, 1, 1, 8, 8, 0}" in build_zb
     assert "KdaBwdCBuildZbA5(" not in build_zb
 
 
@@ -291,7 +304,7 @@ def test_kernel_c_recycles_direct_mmad_state_after_s7():
 
 def test_kernel_c_rebinds_direct_mmad_state_before_s6():
     wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
-    wait_zb = wy.index("WaitVectorStage(zbReady);")
+    wait_zb = wy.index("WaitZbStage(zbReady);")
     s6 = wy.index("// S6: Zb @ A^T", wait_zb)
     boundary = wy[wait_zb:s6]
     assert "EndFusedMmadPhase();" in boundary
@@ -317,10 +330,18 @@ def test_kernel_c_keeps_s6_bf16_input_out_of_fp32_dakk_region():
     wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
     build_zb = wy[wy.index("__aicore__ inline void BuildZb(") :]
     build_zb = build_zb[: build_zb.index("__aicore__ inline void PrepareStateGate(")]
-    assert "(slot + tiling_.zWOffset) / sizeof(DataT);" in build_zb
+    assert "(slot + kWyZbOffset) / sizeof(DataT);" in build_zb
     s6 = wy[wy.index("// S6: Zb @ A^T") : wy.index("// S6 and S7 reuse")]
-    assert "(slot + tiling_.zWOffset) / sizeof(DataT);" in s6
+    assert "(slot + kWyZbOffset) / sizeof(DataT);" in s6
     assert "(slot + tiling_.zaInputOffset) / sizeof(DataT);" not in s6
+
+
+def test_kernel_c_a5_head_parallel_state_gate_uses_logical_state_lane():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    finish_base = wy[wy.index("__aicore__ inline void FinishBaseStage(") :]
+    finish_base = finish_base[: finish_base.index("__aicore__ inline void FinishGradientRows(")]
+    assert "stateLane * 128U;" in finish_base
+    assert "publish at +128 while PrepareStateGate reads partial 0" in finish_base
 
 
 def test_source_files_have_balanced_braces():

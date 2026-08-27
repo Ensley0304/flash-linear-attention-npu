@@ -19,6 +19,7 @@ constexpr uint32_t kWyHeadsPerWindow = 2;
 // consume data produced by the same physical core.
 constexpr uint32_t kWyFusedHeadsPerWindow = 2;
 constexpr uint32_t kWyWorkspaceSlotCount = 4;
+constexpr uint32_t kWyZbOffset = 232 * 1024;
 // Match the proven two-slot flag arrays used by the fused GDN forward
 // schedulers: each head lane owns a distinct synchronization channel.  The
 // dependent Cube result can reuse that lane's Cube->Vector flag after the
@@ -843,7 +844,7 @@ public:
             WaitVectorStage(s1Consumed);
             PublishVectorStage(s1Ready);
             // S6 consumes Zb, while the S5 AIV gradient path is independent.
-            WaitVectorStage(zbReady);
+            WaitZbStage(zbReady);
             // S6 rebinds the direct-MMAD arenas from the preceding C64/AT64
             // contractions to a square right-transpose layout and BF16
             // output.  Drain the old lifecycle before changing that view.
@@ -858,11 +859,8 @@ public:
                     tiling_, task.batchIdx, head, task.begin, 64);
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
-                // BuildZb overwrites the consumed BF16 zW tile in place.
-                // Keep zaInput exclusively FP32 across generations; mixing
-                // BF16 Zb and FP32 dAkk in that region is unsafe on A5 reuse.
                 const uint64_t zBase =
-                    (slot + tiling_.zWOffset) / sizeof(DataT);
+                    (slot + kWyZbOffset) / sizeof(DataT);
                 RunLayouts<Bf16SquareRightTransposeMmad,
                            RowMajor, ColumnMajor>(
                     resource, workspace_, zBase, a_, token64,
@@ -945,6 +943,16 @@ public:
             flag + kSubBlockFlagStride);
 #else
         AscendC::CrossCoreWaitFlag(flag);
+#endif
+    }
+
+    __aicore__ inline void WaitZbStage(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        auto &sync = (flag & 1U) == 0U ? zbReadyFlag0_ : zbReadyFlag1_;
+        Catlass::Arch::CrossCoreWaitFlag(sync);
+#else
+        WaitVectorStage(flag);
 #endif
     }
 
@@ -1191,6 +1199,10 @@ public:
     GM_ADDR chunkIndices_;
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    Catlass::Arch::CrossCoreFlag zbReadyFlag0_{10};
+    Catlass::Arch::CrossCoreFlag zbReadyFlag1_{11};
+#endif
 };
 
 } // namespace KDA
@@ -1496,6 +1508,8 @@ public:
         pipe_->InitBuffer(matrixInputPing_, kIoBytes);
         pipe_->InitBuffer(matrixInputPong_, kIoBytes);
         InitMatrixInputEvents();
+        stageMte3ToVEvent_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>());
         // Keep the two heads' owned dk_state rows in A5's larger UB until
         // FinishGradientRows forms final dk.  This removes one full FP32
         // write/read round trip through GM for every owner.
@@ -1507,6 +1521,8 @@ public:
     {
         ProcessFused();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(
+            stageMte3ToVEvent_);
         ReleaseMatrixInputEvents();
 #endif
     }
@@ -1541,6 +1557,20 @@ private:
         AscendC::CrossCoreSetFlag<0x4, PIPE_V>(flag);
 #else
         SignalVectorDependency(flag);
+#endif
+    }
+
+    __aicore__ inline void SignalZbStage(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Both AIVs finish their disjoint head/row stores, then participate in
+        // the same ordinary AIV->AIC notification.  CrossCoreFlag accounts
+        // for the paired AIV producers; the AIC consumes the joined credit.
+        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+        auto &sync = (flag & 1U) == 0U ? zbReadyFlag0_ : zbReadyFlag1_;
+        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(sync);
+#else
+        SignalCubeStage(flag);
 #endif
     }
 
@@ -1739,7 +1769,15 @@ private:
                 BuildZbStage(task, headBase + lane, validLen, slot,
                              rowSubBlockIdx, rowSubBlockNum);
             }
-            SignalCubeStage(zbReady);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // Store() queues an asynchronous MTE3 transfer.  Retire it before
+            // the ready flag lets AIC consume the in-place Zb tile.
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+                stageMte3ToVEvent_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+                stageMte3ToVEvent_);
+#endif
+            SignalZbStage(zbReady);
 
             // Gradient rows remain evenly split across both AIV sub-blocks.
             // Only the lightweight final state add remains on the S5 path;
@@ -2316,7 +2354,15 @@ private:
         if (stage == 1) {
             const uint64_t stateBase =
                 (slot + tiling_.dkRawOffset) / sizeof(float) +
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                // With two-head A5 parallelism each AIV owns a different
+                // workspace slot and its complete head is partial 0 in that
+                // slot.  Using the physical sub-block index here makes AIV1
+                // publish at +128 while PrepareStateGate reads partial 0.
+                stateLane * 128U;
+#else
                 subBlockIdx * 128U;
+#endif
             Store(wsFp32_[stateBase], statePartial, 128);
         } else if (stage == 2) {
             Store(dbGm_[scalarBase + begin], Plane(7), end - begin);
@@ -2456,10 +2502,11 @@ private:
             tiling_, task.batchIdx, head, task.begin, 1);
         const uint64_t zV = (slot + tiling_.zVOffset) / sizeof(DataT);
         const uint64_t zW = (slot + tiling_.zWOffset) / sizeof(DataT);
-        // zW is dead after this row is loaded.  Overwrite it with Zb so the
-        // zaInput region remains FP32-only for S7 across slot generations.
-        const uint64_t zB =
-            (slot + tiling_.zWOffset) / sizeof(DataT);
+        // Do not overwrite zW in place: AIC produced zW and can retain the old
+        // GM line when it later consumes AIV's Zb.  The final 24 KiB of each
+        // 256 KiB owner slot is otherwise unused; reserve its first 8 KiB for
+        // the BF16 [64,64] Zb tile and keep zaInput FP32-only.
+        const uint64_t zB = (slot + kWyZbOffset) / sizeof(DataT);
         auto beta = Plane(0);
         LoadBeta(beta, scalarBase, validLen);
         for (uint32_t row = begin; row < end; row += kRows) {
@@ -2476,15 +2523,15 @@ private:
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
 #endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            // The A5 MicroAPI scalar-broadcast path is not stable across the
-            // long fused WY schedule.  Use the queue-backed vector path here:
-            // it has explicit V-pipe dependencies and preserves the same
-            // row-wise beta broadcast and strict-lower-triangle semantics.
-            auto brcb = Plane(4);
-            BroadcastRows(brcb, beta[row], rows);
+            // dL[i,j] scales each causal column by beta[j].  Reuse the
+            // loaded beta vector for every row; broadcasting beta[i] across
+            // a row changes the WY derivative whenever beta is non-uniform.
             AscendC::Sub(out, zv, zw, rows * 64);
             AscendC::PipeBarrier<PIPE_V>();
-            MulRowsByScalar(out, out, brcb, rows, 64);
+            AscendC::Mul(
+                out, out, beta, 64, static_cast<uint8_t>(rows),
+                {1, 1, 1, 8, 8, 0});
+            AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t r = 0; r < rows; ++r) {
                 const uint32_t logicalRow = row + r;
                 if (logicalRow == 0) {
@@ -2693,6 +2740,10 @@ private:
     GM_ADDR chunkIndices_;
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    Catlass::Arch::CrossCoreFlag zbReadyFlag0_{10};
+    Catlass::Arch::CrossCoreFlag zbReadyFlag1_{11};
+#endif
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::GlobalTensor<DataT> qGm_;
     AscendC::GlobalTensor<DataT> kGm_;
@@ -2719,6 +2770,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> dkStateBuffer_;
     event_t matrixMte2ToVEvent_[2]{};
     event_t matrixVToMte2Event_[2]{};
+    event_t stageMte3ToVEvent_{};
     uint32_t currentMatrixInputSlot_ = 0;
 #endif
 };

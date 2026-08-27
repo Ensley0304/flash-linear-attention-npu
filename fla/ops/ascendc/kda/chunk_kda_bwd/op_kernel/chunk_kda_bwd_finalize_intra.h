@@ -718,6 +718,12 @@ public:
                     const uint32_t slot = CIntraWorkspaceSlot(windowIdx, headInWindow);
                     PrepareHead(task, headBase + headInWindow, rowStart, validRows, slot);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    // The two AIV sub-blocks produce disjoint halves of the
+                    // same FP32 Cube operands.  A short varlen tail makes the
+                    // second sub-block finish much earlier, so publishing
+                    // without a barrier lets AIC consume a half-written
+                    // generation (and can turn stale FP32 words into NaNs).
+                    Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
                         vecToCubeReadyFlag_);
 #else
@@ -750,6 +756,13 @@ public:
 #endif
                     FinishHead(task, headBase + headInWindow, rowStart, validRows, slot);
                 }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                // FinishHead is also asymmetric for tails shorter than eight
+                // rows: sub-block 1 owns no output rows.  Keep both AIVs on
+                // the same slot generation before either one can refill the
+                // parity slot used two windows later.
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+#endif
                 ++windowIdx;
             }
         }

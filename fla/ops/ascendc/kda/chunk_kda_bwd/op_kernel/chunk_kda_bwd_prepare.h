@@ -922,11 +922,18 @@ private:
             l1A, tla::MakeLayout<T, typename DqCopy::LayoutTagL1A>(
                      KDA_BWD_A_C, V_DIM),
             Catlass::Arch::PositionL1{});
-        const uint32_t m = task.validC == 1 ? 16 : task.validC;
+        // A5 Cube/FixPipe layouts require physical M/N extents aligned to
+        // 16.  Keep the logical stores at validC below, but never expose a
+        // short varlen tail (for example M=7, N=128+7) as the physical tile:
+        // the packed L0C mapping otherwise aliases a few dq columns with
+        // stale lanes from the adjacent dA result.
+        const uint32_t physicalRows = (task.validC + 15U) & ~15U;
+        const uint32_t m = physicalRows;
+        const uint32_t physicalDACols = (task.validC + 15U) & ~15U;
+        const uint32_t packedN = KDA_BWD_A_K + physicalDACols;
         auto l0CTensor = tla::MakeTensor(
-            l0C, tla::MakeLayoutL0C(m, kPackedN),
+            l0C, tla::MakeLayoutL0C(m, packedN),
             Catlass::Arch::PositionL0C{});
-        const uint32_t packedN = KDA_BWD_A_K + task.validC;
         auto tileL0C = GetTile(
             l0CTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(m, packedN));
@@ -958,7 +965,7 @@ private:
                 Catlass::Arch::PositionL0A{});
             auto l0BTensor = tla::MakeTensor(
                 l0B, tla::MakeLayout<T, typename DqCopy::LayoutTagL0B>(
-                         64, kPackedN),
+                         64, packedN),
                 Catlass::Arch::PositionL0B{});
             auto tileA = GetTile(
                 l1ATensor, tla::MakeCoord(0, k0), tla::MakeShape(m, 64));
