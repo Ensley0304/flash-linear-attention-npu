@@ -60,13 +60,18 @@ public:
         const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
         uint64_t headGeneration = 0;
         uint64_t formulaGeneration = 0;
-        for (int64_t task = blockIdx; task < tiling_->chunkTaskNum; task += blockNum) {
+        for (int64_t workTask = blockIdx; workTask < tiling_->workTaskNum;
+             workTask += blockNum) {
+            const int64_t chunkTask = workTask / tiling_->headWindowNum;
+            const int64_t headWindow = workTask - chunkTask * tiling_->headWindowNum;
+            const int64_t headBegin = headWindow * HEADS_PER_WORK_TASK;
+            const int64_t headEnd = KdaMin(headBegin + HEADS_PER_WORK_TASK, tiling_->NV);
             ChunkInfo chunk;
-            ResolveChunk(task, cuSeqlens_, chunkIndices_, *tiling_, chunk);
+            ResolveChunk(chunkTask, cuSeqlens_, chunkIndices_, *tiling_, chunk);
             if (!chunk.valid) {
                 continue;
             }
-            for (int64_t head = 0; head < tiling_->NV; ++head, ++headGeneration) {
+            for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
                 const uint32_t owner = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t aivIdx = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t aivSlot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
@@ -133,6 +138,7 @@ private:
         ArchTag, DT, LayoutCM, DT, LayoutRM, bfloat16_t, LayoutRM>;
 
     static constexpr uint32_t OWNER_COUNT = 2;
+    static constexpr int64_t HEADS_PER_WORK_TASK = 4;
     static constexpr uint32_t STAGE_COUNT = 3;
     static constexpr uint32_t STAGE_A = 0;
     static constexpr uint32_t STAGE_Q = 1;

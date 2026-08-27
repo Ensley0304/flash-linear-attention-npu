@@ -108,6 +108,10 @@ public:
             tiling_.seqNum = tiling_.B;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;
+        constexpr int64_t HEADS_PER_WORK_TASK = 4;
+        tiling_.headWindowNum =
+            (tiling_.NV + HEADS_PER_WORK_TASK - 1) / HEADS_PER_WORK_TASK;
+        tiling_.workTaskNum = tiling_.chunkTaskNum * tiling_.headWindowNum;
         tiling_.chunkSize = ctx_.chunkSize;
         tiling_.stateVFirst = ctx_.stateVFirst ? 1U : 0U;
         tiling_.isVariable = isVariable ? 1U : 0U;
@@ -115,13 +119,14 @@ public:
 
         if (tiling_.B <= 0 || tiling_.NV <= 0 || tiling_.T <= 0 ||
             tiling_.K != 128 || tiling_.V != 128 ||
-            tiling_.totalChunkNum <= 0 || tiling_.chunkTaskNum <= 0) {
+            tiling_.totalChunkNum <= 0 || tiling_.chunkTaskNum <= 0 ||
+            tiling_.headWindowNum <= 0 || tiling_.workTaskNum <= 0) {
             OP_LOGE(ctx_.nodeName, "unsupported KernelA shape");
             return ge::GRAPH_FAILED;
         }
         blockDim_ = std::min(
             ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum,
-            static_cast<uint32_t>(tiling_.chunkTaskNum));
+            static_cast<uint32_t>(tiling_.workTaskNum));
         tilingKey_ = isVariable ? 2U : 1U;
         workspaceSize_ = ctx_.sysWorkspaceSize;
         return ge::GRAPH_SUCCESS;

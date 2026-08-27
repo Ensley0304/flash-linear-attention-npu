@@ -18,6 +18,8 @@ struct ChunkKdaBwdPrepareTilingData {
     int64_t denseChunkNum;
     int64_t totalChunkNum;
     int64_t chunkTaskNum;
+    int64_t headWindowNum;
+    int64_t workTaskNum;
     int64_t seqNum;
     int64_t chunkSize;
     uint32_t stateVFirst;

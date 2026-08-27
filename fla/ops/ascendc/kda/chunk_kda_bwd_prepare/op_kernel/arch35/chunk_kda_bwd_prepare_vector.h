@@ -125,13 +125,18 @@ public:
             static_cast<int64_t>(AscendC::GetBlockIdx() / subBlockNum_);
         const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
         uint64_t generation = 0;
-        for (int64_t task = blockIdx; task < tiling_->chunkTaskNum; task += blockNum) {
+        for (int64_t workTask = blockIdx; workTask < tiling_->workTaskNum;
+             workTask += blockNum) {
+            const int64_t chunkTask = workTask / tiling_->headWindowNum;
+            const int64_t headWindow = workTask - chunkTask * tiling_->headWindowNum;
+            const int64_t headBegin = headWindow * HEADS_PER_WORK_TASK;
+            const int64_t headEnd = KdaMin(headBegin + HEADS_PER_WORK_TASK, tiling_->NV);
             ChunkInfo chunk;
-            ResolveChunk(task, cuSeqlens_, chunkIndices_, *tiling_, chunk);
+            ResolveChunk(chunkTask, cuSeqlens_, chunkIndices_, *tiling_, chunk);
             if (!chunk.valid) {
                 continue;
             }
-            for (int64_t head = 0; head < tiling_->NV; ++head, ++generation) {
+            for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 const uint32_t aivIdx = static_cast<uint32_t>(generation & 1U);
                 if (aivIdx != subBlockIdx_) {
                     continue;
@@ -170,6 +175,7 @@ public:
     }
 
 private:
+    static constexpr int64_t HEADS_PER_WORK_TASK = 4;
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     const ChunkKdaBwdPrepareTilingData *tiling_ = nullptr;
