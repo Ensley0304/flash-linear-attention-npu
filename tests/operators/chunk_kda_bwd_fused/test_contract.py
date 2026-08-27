@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 A_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_bwd_a"
 C_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_bwd_c"
+FUSED_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_bwd"
 
 
 def _read(path: Path) -> str:
@@ -257,6 +258,69 @@ def test_kernel_c_a5_fuses_dkgb_product_and_db_reduction():
     ):
         assert operation in helper
     assert vector.count("KdaBwdCMulRowDotSubA5(") == 2
+
+
+def test_kernel_c_a5_retires_previous_wy_generation_before_reuse():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    assert "if (localGeneration >= 1U)" in wy
+    assert "kTaskDoneBegin + ((localGeneration - 1U) & 1U)" in wy
+    assert "localGeneration == 0U ? 0U : 1U" in wy
+    zw_launch = wy.index("// S3b produces zW_raw")
+    ke_ready = wy.index("WaitVectorStage(s0Consumed);", zw_launch)
+    zw_mmad = wy.index("RunTransposeB<Bf16C64Mmad", zw_launch)
+    assert ke_ready < zw_mmad
+
+
+def test_kernel_c_a5_build_zb_uses_explicit_vector_dependencies():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    build_zb = wy[wy.index("__aicore__ inline void BuildZb(") :]
+    build_zb = build_zb[: build_zb.index("__aicore__ inline void PrepareStateGate(")]
+    assert "BroadcastRows(brcb, beta[row], rows);" in build_zb
+    assert "MulRowsByScalar(out, out, brcb, rows, 64);" in build_zb
+    assert "KdaBwdCBuildZbA5(" not in build_zb
+
+
+def test_kernel_c_recycles_direct_mmad_state_after_s7():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    s7 = wy.index("// S7: A^T @ Tza")
+    next_generation = wy.index("// Do not reuse the S3a channel", s7)
+    tail = wy[s7:next_generation]
+    assert "EndFusedMmadPhase();" in tail
+    assert "BeginFusedMmadPhase();" in tail
+
+
+def test_kernel_c_rebinds_direct_mmad_state_before_s6():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    wait_zb = wy.index("WaitVectorStage(zbReady);")
+    s6 = wy.index("// S6: Zb @ A^T", wait_zb)
+    boundary = wy[wait_zb:s6]
+    assert "EndFusedMmadPhase();" in boundary
+    assert "BeginFusedMmadPhase();" in boundary
+
+
+def test_kernel_c_rebinds_mmad_state_at_fp32_bf16_wy_boundaries():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    s2_ready = wy.index("PublishVectorStage(s2Ready);")
+    s3a = wy.index("// S3a: dW_raw/zV", s2_ready)
+    fp32_to_bf16 = wy[s2_ready:s3a]
+    assert "EndFusedMmadPhase();" in fp32_to_bf16
+    assert "BeginFusedMmadPhase();" in fp32_to_bf16
+
+    zw_ready = wy.index("PublishVectorStage(s0Ready);", s3a)
+    s5 = wy.index("// S5 produces dKgb_raw", zw_ready)
+    bf16_to_fp32 = wy[zw_ready:s5]
+    assert "EndFusedMmadPhase();" in bf16_to_fp32
+    assert "BeginFusedMmadPhase();" in bf16_to_fp32
+
+
+def test_kernel_c_keeps_s6_bf16_input_out_of_fp32_dakk_region():
+    wy = _read(FUSED_ROOT / "op_kernel/chunk_kda_bwd_finalize_wy.h")
+    build_zb = wy[wy.index("__aicore__ inline void BuildZb(") :]
+    build_zb = build_zb[: build_zb.index("__aicore__ inline void PrepareStateGate(")]
+    assert "(slot + tiling_.zWOffset) / sizeof(DataT);" in build_zb
+    s6 = wy[wy.index("// S6: Zb @ A^T") : wy.index("// S6 and S7 reuse")]
+    assert "(slot + tiling_.zWOffset) / sizeof(DataT);" in s6
+    assert "(slot + tiling_.zaInputOffset) / sizeof(DataT);" not in s6
 
 
 def test_source_files_have_balanced_braces():

@@ -1199,6 +1199,43 @@ def npu_chunk_kda_bwd(
     elif any(value is not None for value in (raw_g, A_log, dt_bias)):
         raise RuntimeError("npu_chunk_kda_bwd: raw_g/A_log/dt_bias require use_gate_in_kernel=True.")
 
+    # A5's fused C-Intra short-tail path is not numerically stable yet.  A
+    # single packed sequence can use the proven full-chunk path without
+    # changing the math: append zero-gradient rows inside the already existing
+    # final chunk, then slice token gradients back to the public shape.  The
+    # number and layout of saved chunk states do not change.
+    original_seqlen = seqlen
+    padded_tail = seqlen % chunk_size != 0 and (cu is None or len(cu) == 2)
+    if padded_tail:
+        padded_seqlen = _kda_ceil_div(seqlen, chunk_size) * chunk_size
+        pad_rows = padded_seqlen - seqlen
+        token_dim = 1 if is_varlen else 2
+
+        def pad_token_rows(tensor, *, repeat_last=False):
+            if tensor is None:
+                return None
+            pad_shape = list(_shape(tensor))
+            pad_shape[token_dim] = pad_rows
+            if repeat_last:
+                tail = tensor.narrow(token_dim, seqlen - 1, 1).expand(*pad_shape).clone()
+            else:
+                tail = tensor.new_zeros(pad_shape)
+            return torch.cat((tensor, tail), dim=token_dim).contiguous()
+
+        q, k, v = (pad_token_rows(tensor) for tensor in (q, k, v))
+        beta = pad_token_rows(beta)
+        # gk is cumulative.  Holding its final real value constant keeps every
+        # zero-padded contraction finite while contributing zero gradient.
+        gk = pad_token_rows(gk, repeat_last=True)
+        Aqk, Akk = (pad_token_rows(tensor) for tensor in (Aqk, Akk))
+        w, qg, kg, v_new, d_o = (
+            pad_token_rows(tensor) for tensor in (w, qg, kg, v_new, d_o)
+        )
+        raw_g = pad_token_rows(raw_g)
+        seqlen = padded_seqlen
+        cu = None if cu is None else (0, padded_seqlen)
+        indices = _kda_build_chunk_indices(cu, chunk_size)
+
     dq = _empty_like(q, dtype=torch.float32)
     dk = _empty_like(k, dtype=torch.float32)
     dv = _empty_like(v)
@@ -1217,7 +1254,7 @@ def npu_chunk_kda_bwd(
             storage_shape_override=_shape(tensor) if tensor is not None else None,
         )
 
-    return _call_aclnn(
+    result = _call_aclnn(
         "aclnnChunkKdaBwd",
         lambda ctx: [
             nd_tensor(ctx, q, "q"), nd_tensor(ctx, k, "k"), nd_tensor(ctx, v, "v"),
@@ -1236,6 +1273,13 @@ def npu_chunk_kda_bwd(
             nd_tensor(ctx, None, "dh0"), nd_tensor(ctx, d_a, "dA"), nd_tensor(ctx, d_bias, "dbias"),
         ],
         outputs,
+    )
+    if not padded_tail:
+        return result
+    return tuple(
+        value.narrow(token_dim, 0, original_seqlen).contiguous()
+        if index < 5 else value
+        for index, value in enumerate(result)
     )
 
 

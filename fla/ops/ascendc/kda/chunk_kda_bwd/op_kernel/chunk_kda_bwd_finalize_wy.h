@@ -657,8 +657,15 @@ public:
             const uint32_t s3aConsumed = s0Consumed;
             const uint32_t zbReady = kZbReadyBegin + parity;
             const uint32_t taskDone = kTaskDoneBegin + parity;
-            if (localGeneration >= 2U) {
-                WaitVectorStage(taskDone);
+            // A5's three consumed-stage notifications share one flag per
+            // parity.  With two generations in flight, a later notification
+            // can satisfy the next generation before its kE producer has
+            // reached that stage.  Retire the preceding generation before
+            // publishing another one; this keeps the multi-use flag ordered
+            // and prevents zW from consuming an incomplete workspace tile.
+            if (localGeneration >= 1U) {
+                WaitVectorStage(
+                    kTaskDoneBegin + ((localGeneration - 1U) & 1U));
             }
 #else
             constexpr uint32_t s0Ready = kS0Ready;
@@ -724,6 +731,13 @@ public:
             }
             PublishVectorStage(s2Ready);
 
+            // S1/S2 accumulate and publish FP32 results.  S3 switches the
+            // shared L1/L0 arenas to BF16 operands/results; drain the FP32
+            // lifecycle before rebinding those buffers.  Without this A5 can
+            // overwrite dVb while AIV is consuming the S2-ready generation.
+            EndFusedMmadPhase();
+            BeginFusedMmadPhase();
+
             // S3a: dW_raw/zV.  Keep the shared dW operand unnegated so S3b
             // and S5 can consume it immediately.  Their downstream Vector
             // epilogues fold in the mathematical minus sign, eliminating an
@@ -785,6 +799,10 @@ public:
 
             // S3b produces zW_raw = dW_raw @ kE^T; AIV forms
             // Zb = tril(zV - zW_raw) * beta.
+            // The same AIV credit that retires the initial S0 publication is
+            // emitted only after BuildKE has completed its workspace store.
+            // Consume it before launching zW, whose right operand is kE.
+            WaitVectorStage(s0Consumed);
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
@@ -797,8 +815,13 @@ public:
             }
             // S0 is reused for zW only after both AIVs consumed the initial
             // dq-ready generation.
-            WaitVectorStage(s0Consumed);
             PublishVectorStage(s0Ready);
+
+            // S3a/S3b use BF16 accumulation/output, while S5 returns to an
+            // FP32 A^T contraction.  Match the proven A2 lifecycle boundary
+            // so the new layout cannot inherit pending BF16 event state.
+            EndFusedMmadPhase();
+            BeginFusedMmadPhase();
 
             // S5 produces dKgb_raw = A^T @ dW_raw.  The gradient/gate Vector
             // stage consumes it with a negative sign, avoiding a materialized
@@ -821,6 +844,11 @@ public:
             PublishVectorStage(s1Ready);
             // S6 consumes Zb, while the S5 AIV gradient path is independent.
             WaitVectorStage(zbReady);
+            // S6 rebinds the direct-MMAD arenas from the preceding C64/AT64
+            // contractions to a square right-transpose layout and BF16
+            // output.  Drain the old lifecycle before changing that view.
+            EndFusedMmadPhase();
+            BeginFusedMmadPhase();
 
             // S6: Zb @ A^T -> Tza.  Keep Tza in the current slot; S7 is an
             // AIC consumer, so an AIC->GM->AIV->GM round trip is unnecessary.
@@ -830,8 +858,11 @@ public:
                     tiling_, task.batchIdx, head, task.begin, 64);
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
+                // BuildZb overwrites the consumed BF16 zW tile in place.
+                // Keep zaInput exclusively FP32 across generations; mixing
+                // BF16 Zb and FP32 dAkk in that region is unsafe on A5 reuse.
                 const uint64_t zBase =
-                    (slot + tiling_.zaInputOffset) / sizeof(DataT);
+                    (slot + tiling_.zWOffset) / sizeof(DataT);
                 RunLayouts<Bf16SquareRightTransposeMmad,
                            RowMajor, ColumnMajor>(
                     resource, workspace_, zBase, a_, token64,
@@ -858,6 +889,12 @@ public:
                     slot + tiling_.zaInputOffset,
                     validLen, validLen, validLen, 64, 64, 64);
             }
+            // The next generation returns to the C64/AT64 operand layouts.
+            // Drain the square S7 lifecycle before those same L1/L0 arenas
+            // are rebound; otherwise A5 can carry stale layout/event state
+            // into the third and later chunks.
+            EndFusedMmadPhase();
+            BeginFusedMmadPhase();
             // Do not reuse the S3a channel until both AIVs consumed its first
             // publication.  Keep this credit distinct from taskDone: the
             // latter is emitted only after AIV finishes the final dAkk store
@@ -869,7 +906,7 @@ public:
         // following Intra phase reuses local resources and event ids.
         const uint32_t outstanding =
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            localGeneration < 2U ? localGeneration : 2U;
+            localGeneration == 0U ? 0U : 1U;
 #else
             localGeneration == 0U ? 0U : 1U;
 #endif
@@ -2235,9 +2272,7 @@ private:
                 AscendC::Add(statePartial, statePartial, y, 128);
                 AscendC::PipeBarrier<PIPE_V>();
             } else {
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                 BroadcastRows(brcb, Plane(6)[row - begin], rows);
-#endif
                 for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     LoadRowsPair(
@@ -2421,11 +2456,10 @@ private:
             tiling_, task.batchIdx, head, task.begin, 1);
         const uint64_t zV = (slot + tiling_.zVOffset) / sizeof(DataT);
         const uint64_t zW = (slot + tiling_.zWOffset) / sizeof(DataT);
-        // Keep Zb in the owner slot until S6 consumes it, so the final dAkk
-        // allocation remains write-once FP32.  zaInput is dead before S7 and
-        // has enough room for this BF16 tile.
+        // zW is dead after this row is loaded.  Overwrite it with Zb so the
+        // zaInput region remains FP32-only for S7 across slot generations.
         const uint64_t zB =
-            (slot + tiling_.zaInputOffset) / sizeof(DataT);
+            (slot + tiling_.zWOffset) / sizeof(DataT);
         auto beta = Plane(0);
         LoadBeta(beta, scalarBase, validLen);
         for (uint32_t row = begin; row < end; row += kRows) {
@@ -2442,12 +2476,27 @@ private:
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
 #endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            KdaBwdCBuildZbA5(
-                reinterpret_cast<__ubuf__ float *>(out.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(zv.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(zw.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(beta[row].GetPhyAddr()),
-                static_cast<uint16_t>(rows), static_cast<uint16_t>(row), 64);
+            // The A5 MicroAPI scalar-broadcast path is not stable across the
+            // long fused WY schedule.  Use the queue-backed vector path here:
+            // it has explicit V-pipe dependencies and preserves the same
+            // row-wise beta broadcast and strict-lower-triangle semantics.
+            auto brcb = Plane(4);
+            BroadcastRows(brcb, beta[row], rows);
+            AscendC::Sub(out, zv, zw, rows * 64);
+            AscendC::PipeBarrier<PIPE_V>();
+            MulRowsByScalar(out, out, brcb, rows, 64);
+            for (uint32_t r = 0; r < rows; ++r) {
+                const uint32_t logicalRow = row + r;
+                if (logicalRow == 0) {
+                    AscendC::Duplicate(out[r * 64], 0.0f, 64);
+                } else if (logicalRow < 64) {
+                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    upperMask[0] <<= logicalRow;
+                    AscendC::Duplicate(
+                        out[r * 64], 0.0f, upperMask, 1, 1, 8);
+                }
+            }
+            AscendC::PipeBarrier<PIPE_V>();
 #else
             // zW was formed from dW_raw; subtracting it is equivalent to
             // adding the original zW formed from -dW_raw.

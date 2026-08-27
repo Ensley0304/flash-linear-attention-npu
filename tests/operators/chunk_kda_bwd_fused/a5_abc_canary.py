@@ -123,14 +123,19 @@ def reference(aqk, qg, kg, w, vnew, h, do, gk, scale, data,
     # nonzero final outputs of Kernel C's complete graph.
     dq = dq_raw * scale
     dk = torch.empty_like(dq)
-    dg = torch.empty_like(dq)
+    # h_next depends on the chunk-end accumulated gate only. Therefore the
+    # state-transition term h * dh is an impulse at the final accumulated-g
+    # row; the raw-gate backward pass below expands it to every contributing
+    # step with one reverse cumsum. Filling every row here would model a
+    # second, nonexistent cumsum and make this canary disagree with autograd.
+    dg = torch.zeros_like(dq)
     for b in range(bsz):
         for head in range(heads):
             for ci in range(chunks):
                 begin, end = ci * chunk, (ci + 1) * chunk
                 dk[b, head, begin:end] = (
                     vnew[b, head, begin:end] @ dh[b, head, ci].T)
-                dg[b, head, begin:end] = (
+                dg[b, head, end - 1] = (
                     h[b, ci, head] * dh[b, head, ci]).sum(dim=-1)
     d_a = None
     d_bias = None
