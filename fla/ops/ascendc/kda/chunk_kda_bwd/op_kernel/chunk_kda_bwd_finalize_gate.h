@@ -299,19 +299,9 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        // The optimized safe raw-gate path performs the required reverse
-        // inclusive scan inside KdaBwdCSafeGateBackwardA5 while applying the
-        // chain rule.  Feed it the unscanned local dg; pre-scanning here would
-        // accumulate the chunk twice.
-        if constexpr (SAFE_GATE) {
-            if (applyRaw) {
-                ApplyRawGate(task, head, validC, src, *dAAcc, *dbAcc);
-                return;
-            }
-        }
-
-        // Materialize accumulated-gate gradients for the public dg output or
-        // for raw-gate paths whose chain-rule helper does not fuse the scan.
+        // Materialize the accumulated gate gradient first.  The following
+        // raw-gate helper applies the chain rule to this upstream gradient;
+        // it does not replace the Intra reconstruction scan.
         KdaBwdCGateReverseScanA5(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)src.GetPhyAddr(),

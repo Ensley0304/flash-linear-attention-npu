@@ -703,17 +703,30 @@ public:
                 const uint32_t head = headBase + lane;
                 const uint64_t tokenV = WyTokenOffset(
                     tiling_, task.batchIdx, head, task.begin, V_DIM);
-                const uint64_t tokenK = WyTokenOffset(
-                    tiling_, task.batchIdx, head, task.begin, 128);
                 const uint64_t dhOffset = WyDhOffset(
                     tiling_, task.batchIdx, head, task.chunkIdx);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                const uint64_t slot = WyWorkspaceSlotBase(
+                    tiling_, coreIdx, localGeneration, lane);
+#else
+                const uint64_t tokenK = WyTokenOffset(
+                    tiling_, task.batchIdx, head, task.begin, 128);
+#endif
                 // dk_base is one [C,128] result.  A5 can retain the complete
                 // right operand and FP32 accumulator, so issue one N=128 MMAD
                 // instead of two adjacent N=64 contractions.
                 RunTransposeBToOutput<Fp32C64Mmad, RowMajor, ColumnMajor>(
                     resource, vNew_, tokenV, dh_, dhOffset,
-                    dk_, tokenK, validLen, 128, 128, V_DIM);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    workspace_, (slot + tiling_.dkRawOffset) / sizeof(float),
+#else
+                    dk_, tokenK,
+#endif
+                    validLen, 128, 128, V_DIM);
             }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            FenceFixToMte2();
+#endif
             PublishVectorStage(s1Ready);
 
             // S2: A^T @ dv_scan -> dVb; AIV emits dv and db_base.
@@ -953,6 +966,19 @@ public:
         Catlass::Arch::CrossCoreWaitFlag(sync);
 #else
         WaitVectorStage(flag);
+#endif
+    }
+
+    __aicore__ inline void FenceFixToMte2()
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if ASCEND_IS_AIC {
+            constexpr int32_t kFixToMte2Event = 0;
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(
+                kFixToMte2Event);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(
+                kFixToMte2Event);
+        }
 #endif
     }
 
@@ -2271,7 +2297,7 @@ private:
             } else if (stage == 1) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 LoadRowsPair(
-                    x, dkGm_[tokenBase + row * 128], rows, 128, 128,
+                    x, wsFp32_[dkRaw + row * 128], rows, 128, 128,
                     y, gkGm_[tokenBase + row * 128], rows, 128, 128);
 #else
                 Load(x, dkGm_[tokenBase + row * 128], rows * 128);

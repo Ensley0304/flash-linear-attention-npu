@@ -2712,22 +2712,15 @@ private:
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[dkSlot]);
-        KdaRegbaseAdd3(
-            (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)MatrixInput<float>(dkSlot).GetPhyAddr(),
-            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
-            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
-            count);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-            matrixVToMte2Event_[dkSlot]);
-        StoreRows(dkOutGm_[CIntraTensorOffset(
-                      tiling_, task.batchIdx, head, tokenBegin, 0)],
-                  output, ownedRows, cols, TensorRowElements());
-
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[dgSlot]);
-        KdaRegbaseDg(
+        // Produce dk and dg into two independent UB regions.  Reusing output
+        // for dg immediately after starting dk's MTE3 copy can overwrite the
+        // asynchronous copy source on A5.
+        KdaRegbaseDkDg(
+            (__ubuf__ float *)dqFinal.GetPhyAddr(),
             (__ubuf__ float *)output.GetPhyAddr(),
+            (__ubuf__ float *)MatrixInput<float>(dkSlot).GetPhyAddr(),
             (__ubuf__ float *)MatrixInput<float>(dgSlot).GetPhyAddr(),
             (__ubuf__ float *)q.GetPhyAddr(),
             (__ubuf__ float *)rawDq.GetPhyAddr(),
@@ -2736,7 +2729,12 @@ private:
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
             count);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dkSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
+        StoreRows(dkOutGm_[CIntraTensorOffset(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  dqFinal, ownedRows, cols, TensorRowElements());
         if (tiling_.useGateInKernel == 0) {
             if (rowStart == 0) {
                 auto pending = pendingDg_.Get<float>()[ownedBegin * K_DIM];

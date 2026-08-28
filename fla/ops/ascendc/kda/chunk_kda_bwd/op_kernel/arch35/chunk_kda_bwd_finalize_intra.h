@@ -428,6 +428,49 @@ static __simd_vf__ inline void KdaRegbaseDg(
     }
 }
 
+static __simd_vf__ inline void KdaRegbaseDkDg(
+    __ubuf__ float *dkDst, __ubuf__ float *dgDst,
+    __ubuf__ float *dkInput, __ubuf__ float *dgInput,
+    __ubuf__ float *q, __ubuf__ float *rawDq, __ubuf__ float *k,
+    __ubuf__ float *rawDkLower, __ubuf__ float *rawDkUpper,
+    uint16_t count)
+{
+    RegTensor<float> dkInputReg;
+    RegTensor<float> dgInputReg;
+    RegTensor<float> qReg;
+    RegTensor<float> dqReg;
+    RegTensor<float> kReg;
+    RegTensor<float> lowerReg;
+    RegTensor<float> upperReg;
+    RegTensor<float> dkOutReg;
+    RegTensor<float> dgOutReg;
+    RegTensor<float> tempReg;
+    uint32_t remaining = count;
+    for (uint32_t offset = 0; offset < count;
+         offset += kKdaRegbaseFp32Elements) {
+        MaskReg mask = UpdateMask<float>(remaining);
+        DataCopy(dkInputReg, dkInput + offset);
+        DataCopy(dgInputReg, dgInput + offset);
+        DataCopy(qReg, q + offset);
+        DataCopy(dqReg, rawDq + offset);
+        DataCopy(kReg, k + offset);
+        DataCopy(lowerReg, rawDkLower + offset);
+        DataCopy(upperReg, rawDkUpper + offset);
+
+        Add(dkOutReg, lowerReg, upperReg, mask);
+        Add(dkOutReg, dkInputReg, dkOutReg, mask);
+
+        Mul(dgOutReg, qReg, dqReg, mask);
+        Add(dgOutReg, dgInputReg, dgOutReg, mask);
+        Sub(tempReg, lowerReg, upperReg, mask);
+        Mul(tempReg, kReg, tempReg, mask);
+        Add(dgOutReg, dgOutReg, tempReg, mask);
+
+        DataCopy(dkDst + offset, dkOutReg, mask);
+        DataCopy(dgDst + offset, dgOutReg, mask);
+    }
+}
+
 // Reverse inclusive scan for one contiguous row segment.  Carry contains the
 // suffix accumulated by later segments and is updated with this segment's
 // total.  Calling segments in descending token order is bitwise equivalent to
