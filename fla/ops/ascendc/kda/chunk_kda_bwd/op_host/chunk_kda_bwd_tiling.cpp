@@ -13,6 +13,9 @@
 namespace optiling {
 namespace {
 
+constexpr uint64_t KDA_A_RAW_WORKSPACE_PER_CORE =
+    4U * 64U * 64U * sizeof(float);
+
 enum InputIndex : size_t {
     INPUT_Q = 0,
     INPUT_K,
@@ -367,6 +370,15 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
     tiling->kernelBWorkspaceOffset = static_cast<uint32_t>(cursor);
     cursor = AlignUp(cursor + bUserWorkspace, 512);
+    // Kernel A and Kernel C run in different globally synchronized phases,
+    // but msSanitizer tracks GM write ownership at a coarser lifetime than
+    // those in-kernel barriers.  Giving A its own slots also prevents future
+    // phase-local changes from turning the intentional alias into a real
+    // cross-phase overwrite.
+    cursor = AlignUp(
+        cursor + static_cast<uint64_t>(tiling->kernelC.usedCoreNum) *
+                     KDA_A_RAW_WORKSPACE_PER_CORE,
+        512);
     tiling->kernelCWorkspaceOffset = static_cast<uint32_t>(cursor);
     cursor += cUserWorkspace;
     OP_CHECK_IF(cursor > UINT32_MAX,

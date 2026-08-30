@@ -7,6 +7,7 @@ import ctypes
 import math
 import os
 import statistics
+import time
 
 import torch
 import torch_npu  # noqa: F401
@@ -222,8 +223,10 @@ def run(args):
         akk = zero((*token_prefix, chunk))
     else:
         q, k, v, akk = qg, kg, vnew, aqk
-        beta = torch.empty(token_prefix, dtype=torch.float32,
-                           device="npu")
+        # Performance runs must still use fully initialized, finite inputs;
+        # uninitialized beta can inject NaNs and invalidate both timing and
+        # output-finiteness conclusions.
+        beta = zero(token_prefix, torch.float32)
 
     dq = torch.empty_like(q, dtype=torch.float32)
     dk = torch.empty_like(k, dtype=torch.float32)
@@ -370,18 +373,24 @@ def run(args):
         invoke()
     torch.npu.synchronize()
     samples = []
+    wall_samples = []
     for _ in range(args.repeat):
         start = torch.npu.Event(enable_timing=True)
         end = torch.npu.Event(enable_timing=True)
+        wall_start = time.perf_counter()
         start.record()
         invoke()
         end.record()
         torch.npu.synchronize()
+        wall_samples.append((time.perf_counter() - wall_start) * 1000.0)
         samples.append(start.elapsed_time(end))
     print("ABC_PERF", {"shape": [bsz, heads, seqlen, key_dim, value_dim],
           "median_ms": statistics.median(samples), "min_ms": min(samples),
           "max_ms": max(samples), "workspace_bytes": workspace.numel(),
-          "varlen": args.varlen, "samples_ms": samples},
+          "varlen": args.varlen, "samples_ms": samples,
+          "wall_median_ms": statistics.median(wall_samples),
+          "wall_min_ms": min(wall_samples), "wall_max_ms": max(wall_samples),
+          "wall_samples_ms": wall_samples},
           flush=True)
     runtime.destroy(*descriptors.values())
     if cu_handle is not None:

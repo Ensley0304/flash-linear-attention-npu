@@ -20,6 +20,11 @@ constexpr uint32_t kWyHeadsPerWindow = 2;
 constexpr uint32_t kWyFusedHeadsPerWindow = 2;
 constexpr uint32_t kWyWorkspaceSlotCount = 4;
 constexpr uint32_t kWyZbOffset = 232 * 1024;
+// Keep the AIV state reduction out of dkRaw.  Reusing the first 512/1024
+// bytes of dkRaw was numerically safe after the consumer fence, but it gives
+// the same GM line two different core owners in one kernel invocation and is
+// correctly rejected by msSanitizer's cross-core memory ownership check.
+constexpr uint32_t kWyStatePartialOffset = 240 * 1024;
 // Match the proven two-slot flag arrays used by the fused GDN forward
 // schedulers: each head lane owns a distinct synchronization channel.  The
 // dependent Cube result can reuse that lane's Cube->Vector flag after the
@@ -163,6 +168,8 @@ __aicore__ inline uint64_t WyWorkspaceSlotBase(
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
+#include "catlass/gemm/block/block_mmad.hpp"
+#include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/gemm_type.hpp"
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
@@ -267,9 +274,29 @@ struct WyTileGemmDirect {
             l1B_, tla::MakeLayout<ElementB, LayoutTagL1B>(k, n),
             Catlass::Arch::PositionL1{});
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (((m | n | k) & 15U) != 0U) {
+            // GM->L1 tile copies preserve the aligned tail of a reused L1
+            // plane.  A short varlen reduction can therefore feed stale
+            // values (including NaNs) into MMAD.  Clear only non-16-aligned
+            // tiles; full 64-token model chunks keep the fast path unchanged.
+            AscendC::InitConstValueParams<ElementA> clearA(
+                1, static_cast<uint16_t>(kL1PlaneBytes / 32), 0,
+                static_cast<ElementA>(0));
+            AscendC::InitConstValue(l1A_, clearA);
+        }
+#endif
         copyGmA(l1A, a);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1A);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (((m | n | k) & 15U) != 0U) {
+            AscendC::InitConstValueParams<ElementB> clearB(
+                1, static_cast<uint16_t>(kL1PlaneBytes / 32), 0,
+                static_cast<ElementB>(0));
+            AscendC::InitConstValue(l1B_, clearB);
+        }
+#endif
         copyGmB(l1B, b);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1B);
 
@@ -519,7 +546,7 @@ private:
     AscendC::LocalTensor<ElementAccumulator> l0C1_;
 };
 
-template <typename DataT, uint32_t V_DIM>
+template <typename DataT, uint32_t V_DIM, bool SAFE_GATE>
 class ChunkKdaBwdCCubeProcess {
 public:
     __aicore__ ChunkKdaBwdCCubeProcess(
@@ -581,6 +608,22 @@ public:
         using Fp32SquareLeftTransposeMmad =
             WyTileGemmDirect<ArchTag, float,
                              Fp32SquareLeftTransposeCopy>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        using SquareDispatchPolicy =
+            Catlass::Gemm::MmadPingpong<ArchTag, true, false>;
+        using SquareL1Shape =
+            tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+        using SquareL0Shape =
+            tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+        using Fp32SquareLeftTransposeBlockMmad =
+            Catlass::Gemm::Block::BlockMmadTla<
+                SquareDispatchPolicy, SquareL1Shape, SquareL0Shape,
+                Element, Element, float, void,
+                Fp32SquareLeftTransposeCopy>;
+#else
+        using Fp32SquareLeftTransposeBlockMmad =
+            Fp32SquareLeftTransposeMmad;
+#endif
 
         Catlass::Arch::Resource<ArchTag> resource;
         ProcessFused<
@@ -588,6 +631,7 @@ public:
             Fp32AT64x128Mmad,
             ElementSquareRightTransposeMmad,
             Fp32SquareLeftTransposeMmad,
+            Fp32SquareLeftTransposeBlockMmad,
             RowMajor, ColumnMajor>(resource);
     }
 
@@ -596,6 +640,7 @@ public:
               typename Fp32AT64x128Mmad,
               typename Bf16SquareRightTransposeMmad,
               typename Fp32SquareLeftTransposeMmad,
+              typename Fp32SquareLeftTransposeBlockMmad,
               typename RowMajor, typename ColumnMajor>
     __aicore__ inline void ProcessFused(
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -608,13 +653,17 @@ public:
             AscendC::SetMMLayoutTransform(true);
         }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        constexpr uint32_t kS0ReadyBegin = 0;
-        constexpr uint32_t kS1ReadyBegin = 2;
-        constexpr uint32_t kS2ReadyBegin = 4;
-        constexpr uint32_t kS3aReadyBegin = 6;
-        constexpr uint32_t kStageConsumedBegin = 8;
-        constexpr uint32_t kZbReadyBegin = 10;
-        constexpr uint32_t kTaskDoneBegin = 12;
+        constexpr uint32_t kS0Ready = 0;
+        constexpr uint32_t kS1Ready = 1;
+        constexpr uint32_t kS2Ready = 2;
+        constexpr uint32_t kS3aReady = 3;
+        constexpr uint32_t kS0Consumed = 4;
+        constexpr uint32_t kS1Consumed = 5;
+        constexpr uint32_t kS3aConsumed = 6;
+        constexpr uint32_t kZbReady = 7;
+        // Ascend950 mode-4 base IDs are 0..10; AIV1 is addressed by +16.
+        // Keep the two parity generations on valid, otherwise unused IDs.
+        constexpr uint32_t kTaskDoneBegin = 8;
 #else
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
@@ -648,16 +697,16 @@ public:
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            const uint32_t parity = localGeneration & 1U;
-            const uint32_t s0Ready = kS0ReadyBegin + parity;
-            const uint32_t s1Ready = kS1ReadyBegin + parity;
-            const uint32_t s2Ready = kS2ReadyBegin + parity;
-            const uint32_t s3aReady = kS3aReadyBegin + parity;
-            const uint32_t s0Consumed = kStageConsumedBegin + parity;
-            const uint32_t s1Consumed = s0Consumed;
-            const uint32_t s3aConsumed = s0Consumed;
-            const uint32_t zbReady = kZbReadyBegin + parity;
-            const uint32_t taskDone = kTaskDoneBegin + parity;
+            const uint32_t s0Ready = kS0Ready;
+            const uint32_t s1Ready = kS1Ready;
+            const uint32_t s2Ready = kS2Ready;
+            const uint32_t s3aReady = kS3aReady;
+            const uint32_t s0Consumed = kS0Consumed;
+            const uint32_t s1Consumed = kS1Consumed;
+            const uint32_t s3aConsumed = kS3aConsumed;
+            const uint32_t zbReady = kZbReady;
+            const uint32_t taskDone =
+                kTaskDoneBegin + (localGeneration & 1U);
             // A5's three consumed-stage notifications share one flag per
             // parity.  With two generations in flight, a later notification
             // can satisfy the next generation before its kE producer has
@@ -703,26 +752,36 @@ public:
                 const uint32_t head = headBase + lane;
                 const uint64_t tokenV = WyTokenOffset(
                     tiling_, task.batchIdx, head, task.begin, V_DIM);
+                const uint64_t tokenK = WyTokenOffset(
+                    tiling_, task.batchIdx, head, task.begin, 128);
                 const uint64_t dhOffset = WyDhOffset(
                     tiling_, task.batchIdx, head, task.chunkIdx);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
-#else
-                const uint64_t tokenK = WyTokenOffset(
-                    tiling_, task.batchIdx, head, task.begin, 128);
 #endif
                 // dk_base is one [C,128] result.  A5 can retain the complete
                 // right operand and FP32 accumulator, so issue one N=128 MMAD
                 // instead of two adjacent N=64 contractions.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                if constexpr (V_DIM != 128) {
+                    RunTransposeBToOutput<
+                        Fp32C64Mmad, RowMajor, ColumnMajor>(
+                        resource, vNew_, tokenV, dh_, dhOffset,
+                        dk_, tokenK, validLen, 128, 128, V_DIM);
+                } else {
+                    RunTransposeBToOutput<
+                        Fp32C64Mmad, RowMajor, ColumnMajor>(
+                        resource, vNew_, tokenV, dh_, dhOffset,
+                        workspace_,
+                        (slot + tiling_.dkRawOffset) / sizeof(float),
+                        validLen, 128, 128, V_DIM);
+                }
+#else
                 RunTransposeBToOutput<Fp32C64Mmad, RowMajor, ColumnMajor>(
                     resource, vNew_, tokenV, dh_, dhOffset,
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    workspace_, (slot + tiling_.dkRawOffset) / sizeof(float),
-#else
-                    dk_, tokenK,
+                    dk_, tokenK, validLen, 128, 128, V_DIM);
 #endif
-                    validLen, 128, 128, V_DIM);
             }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             FenceFixToMte2();
@@ -771,7 +830,8 @@ public:
                 // second half.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 if constexpr (V_DIM == 128) {
-                    if (headCount == kWyFusedHeadsPerWindow) {
+                    if (headCount == kWyFusedHeadsPerWindow &&
+                        validLen == 64U) {
                         RunSharedLeftDualTransposeB<
                             Bf16C64DualRightMmad, RowMajor, ColumnMajor>(
                             resource, dvScan_, tokenV,
@@ -780,9 +840,13 @@ public:
                             v_, tokenV, slot + tiling_.zVOffset,
                             validLen, 64);
                     } else {
-                        // The one-head tail has no second owner to hide the
-                        // dual-output event lifecycle.  Use the proven single
-                        // output direct tiles; the H=96 fast path is unchanged.
+                        // The dual-right path uses compact paired L0B/L0C
+                        // planes whose physical mapping assumes a complete
+                        // 64-row chunk.  Binding a 63-row tail leaves its
+                        // second FIX/MTE1 event lifecycle dirty on A5 and
+                        // contaminates a later kernel launch.  Tail chunks
+                        // use the independently drained direct contractions;
+                        // the dense full-chunk model path is unchanged.
                         RunTransposeB<Bf16C64Mmad, RowMajor, ColumnMajor>(
                             resource, dvScan_, tokenV, h_, hOffset,
                             slot + tiling_.dWOffset,
@@ -861,8 +925,21 @@ public:
             // S6 rebinds the direct-MMAD arenas from the preceding C64/AT64
             // contractions to a square right-transpose layout and BF16
             // output.  Drain the old lifecycle before changing that view.
-            EndFusedMmadPhase();
-            BeginFusedMmadPhase();
+            // Keep odd and paired owners on the same proven direct-MMAD
+            // lifecycle.  Reinitializing a separate BlockMmad lifecycle made
+            // the one-head path nondeterministic across launches.
+            const bool isolateOddS7 = false;
+            if (isolateOddS7) {
+                // The shared-left dual-result events are initialized for the
+                // paired fast path but unused by a one-head owner.  Retire
+                // that complete lifecycle before switching to the square
+                // S6 layout, then recreate a clean direct-MMAD state.
+                EndSharedLeftMmadPhase();
+                BeginSharedLeftMmadPhase();
+            } else {
+                EndFusedMmadPhase();
+                BeginFusedMmadPhase();
+            }
 
             // S6: Zb @ A^T -> Tza.  Keep Tza in the current slot; S7 is an
             // AIC consumer, so an AIC->GM->AIV->GM round trip is unnecessary.
@@ -884,33 +961,68 @@ public:
             // operand layouts and output dtypes.  Drain only that five-event
             // lifecycle before rebinding the arenas; the shared-left event-2
             // state remains untouched.
-            EndFusedMmadPhase();
-            BeginFusedMmadPhase();
+            if (isolateOddS7) {
+                EndSharedLeftMmadPhase();
+                AscendC::SetMMLayoutTransform(false);
+                BeginFusedMmadPhase();
+            } else {
+                EndFusedMmadPhase();
+                BeginFusedMmadPhase();
+            }
             // S7: A^T @ Tza and final causal/sign postprocess for dAkk.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (headCount == 1U) {
+                // The odd-head AIV initializes zaInput before publishing its
+                // normal S3a-consumed credit. Consume that credit before S7
+                // writes the active triangle into the same scratch tile.
+                WaitVectorStage(s3aConsumed);
+            }
+#endif
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint32_t head = headBase + lane;
                 const uint64_t token64 = WyTokenOffset(
                     tiling_, task.batchIdx, head, task.begin, 64);
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
-                RunLayouts<Fp32SquareLeftTransposeMmad,
-                           ColumnMajor, RowMajor>(
-                    resource, a_, token64, workspace_,
-                    (slot + tiling_.zaOutputOffset) / sizeof(DataT),
-                    slot + tiling_.zaInputOffset,
-                    validLen, validLen, validLen, 64, 64, 64);
+                if (isolateOddS7) {
+                    RunLayouts<Fp32SquareLeftTransposeMmad,
+                               ColumnMajor, RowMajor>(
+                        resource, a_, token64, workspace_,
+                        (slot + tiling_.zaOutputOffset) / sizeof(DataT),
+                        slot + tiling_.zaInputOffset,
+                        validLen, validLen, validLen, 64, 64, 64);
+                } else {
+                    RunLayouts<Fp32SquareLeftTransposeMmad,
+                               ColumnMajor, RowMajor>(
+                        resource, a_, token64, workspace_,
+                        (slot + tiling_.zaOutputOffset) / sizeof(DataT),
+                        slot + tiling_.zaInputOffset,
+                        validLen, validLen, validLen, 64, 64, 64);
+                }
             }
             // The next generation returns to the C64/AT64 operand layouts.
             // Drain the square S7 lifecycle before those same L1/L0 arenas
             // are rebound; otherwise A5 can carry stale layout/event state
             // into the third and later chunks.
-            EndFusedMmadPhase();
-            BeginFusedMmadPhase();
+            if (isolateOddS7) {
+                EndFusedMmadPhase();
+                AscendC::SetMMLayoutTransform(true);
+                BeginSharedLeftMmadPhase();
+            } else {
+                EndFusedMmadPhase();
+                BeginFusedMmadPhase();
+            }
             // Do not reuse the S3a channel until both AIVs consumed its first
             // publication.  Keep this credit distinct from taskDone: the
             // latter is emitted only after AIV finishes the final dAkk store
             // and is what guards reuse of the whole workspace generation.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (headCount != 1U) {
+                WaitVectorStage(s3aConsumed);
+            }
+#else
             WaitVectorStage(s3aConsumed);
+#endif
             PublishVectorStage(s3aReady);
         }
         // Drain the last generation that still owns workspace before the
@@ -923,8 +1035,8 @@ public:
 #endif
         for (uint32_t i = 0; i < outstanding; ++i) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            const uint32_t generation = localGeneration - outstanding + i;
-            WaitVectorStage(kTaskDoneBegin + (generation & 1U));
+            WaitVectorStage(
+                kTaskDoneBegin + ((localGeneration - 1U) & 1U));
 #else
             WaitVectorStage(kTaskDone);
 #endif
@@ -954,6 +1066,7 @@ public:
         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(flag);
         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
             flag + kSubBlockFlagStride);
+        FenceFixToMte2();
 #else
         AscendC::CrossCoreWaitFlag(flag);
 #endif
@@ -1226,8 +1339,8 @@ public:
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    Catlass::Arch::CrossCoreFlag zbReadyFlag0_{10};
-    Catlass::Arch::CrossCoreFlag zbReadyFlag1_{11};
+    Catlass::Arch::CrossCoreFlag zbReadyFlag0_{7};
+    Catlass::Arch::CrossCoreFlag zbReadyFlag1_{7};
 #endif
 };
 
@@ -1408,11 +1521,19 @@ static __simd_vf__ inline void KdaBwdCFinishDAA5(
     Duplicate(zero, 0.0f, fullMask);
     for (uint32_t row = 0; row < rows; ++row) {
         const uint32_t validCols = rowStart + row;
-        uint32_t activeCount = validCols;
-        MaskReg lowerMask = UpdateMask<float>(activeCount);
-        LoadAlign(value, src + row * cols);
-        Muls(value, value, -1.0f, fullMask);
-        Select(result, value, zero, lowerMask);
+        if (validCols == 0) {
+            // UpdateMask(0) is not a portable empty-mask construction on
+            // RegBase.  The first dAkk row is strictly above the diagonal,
+            // so materialize it explicitly instead of allowing stale Cube
+            // workspace data to escape into the public dAkk tensor.
+            result = zero;
+        } else {
+            uint32_t activeCount = validCols;
+            MaskReg lowerMask = UpdateMask<float>(activeCount);
+            LoadAlign(value, src + row * cols);
+            Muls(value, value, -1.0f, fullMask);
+            Select(result, value, zero, lowerMask);
+        }
         StoreAlign(dst + row * cols, result, fullMask);
     }
 }
@@ -1534,8 +1655,12 @@ public:
         pipe_->InitBuffer(matrixInputPing_, kIoBytes);
         pipe_->InitBuffer(matrixInputPong_, kIoBytes);
         InitMatrixInputEvents();
+        stageVToMte2Event_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
         stageMte3ToVEvent_ = static_cast<event_t>(
             pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>());
+        stageMte3ToMte2Event_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>());
         // Keep the two heads' owned dk_state rows in A5's larger UB until
         // FinishGradientRows forms final dk.  This removes one full FP32
         // write/read round trip through GM for every owner.
@@ -1547,8 +1672,12 @@ public:
     {
         ProcessFused();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
+            stageVToMte2Event_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(
             stageMte3ToVEvent_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(
+            stageMte3ToMte2Event_);
         ReleaseMatrixInputEvents();
 #endif
     }
@@ -1569,6 +1698,12 @@ private:
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(flag);
+        // The ready flag stalls Vector only.  Make subsequent MTE2 loads
+        // depend on that wait instead of allowing an early stale GM read.
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            stageVToMte2Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            stageVToMte2Event_);
 #else
         AscendC::CrossCoreWaitFlag(flag);
 #endif
@@ -1600,16 +1735,32 @@ private:
 #endif
     }
 
+    __aicore__ inline void SignalTaskDone(uint32_t flag)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // taskDone protects the complete WY output/workspace generation.
+        // Publish it on MTE3 so it cannot overtake the final dk/db/dg/dAkk
+        // stores.  A PIPE_V publication can retire at AIC before those GM
+        // writes and lets the following Intra phase read stale output data.
+        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(flag);
+#else
+        SignalCubeStage(flag);
+#endif
+    }
+
     __aicore__ inline void ProcessFused()
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        constexpr uint32_t kS0ReadyBegin = 0;
-        constexpr uint32_t kS1ReadyBegin = 2;
-        constexpr uint32_t kS2ReadyBegin = 4;
-        constexpr uint32_t kS3aReadyBegin = 6;
-        constexpr uint32_t kStageConsumedBegin = 8;
-        constexpr uint32_t kZbReadyBegin = 10;
-        constexpr uint32_t kTaskDoneBegin = 12;
+        constexpr uint32_t kS0Ready = 0;
+        constexpr uint32_t kS1Ready = 1;
+        constexpr uint32_t kS2Ready = 2;
+        constexpr uint32_t kS3aReady = 3;
+        constexpr uint32_t kS0Consumed = 4;
+        constexpr uint32_t kS1Consumed = 5;
+        constexpr uint32_t kS3aConsumed = 6;
+        constexpr uint32_t kZbReady = 7;
+        constexpr uint32_t kTaskDoneBegin = 8;
 #else
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
@@ -1638,16 +1789,16 @@ private:
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            const uint32_t parity = localGeneration & 1U;
-            const uint32_t s0Ready = kS0ReadyBegin + parity;
-            const uint32_t s1Ready = kS1ReadyBegin + parity;
-            const uint32_t s2Ready = kS2ReadyBegin + parity;
-            const uint32_t s3aReady = kS3aReadyBegin + parity;
-            const uint32_t s0Consumed = kStageConsumedBegin + parity;
-            const uint32_t s1Consumed = s0Consumed;
-            const uint32_t s3aConsumed = s0Consumed;
-            const uint32_t zbReady = kZbReadyBegin + parity;
-            const uint32_t taskDone = kTaskDoneBegin + parity;
+            const uint32_t s0Ready = kS0Ready;
+            const uint32_t s1Ready = kS1Ready;
+            const uint32_t s2Ready = kS2Ready;
+            const uint32_t s3aReady = kS3aReady;
+            const uint32_t s0Consumed = kS0Consumed;
+            const uint32_t s1Consumed = kS1Consumed;
+            const uint32_t s3aConsumed = kS3aConsumed;
+            const uint32_t zbReady = kZbReady;
+            const uint32_t taskDone =
+                kTaskDoneBegin + (localGeneration & 1U);
 #else
             constexpr uint32_t s0Ready = kS0Ready;
             constexpr uint32_t s1Ready = kS1Ready;
@@ -1668,6 +1819,9 @@ private:
             const uint32_t headCount =
                 headBase + kWyFusedHeadsPerWindow <= headNum ?
                 kWyFusedHeadsPerWindow : headNum - headBase;
+            const WyChunkTask task = GetWyChunkTask(
+                cuSeqlens_, chunkIndices_, tiling_, taskIdx);
+            const uint32_t validLen = task.end - task.begin;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             // A5 has two AIV sub-blocks and the steady-state window owns two
             // heads.  Give one complete head to each AIV instead of making
@@ -1678,10 +1832,9 @@ private:
             const bool headParallel =
                 headCount == kWyFusedHeadsPerWindow &&
                 subBlockNum == kWyFusedHeadsPerWindow;
-            // A split single-head tail is intermittently unsafe for FP16 on
-            // A5 because both AIVs update the same logical owner through
-            // independent half-row state paths.  Let AIV0 own the complete
-            // tail head; AIV1 still participates in every collective event.
+            // A one-head tail uses one AIV owner, avoiding two independent
+            // partial-state paths.  Even-head/model windows retain the fast
+            // one-head-per-AIV path.
             const bool singleHeadOwner =
                 headCount == 1U && subBlockNum == 2U;
 #else
@@ -1698,9 +1851,24 @@ private:
                 (singleHeadOwner && subBlockIdx != 0U ? headCount : 0U);
             const uint32_t rowLaneEnd =
                 headParallel ? subBlockIdx + 1U : headCount;
-            const WyChunkTask task = GetWyChunkTask(
-                cuSeqlens_, chunkIndices_, tiling_, taskIdx);
-            const uint32_t validLen = task.end - task.begin;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (singleHeadOwner && subBlockIdx == 0U) {
+                // The odd final head has no AIV1 row owner.  Its dAkk plane
+                // is private scratch rather than a framework-zeroed output,
+                // while the square tail MMAD is allowed to leave causal
+                // padding untouched.  Initialize only this rare odd-head
+                // plane; FinishDA overwrites every computed strict-lower
+                // element later.  Even-head/model windows retain the fast
+                // path without an added GM pass.
+                const uint64_t oddSlot = WyWorkspaceSlotBase(
+                    tiling_, coreIdx, localGeneration, 0U);
+                ZeroOddHeadScratch(task, headBase, validLen, oddSlot);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
+                    stageMte3ToVEvent_);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
+                    stageMte3ToVEvent_);
+            }
+#endif
             // kE has no AIC dependency.  Build it while AIC produces the
             // independent base GEMMs instead of serializing it behind S2.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -1736,6 +1904,9 @@ private:
             if (tiling_.isVarLen == 0) {
                 WaitCubeStage(s0Ready);
             }
+            if (singleHeadOwner) {
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            }
             SignalCubeStage(s0Consumed);
 #endif
 
@@ -1746,19 +1917,32 @@ private:
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishBaseStage(task, headBase + lane, validLen, slot,
-                                subBlockIdx, subBlockNum, lane, 0);
+                                subBlockIdx, subBlockNum, lane, 0, false);
             }
             SignalCubeStage(s0Consumed);
 #endif
             // S1: consume dk_raw and finish dk_state.
             WaitCubeStage(s1Ready);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
-                const uint32_t stateLane = headParallel ? 0U : lane;
+                const uint32_t stateLane = headParallel ? 0U :
+                    (headCount == 1U ? subBlockIdx : lane);
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishBaseStage(task, headBase + lane, validLen, slot,
-                                rowSubBlockIdx, rowSubBlockNum, stateLane, 1);
+                                rowSubBlockIdx, rowSubBlockNum, stateLane, 1,
+                                V_DIM != 128);
             }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if constexpr (V_DIM != 128) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+                    stageMte3ToMte2Event_);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+                    stageMte3ToMte2Event_);
+            }
+            if (singleHeadOwner) {
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            }
+#endif
             SignalCubeStage(s1Consumed);
             // S2 is ready, but dv_scan is also the final dv storage in the
             // fused contract.  Do not overwrite it until S3a has completed
@@ -1767,13 +1951,14 @@ private:
             WaitCubeStage(s3aReady);
             SignalCubeStage(s3aConsumed);
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
-                const uint32_t stateLane = headParallel ? 0U : lane;
+                const uint32_t stateLane = headParallel ? 0U :
+                    (headCount == 1U ? subBlockIdx : lane);
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
                 FinishBaseStage(task, headBase + lane, validLen, slot,
-                                rowSubBlockIdx, rowSubBlockNum, stateLane, 2);
+                                rowSubBlockIdx, rowSubBlockNum, stateLane, 2,
+                                false);
             }
-
             // The S1 state partials are now complete on both AIV sub-blocks.
             // Build the expensive h*dh state-gate term while AIC executes the
             // dependent zW GEMMs, then keep the 128-element result in the
@@ -1802,6 +1987,9 @@ private:
                 stageMte3ToVEvent_);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
                 stageMte3ToVEvent_);
+            if (singleHeadOwner) {
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            }
 #endif
             SignalZbStage(zbReady);
 
@@ -1815,7 +2003,8 @@ private:
                 uint32_t begin = 0;
                 uint32_t end = 0;
                 NormalRows(validLen, rowSubBlockIdx, rowSubBlockNum, begin, end);
-                const uint32_t stateLane = headParallel ? 0U : lane;
+                const uint32_t stateLane = headParallel ? 0U :
+                    (headCount == 1U ? subBlockIdx : lane);
                 FinishGradientRows(task, headBase + lane, validLen,
                                    slot, begin, end, stateLane);
             }
@@ -1835,9 +2024,28 @@ private:
                 FinishDA(task, headBase + lane, validLen, slot,
                          rowSubBlockIdx, rowSubBlockNum);
             }
-            SignalCubeStage(taskDone);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // For an odd final head, AIV1 intentionally owns no rows.  It
+            // must not publish taskDone before AIV0 has finished every GM
+            // write from this workspace generation; otherwise AIC can reuse
+            // the parity slot and corrupt the preceding dk tile.
+            if (singleHeadOwner) {
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            }
+#endif
+            SignalTaskDone(taskDone);
 
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // The following phase reads dk/db/dg immediately.  Connect the final
+        // WY stores to the MTE2 pipeline explicitly; SyncAll only synchronizes
+        // scalar progress and does not order MTE3 writes before Intra reads.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+            stageMte3ToMte2Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+            stageMte3ToMte2Event_);
+        AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
     }
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -2230,7 +2438,7 @@ private:
     __aicore__ inline void FinishBaseStage(
         const WyChunkTask &task, uint32_t head, uint32_t validLen, uint64_t slot,
         uint32_t subBlockIdx, uint32_t subBlockNum, uint32_t stateLane,
-        uint32_t stage)
+        uint32_t stage, bool loadDkFromOutput)
     {
         uint32_t begin = 0;
         uint32_t end = 0;
@@ -2250,7 +2458,7 @@ private:
                 AscendC::Duplicate(statePartial, 0.0f, 128);
                 AscendC::PipeBarrier<PIPE_V>();
                 const uint64_t stateBase =
-                    (slot + tiling_.dkRawOffset) / sizeof(float) +
+                    (slot + kWyStatePartialOffset) / sizeof(float) +
                     subBlockIdx * 128U;
                 Store(wsFp32_[stateBase], statePartial, 128);
             }
@@ -2277,7 +2485,8 @@ private:
             auto x = Plane(0);
             auto y = Plane(1);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            auto z = stage == 1 ? DkStateTile(stateLane, row - begin) : Plane(2);
+            auto z = stage == 1 && V_DIM == 128 ?
+                DkStateTile(stateLane, row - begin) : Plane(2);
 #else
             auto z = Plane(2);
 #endif
@@ -2296,9 +2505,17 @@ private:
                 Store(dqGm_[tokenBase + row * 128], z, rows * 128);
             } else if (stage == 1) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                LoadRowsPair(
-                    x, wsFp32_[dkRaw + row * 128], rows, 128, 128,
-                    y, gkGm_[tokenBase + row * 128], rows, 128, 128);
+                if (loadDkFromOutput) {
+                    LoadRows(x, dkGm_[tokenBase + row * 128],
+                             rows, 128, 128);
+                    LoadRows(y, gkGm_[tokenBase + row * 128],
+                             rows, 128, 128);
+                } else {
+                    LoadRows(x, wsFp32_[dkRaw + row * 128],
+                             rows, 128, 128);
+                    LoadRows(y, gkGm_[tokenBase + row * 128],
+                             rows, 128, 128);
+                }
 #else
                 Load(x, dkGm_[tokenBase + row * 128], rows * 128);
 #endif
@@ -2316,6 +2533,10 @@ private:
                 AscendC::PipeBarrier<PIPE_V>();
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                 Store(dkGm_[tokenBase + row * 128], z, rows * 128);
+#else
+                if constexpr (V_DIM != 128) {
+                    Store(dkGm_[tokenBase + row * 128], z, rows * 128);
+                }
 #endif
 
                 // GPU keeps dk_state live and immediately accumulates
@@ -2379,7 +2600,7 @@ private:
         }
         if (stage == 1) {
             const uint64_t stateBase =
-                (slot + tiling_.dkRawOffset) / sizeof(float) +
+                (slot + kWyStatePartialOffset) / sizeof(float) +
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 // With two-head A5 parallelism each AIV owns a different
                 // workspace slot and its complete head is partial 0 in that
@@ -2423,7 +2644,8 @@ private:
             auto e = Plane(2);
             auto tmp = Plane(3);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            auto acc = DkStateTile(stateLane, row - begin);
+            auto acc = V_DIM == 128 ?
+                DkStateTile(stateLane, row - begin) : Plane(4);
 #else
             auto acc = Plane(4);
 #endif
@@ -2463,6 +2685,9 @@ private:
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
             Exp2(e, e, rows * 128);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if constexpr (V_DIM != 128) {
+                Load(acc, dkGm_[tokenBase + row * 128], rows * 128);
+            }
             // Keep the complete dk/dg elementwise chain in registers.  The
             // two outputs share beta and dk_state, while tmp already holds
             // dKgb_raw*kE from the db reduction above.
@@ -2608,7 +2833,7 @@ private:
         const uint64_t dhBase = WyDhOffset(tiling_, task.batchIdx, head, task.chunkIdx);
         const uint32_t last = validLen - 1U;
         const uint64_t stateBase =
-            (slot + tiling_.dkRawOffset) / sizeof(float);
+            (slot + kWyStatePartialOffset) / sizeof(float);
         auto state = Plane(0);
         auto partial = Plane(1);
         auto gateAnchor = Plane(7);
@@ -2680,7 +2905,7 @@ private:
         const uint64_t tokenBase = WyTokenOffset(
             tiling_, task.batchIdx, head, task.begin, 128);
         const uint64_t stateBase =
-            (slot + tiling_.dkRawOffset) / sizeof(float);
+            (slot + kWyStatePartialOffset) / sizeof(float);
         const uint32_t last = validLen - 1U;
         auto state = Plane(0);
         auto gradient = Plane(1);
@@ -2748,6 +2973,27 @@ private:
         }
     }
 
+    __aicore__ inline void ZeroOddHeadScratch(
+        const WyChunkTask &task, uint32_t head, uint32_t validLen,
+        uint64_t slot)
+    {
+        auto zero = Plane(0);
+        AscendC::Duplicate(zero, 0.0f, kRows * 64);
+        AscendC::PipeBarrier<PIPE_V>();
+        const uint64_t out = WyTokenOffset(
+            tiling_, task.batchIdx, head, task.begin, 64);
+        for (uint32_t row = 0; row < validLen; row += kRows) {
+            const uint32_t rows =
+                row + kRows <= validLen ? kRows : validLen - row;
+            Store(dAkkGm_[out + row * 64], zero, rows * 64);
+        }
+        const uint64_t zaInput =
+            (slot + tiling_.zaInputOffset) / sizeof(float);
+        for (uint32_t row = 0; row < 64; row += kRows) {
+            Store(wsFp32_[zaInput + row * 64], zero, kRows * 64);
+        }
+    }
+
     GM_ADDR q_;
     GM_ADDR k_;
     GM_ADDR v_;
@@ -2767,8 +3013,8 @@ private:
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    Catlass::Arch::CrossCoreFlag zbReadyFlag0_{10};
-    Catlass::Arch::CrossCoreFlag zbReadyFlag1_{11};
+    Catlass::Arch::CrossCoreFlag zbReadyFlag0_{7};
+    Catlass::Arch::CrossCoreFlag zbReadyFlag1_{7};
 #endif
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::GlobalTensor<DataT> qGm_;
@@ -2796,7 +3042,9 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> dkStateBuffer_;
     event_t matrixMte2ToVEvent_[2]{};
     event_t matrixVToMte2Event_[2]{};
+    event_t stageVToMte2Event_{};
     event_t stageMte3ToVEvent_{};
+    event_t stageMte3ToMte2Event_{};
     uint32_t currentMatrixInputSlot_ = 0;
 #endif
 };

@@ -50,8 +50,7 @@ def test_kernel_c_owner_grid_and_value_dimension_contract():
     assert "KDA_C_SLOT_COUNT = 4" in tiling
     assert "headWindows % blockDim_" in tiling
     assert "tiling_.valueDim != 128" in tiling
-    assert "tiling_.valueDim != 256" in tiling
-    assert "tiling_.valueDim == 256 ? 4U : 0U" in tiling
+    assert "Kernel C P0 requires K=128 and V=128" in tiling
     for key in range(1, 9):
         assert f"TILING_KEY_IS({key})" in entry
 

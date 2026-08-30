@@ -20,7 +20,7 @@ __aicore__ inline void RunChunkKdaBwdC(
 {
     if ASCEND_IS_AIC {
         if (active) {
-            ChunkKdaBwdCCubeProcess<DataT, V_DIM> process(
+            ChunkKdaBwdCCubeProcess<DataT, V_DIM, SAFE_GATE> process(
                 v, vNew, akk, h, dh, dvScan, dq, dk, dg, dAkk,
                 cuSeqlens, chunkIndices, workspace);
             process.Init(*tiling);
@@ -84,6 +84,12 @@ __aicore__ inline void RunChunkKdaBwdC(
             }
         }
     }
+
+    // Gate is the final phase of the fused MIX kernel.  Do not return while
+    // either AIV sub-block still has a queued dg/dA/dbias store: a following
+    // invocation can reuse the same output allocation and observe that late
+    // write as a stale cross-shape generation.
+    AscendC::SyncAll<false>();
 }
 
 } // namespace KDA

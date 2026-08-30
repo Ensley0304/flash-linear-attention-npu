@@ -99,8 +99,8 @@ public:
         OP_CHECK_IF(aqk.GetDim(dimAxis) != 64,
                     OP_LOGE(ctx_.nodeName, "Kernel A requires C=64 and K=128."),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(valueDim != 128 && valueDim != 256,
-                    OP_LOGE(ctx_.nodeName, "Kernel A requires V=128 or V=256."),
+        OP_CHECK_IF(valueDim != 128,
+                    OP_LOGE(ctx_.nodeName, "Kernel A requires V=128."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(vNew.GetDim(dimAxis) != static_cast<size_t>(valueDim) ||
                         dO.GetDim(dimAxis) != static_cast<size_t>(valueDim),

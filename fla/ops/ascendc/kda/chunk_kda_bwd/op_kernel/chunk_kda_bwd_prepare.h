@@ -15,6 +15,10 @@ constexpr uint32_t KDA_BWD_A_C = 64;
 constexpr uint32_t KDA_BWD_A_K = 128;
 constexpr uint32_t KDA_BWD_A_HEADS_PER_WINDOW = 2;
 constexpr uint32_t KDA_BWD_A_WORKSPACE_SLOTS = 4;
+constexpr uint32_t KDA_BWD_A_RAW_SLOT_BYTES =
+    KDA_BWD_A_C * KDA_BWD_A_C * sizeof(float);
+constexpr uint32_t KDA_BWD_A_WORKSPACE_CORE_BYTES =
+    KDA_BWD_A_WORKSPACE_SLOTS * KDA_BWD_A_RAW_SLOT_BYTES;
 constexpr uint32_t KDA_BWD_A_READY_FLAG0 = 4;
 constexpr uint32_t KDA_BWD_A_READY_FLAG1 = 5;
 constexpr uint32_t KDA_BWD_A_FREE_FLAG0 = 2;
@@ -28,12 +32,11 @@ __aicore__ inline uint32_t KdaBwdAWorkspaceSlot(
 }
 
 __aicore__ inline GM_ADDR KdaBwdAWorkspaceSlotBase(
-    GM_ADDR workspace, uint32_t coreIdx, uint32_t slot,
-    const ChunkKdaBwdCTilingData &tiling)
+    GM_ADDR workspace, uint32_t coreIdx, uint32_t slot)
 {
     return workspace + static_cast<uint64_t>(coreIdx) *
-                           tiling.workspaceCoreSize +
-           static_cast<uint64_t>(slot) * tiling.workspaceSlotSize;
+                           KDA_BWD_A_WORKSPACE_CORE_BYTES +
+           static_cast<uint64_t>(slot) * KDA_BWD_A_RAW_SLOT_BYTES;
 }
 
 struct ChunkKdaBwdATask {
@@ -341,7 +344,7 @@ public:
                 RunDqDAqk(
                     task, taskIdx, head, ownerSlot,
                     KdaBwdAWorkspaceSlotBase(
-                        workspace_, core, rawSlot, cTiling_));
+                        workspace_, core, rawSlot));
                 SetDoWritable(ownerSlot);
                 Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                     (windowIdx & 1U) == 0 ? readyFlag0_ : readyFlag1_);
@@ -922,18 +925,11 @@ private:
             l1A, tla::MakeLayout<T, typename DqCopy::LayoutTagL1A>(
                      KDA_BWD_A_C, V_DIM),
             Catlass::Arch::PositionL1{});
-        // A5 Cube/FixPipe layouts require physical M/N extents aligned to
-        // 16.  Keep the logical stores at validC below, but never expose a
-        // short varlen tail (for example M=7, N=128+7) as the physical tile:
-        // the packed L0C mapping otherwise aliases a few dq columns with
-        // stale lanes from the adjacent dA result.
-        const uint32_t physicalRows = (task.validC + 15U) & ~15U;
-        const uint32_t m = physicalRows;
-        const uint32_t physicalDACols = (task.validC + 15U) & ~15U;
-        const uint32_t packedN = KDA_BWD_A_K + physicalDACols;
+        const uint32_t m = task.validC == 1 ? 16 : task.validC;
         auto l0CTensor = tla::MakeTensor(
-            l0C, tla::MakeLayoutL0C(m, packedN),
+            l0C, tla::MakeLayoutL0C(m, kPackedN),
             Catlass::Arch::PositionL0C{});
+        const uint32_t packedN = KDA_BWD_A_K + task.validC;
         auto tileL0C = GetTile(
             l0CTensor, tla::MakeCoord(0, 0),
             tla::MakeShape(m, packedN));
@@ -1005,7 +1001,12 @@ private:
         AscendC::GlobalTensor<float> dAGm;
         dqGm.SetGlobalBuffer(
             reinterpret_cast<__gm__ float *>(dqRaw_) + dqOffset);
-        dAGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dARawSlot));
+        // This tensor is a view into the fused operator workspace rather than
+        // an aclTensor argument.  Publish its logical extent so device-side
+        // bounds checking can validate the FixPipe store correctly.
+        dAGm.SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(dARawSlot),
+            static_cast<uint64_t>(KDA_BWD_A_C) * KDA_BWD_A_C);
         auto dqTensor = tla::MakeTensor(
             dqGm, tla::MakeLayout<float, RowMajor>(
                       KDA_BWD_A_C, KDA_BWD_A_K),
@@ -1174,8 +1175,8 @@ private:
         const uint64_t rawFloatOffset =
             (static_cast<uint64_t>(
                  AscendC::GetBlockIdx() / AscendC::GetSubBlockNum()) *
-                 cTiling_.workspaceCoreSize +
-             static_cast<uint64_t>(slot) * cTiling_.workspaceSlotSize) /
+                 KDA_BWD_A_WORKSPACE_CORE_BYTES +
+             static_cast<uint64_t>(slot) * KDA_BWD_A_RAW_SLOT_BYTES) /
             sizeof(float);
         AscendC::DataCopyExtParams inParams{
             static_cast<uint16_t>(rows),

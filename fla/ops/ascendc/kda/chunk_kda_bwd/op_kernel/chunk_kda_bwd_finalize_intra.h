@@ -10,8 +10,12 @@ namespace KDA {
 constexpr uint32_t kCIntraChunkSize = 64;
 constexpr uint32_t kCIntraHeadsPerWindow = 2;
 constexpr uint32_t kCIntraWorkspaceSlots = 4;
+// Retain the standalone Intra protocol. CATLASS reserves IDs 8/9/10 for
+// inter-block/sub-block barriers and limits ordinary FFTS flags to 0..7.
 constexpr uint32_t kCIntraVecReadyFlag = 2;
 constexpr uint32_t kCIntraCubeReadyFlag = 4;
+constexpr uint32_t kCIntraDenseVecReadyFlag = kCIntraVecReadyFlag;
+constexpr uint32_t kCIntraDenseCubeReadyFlag = kCIntraCubeReadyFlag;
 // Keep the mature Intra implementation's local names inside this private
 // header; they are not exported outside Kernel C.
 constexpr uint32_t kRowBlock = 16;
@@ -260,8 +264,6 @@ public:
         tiling_ = tiling;
         AscendC::SetHF32Mode(false);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        // BlockMmad used to manage the A5 packed L0C/FixPipe mapping
-        // internally.  The direct TileMmadTla path owns that lifecycle.
         AscendC::SetMMLayoutTransform(true);
 #endif
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(0);
@@ -285,17 +287,23 @@ public:
             ArchTag, float, RowMajor, float, RowMajor, float, RowMajor>;
         using UpperCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
             ArchTag, float, ColumnMajor, float, RowMajor, float, RowMajor>;
-        // Direct packed TileMmad path.  BlockMmad is intentionally not used.
         using LowerMmad = WyTileGemmDirect<ArchTag, float, LowerCopy, 128>;
         using UpperMmad = WyTileGemmDirect<ArchTag, float, UpperCopy, 64>;
-        LowerMmad lower(resource);
-        UpperMmad upper(resource);
-
+        using LowerTailMmad =
+            CIntraSingleTileMmad<RowMajor, 32, 64>;
+        using UpperTailMmad =
+            CIntraSingleTileMmad<ColumnMajor, 16, 128>;
         const uint32_t core = AscendC::GetBlockIdx();
         const uint32_t headWindows =
             (static_cast<uint32_t>(tiling_.headNum) + 1U) / 2U;
         const uint64_t groups =
             static_cast<uint64_t>(tiling_.chunkNum) * headWindows;
+        const bool tailSafePath =
+            tiling_.isVarLen != 0 || tiling_.seqlen % kChunkSize != 0;
+        LowerMmad lower(resource);
+        UpperMmad upper(resource);
+        LowerTailMmad lowerTail(resource);
+        UpperTailMmad upperTail(resource);
         uint64_t window = 0;
         for (uint64_t group = core; group < groups;
              group += tiling_.usedCoreNum) {
@@ -314,7 +322,7 @@ public:
             const uint32_t processRowBlock = kRowBlock;
 #endif
             for (uint32_t rowStart = 0; rowStart < validC;
-                 rowStart += processRowBlock, ++window) {
+                  rowStart += processRowBlock, ++window) {
                 const uint32_t validRows =
                     rowStart + processRowBlock <= validC ?
                         processRowBlock : validC - rowStart;
@@ -323,7 +331,12 @@ public:
                 const uint32_t future = validC - rowStart;
                 for (uint32_t lane = 0; lane < headCount; ++lane) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    Catlass::Arch::CrossCoreWaitFlag(vecToCubeReadyFlag_);
+                    auto &vecReady = tailSafePath ?
+                        vecToCubeReadyFlag_ : denseVecToCubeReadyFlag_;
+                    // Both AIV sub-blocks publish one ready credit. Consume
+                    // the aggregated generation before Cube reads the jointly
+                    // packed tile.
+                    Catlass::Arch::CrossCoreWaitFlag(vecReady);
 #else
                     AscendC::CrossCoreWaitFlag(kCIntraVecReadyFlag);
 #endif
@@ -337,11 +350,10 @@ public:
                     uint64_t bSlotBase = slotBase;
                     bool useSharedB = false;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    useSharedB = tiling_.isVarLen == 0 &&
-                                 tiling_.keyDim == 128 &&
-                                 tiling_.useGateInKernel != 0 &&
-                                 validC == kChunkSize &&
-                                 processRowBlock == kRowBlock;
+                    // The parity pipeline below already overlaps consecutive
+                    // row tiles. Keep each tile's packed B in its own slot;
+                    // the chunk-wide shared-B encoding is not safe on A5.
+                    useSharedB = false;
                     if (useSharedB) {
                         const uint64_t groupFirstWindow =
                             window - rowStart / processRowBlock;
@@ -359,9 +371,15 @@ public:
                     // consumes only validRows.  A non-aligned M (for example
                     // six rows) is not a valid Cube tile and corrupts the
                     // final tail chunk.
-                    RunLower(
-                        lower, slotBase, bSlotBase,
-                        lowerK, processRowBlock);
+                    if (tailSafePath) {
+                        RunLower(
+                            lowerTail, slotBase, bSlotBase,
+                            lowerK, processRowBlock);
+                    } else {
+                        RunLower(
+                            lower, slotBase, bSlotBase,
+                            lowerK, processRowBlock);
+                    }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     if (useSharedB) {
                         RunUpperA5Shared(
@@ -370,13 +388,32 @@ public:
                     } else
 #endif
                     {
-                        RunUpper(
-                            upper, slotBase, future,
-                            processRowBlock);
+                        if (tailSafePath) {
+                            RunUpper(
+                                upperTail, slotBase, future,
+                                processRowBlock);
+                        } else {
+                            RunUpper(
+                                upper, slotBase, future,
+                                processRowBlock);
+                        }
                     }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    if (tailSafePath) {
+                        // Cross-core publication must not outrun the final
+                        // FixPipe store for a short/varlen upper tile.  Drain
+                        // FIX explicitly before AIV starts MTE2 reads from
+                        // the workspace result region.
+                        constexpr int32_t kFixToMte2Event = 0;
+                        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(
+                            kFixToMte2Event);
+                        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(
+                            kFixToMte2Event);
+                    }
+                    auto &cubeReady = tailSafePath ?
+                        cubeToVecReadyFlag_ : denseCubeToVecReadyFlag_;
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                        cubeToVecReadyFlag_);
+                        cubeReady);
 #else
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
                         kCIntraCubeReadyFlag);
@@ -384,14 +421,12 @@ public:
                 }
             }
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        // Drain the reusable single-tile event credits before changing the
-        // matrix-layout mode or handing the AIC back to the outer kernel.
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(1);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(0);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(1);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(0);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::SetMMLayoutTransform(false);
 #endif
     }
@@ -438,7 +473,10 @@ private:
         Mmad &mm, uint64_t slotBase, uint32_t future,
         uint32_t processRowBlock)
     {
-        const uint32_t reduction = 2 * future;
+        // Cube K must be a 16-element multiple on A5. The packed q/k
+        // reduction is padded with zeros by Vector-Pre for short varlen
+        // tails, so expose that physical extent to MMAD as well.
+        const uint32_t reduction = (2 * future + 15U) & ~15U;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if (processRowBlock == 32) {
             // A5's proven Intra Upper tile is M=16.  The packed A operand is
@@ -540,7 +578,11 @@ private:
     ChunkKdaBwdCTilingData tiling_{};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kCIntraVecReadyFlag};
+    Catlass::Arch::CrossCoreFlag denseVecToCubeReadyFlag_{
+        kCIntraDenseVecReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCIntraCubeReadyFlag};
+    Catlass::Arch::CrossCoreFlag denseCubeToVecReadyFlag_{
+        kCIntraDenseCubeReadyFlag};
 #endif
 };
 
@@ -671,6 +713,9 @@ public:
                 ProcessA5DenseRow16Pipeline(
                     coreIdx, coreNum, headNum, headWindowCount,
                     taskGroupCount);
+                // Drain the final Cube-ready wait and all dependent output
+                // stores before this fast path returns into phase SyncAll.
+                AscendC::PipeBarrier<PIPE_ALL>();
                 ReleaseMatrixInputEvents();
                 return;
             }
@@ -678,10 +723,12 @@ public:
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == 32) {
             if (tiling_.isVarLen == 0 &&
+                tiling_.useGateInKernel == 0 &&
                 tiling_.seqlen % CHUNK_SIZE == 0) {
                 ProcessA5DenseFourSlot(
                     coreIdx, coreNum, headNum, headWindowCount,
                     taskGroupCount);
+                AscendC::PipeBarrier<PIPE_ALL>();
                 ReleaseMatrixInputEvents();
                 return;
             }
@@ -718,11 +765,9 @@ public:
                     const uint32_t slot = CIntraWorkspaceSlot(windowIdx, headInWindow);
                     PrepareHead(task, headBase + headInWindow, rowStart, validRows, slot);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    // The two AIV sub-blocks produce disjoint halves of the
-                    // same FP32 Cube operands.  A short varlen tail makes the
-                    // second sub-block finish much earlier, so publishing
-                    // without a barrier lets AIC consume a half-written
-                    // generation (and can turn stale FP32 words into NaNs).
+                    // Both AIV sub-blocks produce disjoint halves of the
+                    // same FP32 Cube operands. Publish the generation only
+                    // after both halves are visible in GM.
                     Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
                         vecToCubeReadyFlag_);
@@ -733,6 +778,8 @@ public:
                 for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+                    AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(0);
+                    AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(0);
 #else
                     AscendC::CrossCoreWaitFlag(kCubeToVecReadyFlag);
 #endif
@@ -741,7 +788,8 @@ public:
                     if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                                   kProcessRowBlock == kRowBlock) {
                         if (tiling_.isVarLen == 0 &&
-                            tiling_.useGateInKernel != 0) {
+                            tiling_.useGateInKernel != 0 &&
+                            tiling_.seqlen % CHUNK_SIZE == 0) {
                             // Both AIVs consume every ready generation, but
                             // each completes one head so their Vector-Post
                             // work can overlap across the two-head window.
@@ -757,15 +805,19 @@ public:
                     FinishHead(task, headBase + headInWindow, rowStart, validRows, slot);
                 }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                // FinishHead is also asymmetric for tails shorter than eight
-                // rows: sub-block 1 owns no output rows.  Keep both AIVs on
-                // the same slot generation before either one can refill the
-                // parity slot used two windows later.
+                // A parity slot contains both heads. Do not let either AIV
+                // refill it until the other AIV has consumed its head.
                 Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
 #endif
                 ++windowIdx;
             }
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // SyncAll is a scalar/global barrier and does not by itself drain the
+        // AIV pipelines that consume the last AIC->AIV generation.  A short
+        // final chunk can otherwise carry that credit into the next launch.
+        AscendC::PipeBarrier<PIPE_ALL>();
+#endif
         ReleaseMatrixInputEvents();
     }
 
@@ -786,7 +838,7 @@ private:
             // Publish the generation only after both halves reach GM.
             Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                vecToCubeReadyFlag_);
+                denseVecToCubeReadyFlag_);
         }
     }
 
@@ -797,7 +849,9 @@ private:
         const uint32_t ownedHead = AscendC::GetSubBlockIdx();
         for (uint32_t headInWindow = 0;
              headInWindow < headCount; ++headInWindow) {
-            Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+            Catlass::Arch::CrossCoreWaitFlag(denseCubeToVecReadyFlag_);
+            AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(0);
             if (headInWindow == ownedHead) {
                 const uint32_t slot =
                     CIntraWorkspaceSlot(windowIdx, headInWindow);
@@ -884,7 +938,7 @@ private:
                 kProcessRowBlock, slot);
             Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                vecToCubeReadyFlag_);
+                denseVecToCubeReadyFlag_);
         }
     }
 
@@ -915,7 +969,9 @@ private:
             // sub-block performs Vector-Post, owning all 32 rows of one head.
             for (uint32_t headInWindow = 0;
                  headInWindow < headCount; ++headInWindow) {
-                Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
+                Catlass::Arch::CrossCoreWaitFlag(denseCubeToVecReadyFlag_);
+                AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(0);
+                AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(0);
                 if (headInWindow != ownedHead) {
                     continue;
                 }
@@ -1580,7 +1636,7 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == kRowBlock) {
-            if (tiling_.useGateInKernel != 0 &&
+            if (false && tiling_.useGateInKernel != 0 &&
                 validRows == kProcessRowBlock &&
                 task.end - task.begin == CHUNK_SIZE) {
                 PackUpperA5Shared(
@@ -1628,10 +1684,11 @@ private:
             work, source[srcOffset], future, kProcessRowBlock,
             MatrixRowElements());
 
-        KdaRegbaseMaskUpperA(
-            (__ubuf__ float *)masked.GetPhyAddr(),
-            (__ubuf__ float *)work.GetPhyAddr(),
-            future, validRows, kProcessRowBlock);
+            KdaRegbaseMaskUpperA(
+                (__ubuf__ float *)masked.GetPhyAddr(),
+                (__ubuf__ float *)work.GetPhyAddr(),
+                future, validRows, kProcessRowBlock,
+                subBlock == 0 ? 1U : 0U);
 
         // Interleave Aq/Akk reduction rows so every row block can consume a
         // compact suffix from the one shared [q,k] B matrix.
@@ -1678,7 +1735,8 @@ private:
             KdaRegbaseMaskLowerA(
                 (__ubuf__ float *)masked.GetPhyAddr(),
                 (__ubuf__ float *)work.GetPhyAddr(),
-                validRows, rowStart, prefix, kProcessRowBlock);
+                validRows, rowStart, prefix, kProcessRowBlock,
+                subBlock == 0 ? 1U : 0U);
 #else
             AscendC::Duplicate(masked, 0.0f, kProcessRowBlock * prefix);
             AscendC::PipeBarrier<PIPE_V>();
@@ -1704,11 +1762,14 @@ private:
             AscendC::Duplicate(work, 0.0f, lowerK);
 #endif
             if (row < validRows) {
-                const uint32_t validCols = rowStart + row + 1;
+                const uint32_t validCols =
+                    rowStart + row + (subBlock == 0 ? 1U : 0U);
                 const uint64_t srcOffset =
                     CIntraMatrixOffset(
                         tiling_, task.batchIdx, head, task.begin + rowStart + row);
-                Load(work, source[srcOffset], validCols);
+                if (validCols != 0) {
+                    Load(work, source[srcOffset], validCols);
+                }
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
                 AscendC::Muls(work, work, inputScale, validCols);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -1756,7 +1817,8 @@ private:
         KdaRegbaseMaskUpperA(
             (__ubuf__ float *)masked.GetPhyAddr(),
             (__ubuf__ float *)work.GetPhyAddr(),
-            future, validRows, kProcessRowBlock);
+            future, validRows, kProcessRowBlock,
+            subBlock == 0 ? 1U : 0U);
 #else
         AscendC::Duplicate(masked, 0.0f, future * kProcessRowBlock);
         AscendC::PipeBarrier<PIPE_V>();
@@ -1780,6 +1842,28 @@ private:
         StoreRows(
             workspaceGm_[dstOffset], masked, future, kProcessRowBlock,
             kProcessRowBlock);
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // Upper-A concatenates the Aq and Akk halves along Cube K. The
+        // second AIV owns the end of that concatenation and clears its
+        // physical tail up to align16(2 * future).
+        if (subBlock == 1) {
+            const uint32_t reduction = (2 * future + 15U) & ~15U;
+            const uint32_t paddingRows = reduction - 2 * future;
+            if (paddingRows != 0) {
+                KdaRegbaseFill(
+                    (__ubuf__ float *)masked.GetPhyAddr(), 0.0f,
+                    paddingRows * kProcessRowBlock);
+                const uint64_t paddingOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraAUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(2 * future) * kProcessRowBlock;
+                StoreRows(
+                    workspaceGm_[paddingOffset], masked,
+                    paddingRows, kProcessRowBlock, kProcessRowBlock);
+            }
+        }
+#endif
     }
 
     __aicore__ inline void PackLowerB(
@@ -1925,6 +2009,20 @@ private:
             StoreRows(
                 workspaceGm_[kDstOffset], kData,
                 rows, cols, K_DIM);
+        }
+        const uint32_t reduction = (2 * future + 15U) & ~15U;
+        const uint32_t paddingRows = reduction - 2 * future;
+        if (paddingRows != 0) {
+            KdaRegbaseFill(
+                (__ubuf__ float *)qData.GetPhyAddr(), 0.0f,
+                paddingRows * cols);
+            const uint64_t paddingOffset =
+                slotBase / sizeof(float) +
+                tiling_.intraBUpperOffset / sizeof(float) +
+                static_cast<uint64_t>(2 * future) * K_DIM + col;
+            StoreRows(
+                workspaceGm_[paddingOffset], qData,
+                paddingRows, cols, K_DIM);
         }
 #else
         // data/gate/anchor/exponent each own one complete pack batch.  Compute
@@ -2583,9 +2681,7 @@ private:
         KdaRegbaseFill(
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
 
-        const bool useSharedB =
-            task.end - task.begin == CHUNK_SIZE &&
-            validRows == kProcessRowBlock;
+        const bool useSharedB = false;
         const uint32_t localAnchor =
             rowStart + 8 < task.end - task.begin ?
                 rowStart + 8 : task.end - task.begin - 1;
@@ -2712,15 +2808,22 @@ private:
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[dkSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
-            matrixMte2ToVEvent_[dgSlot]);
-        // Produce dk and dg into two independent UB regions.  Reusing output
-        // for dg immediately after starting dk's MTE3 copy can overwrite the
-        // asynchronous copy source on A5.
-        KdaRegbaseDkDg(
-            (__ubuf__ float *)dqFinal.GetPhyAddr(),
+        KdaRegbaseAdd3(
             (__ubuf__ float *)output.GetPhyAddr(),
             (__ubuf__ float *)MatrixInput<float>(dkSlot).GetPhyAddr(),
+            (__ubuf__ float *)rawDkLower.GetPhyAddr(),
+            (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
+            count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[dkSlot]);
+        StoreRows(dkOutGm_[CIntraTensorOffset(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  output, ownedRows, cols, TensorRowElements());
+
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            matrixMte2ToVEvent_[dgSlot]);
+        KdaRegbaseDg(
+            (__ubuf__ float *)output.GetPhyAddr(),
             (__ubuf__ float *)MatrixInput<float>(dgSlot).GetPhyAddr(),
             (__ubuf__ float *)q.GetPhyAddr(),
             (__ubuf__ float *)rawDq.GetPhyAddr(),
@@ -2729,12 +2832,7 @@ private:
             (__ubuf__ float *)rawDkUpper.GetPhyAddr(),
             count);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-            matrixVToMte2Event_[dkSlot]);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
             matrixVToMte2Event_[dgSlot]);
-        StoreRows(dkOutGm_[CIntraTensorOffset(
-                      tiling_, task.batchIdx, head, tokenBegin, 0)],
-                  dqFinal, ownedRows, cols, TensorRowElements());
         if (tiling_.useGateInKernel == 0) {
             if (rowStart == 0) {
                 auto pending = pendingDg_.Get<float>()[ownedBegin * K_DIM];
@@ -2884,7 +2982,6 @@ private:
                 workspaceGm_[resultBase + tiling_.intraResultDkUpperOffset / sizeof(float) +
                              static_cast<uint64_t>(ownedBegin) * K_DIM + col],
                 ownedRows, cols, K_DIM);
-
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseFinishScale<false>(
                 (__ubuf__ float *)rawDq.GetPhyAddr(),
@@ -3059,7 +3156,11 @@ private:
     event_t directVToMte3Event_{};
     event_t directMte3ToMte2Event_{};
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
+    Catlass::Arch::CrossCoreFlag denseVecToCubeReadyFlag_{
+        kCIntraDenseVecReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
+    Catlass::Arch::CrossCoreFlag denseCubeToVecReadyFlag_{
+        kCIntraDenseCubeReadyFlag};
 #endif
     AscendC::GlobalTensor<DataT> qGm_;
     AscendC::GlobalTensor<DataT> kGm_;

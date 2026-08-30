@@ -1138,8 +1138,8 @@ def npu_chunk_kda_bwd(
         token_prefix = (batch, heads, seqlen)
     if v_shape[:-1] != token_prefix:
         raise RuntimeError("npu_chunk_kda_bwd: v must share q's [B,H,T] or [H,T] prefix.")
-    if key_dim != 128 or value_dim not in {128, 256}:
-        raise RuntimeError("npu_chunk_kda_bwd: current fused path requires K=128 and V in {128,256}.")
+    if key_dim != 128 or value_dim != 128:
+        raise RuntimeError("npu_chunk_kda_bwd: current fused path requires K=128 and V=128.")
     if q.dtype not in {torch.float16, torch.bfloat16} or k.dtype != q.dtype or v.dtype != q.dtype:
         raise RuntimeError("npu_chunk_kda_bwd: q/k/v must use the same float16 or bfloat16 dtype.")
 
@@ -1280,13 +1280,13 @@ def npu_chunk_kda_bwd(
         ],
         outputs,
     )
-    if not padded_tail:
-        return result
-    return tuple(
-        value.narrow(token_dim, 0, original_seqlen).contiguous()
-        if index < 5 else value
-        for index, value in enumerate(result)
-    )
+    if padded_tail:
+        result = tuple(
+            value.narrow(token_dim, 0, original_seqlen).contiguous()
+            if index < 5 else value
+            for index, value in enumerate(result)
+        )
+    return result
 
 
 def npu_chunk_kda_fwd(

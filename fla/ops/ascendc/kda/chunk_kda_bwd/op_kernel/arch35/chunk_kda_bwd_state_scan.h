@@ -460,7 +460,7 @@ public:
                     copyGmToL1B_State(tensorL1State, blockState);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stateScratchEvent);
                     if constexpr (std::is_same<DT, bfloat16_t>::value) {
-                        const bool useGmDvState = V_DIM == 256 && chunkInfo.chunkLen > 64;
+                            const bool useGmDvState = V_DIM == 256 && chunkInfo.chunkLen > 64;
                         if (useGmDvState) {
                             CopyL0CToGm_DvState<decltype(blockDvState)> copyL0CToGm_DvState;
                             RunResidentMmad<LayoutTagL0A_DvState, LayoutTagL0B_DvState>(
@@ -1528,6 +1528,17 @@ public:
                 }
             }
 
+            // Complete every initialization write before the reverse scan
+            // starts reading the per-head state workspace.  AIV0 owns two
+            // interleaved heads and can otherwise reuse both state buffers
+            // while the final MTE3 stores are still outstanding.
+            for (uint32_t stateIdx = 0; stateIdx < BUFFER_COUNT; ++stateIdx) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+                    stateMte3ToMte2Event_[stateIdx]);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+                    stateMte3ToMte2Event_[stateIdx]);
+            }
+
             for (int64_t chunkIdx = seqInfo.chunkCnt - 1; chunkIdx >= 0; --chunkIdx) {
                 ChunkInfo chunkInfo;
                 GetChunkInfoBySeqChunk(chunkIndices_, *tiling_, seqInfo, chunkIdx, chunkInfo);
@@ -1696,6 +1707,9 @@ public:
                                     (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
                                     (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
                                     static_cast<uint16_t>(elems));
+                                if (headCnt < HEADS_PER_TASK) {
+                                    AscendC::PipeBarrier<PIPE_V>();
+                                }
                                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
                                     MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + cvListId);
                                 cvListId ^= 1U;
@@ -1767,6 +1781,9 @@ public:
                                     (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
                                     (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
                                     static_cast<uint16_t>(elems));
+                                if (headCnt < HEADS_PER_TASK) {
+                                    AscendC::PipeBarrier<PIPE_V>();
+                                }
                                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
                                     MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + cvListId);
                                 cvListId ^= 1U;

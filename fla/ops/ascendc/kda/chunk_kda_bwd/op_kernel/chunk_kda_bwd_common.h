@@ -60,6 +60,9 @@ struct ChunkKdaBwdCTilingData {
     int8_t useGateInKernel;
     int8_t hasDtBias;
     int8_t deferGatePost;
+    // raw_g is optional, so the generated A5 binary key does not specialize
+    // DTYPE_RAW_G. Carry its runtime storage type explicitly instead.
+    int8_t rawGateIsBf16;
     int32_t kEOffset;
     int32_t dqRawOffset;
     int32_t dkRawOffset;
@@ -123,7 +126,7 @@ ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdDhu,
     ASCENDC_TPL_DTYPE_DECL(D_T_G, TPL_BF16,
         TPL_FP16,
         TPL_FP32),
-    ASCENDC_TPL_UINT_DECL(V, 1, ASCENDC_TPL_UI_LIST, 128, 256),
+    ASCENDC_TPL_UINT_DECL(V, 1, ASCENDC_TPL_UI_LIST, 128),
     ASCENDC_TPL_UINT_DECL(USE_GK, 1, ASCENDC_TPL_UI_LIST, 0, 1),
 );
 

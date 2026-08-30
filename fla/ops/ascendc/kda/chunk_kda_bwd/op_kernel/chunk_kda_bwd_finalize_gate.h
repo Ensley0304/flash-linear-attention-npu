@@ -14,6 +14,31 @@ namespace KDA {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 using namespace AscendC::MicroAPI;
 
+constexpr CastTrait kKdaGateBf16ToFp32 = {
+    RegLayout::ZERO,
+    SatMode::SAT,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_NONE,
+};
+
+static __simd_vf__ inline void KdaBwdCCastBf16ToFp32A5(
+    __ubuf__ float *dst, __ubuf__ bfloat16_t *src, uint16_t count)
+{
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    RegTensor<bfloat16_t> srcReg;
+    RegTensor<float> dstReg;
+    uint32_t remaining = count;
+    for (uint32_t offset = 0; offset < count; offset += kRegElements) {
+        MaskReg mask = UpdateMask<float>(remaining);
+        DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+            srcReg, src + offset);
+        Cast<float, bfloat16_t, kKdaGateBf16ToFp32>(
+            dstReg, srcReg, mask);
+        DataCopy(dst + offset, dstReg, mask);
+    }
+}
+
 static __simd_vf__ inline void KdaBwdCGateFillA5(
     __ubuf__ float *dst, float value, uint16_t count)
 {
@@ -51,7 +76,8 @@ static __simd_vf__ inline void KdaBwdCGateReverseScanA5(
     }
 }
 
-template <bool HAS_BIAS>
+template <bool HAS_BIAS, bool ZERO_CARRY = false,
+          bool SCAN_UPSTREAM = true>
 static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
     __ubuf__ float *dg, __ubuf__ float *dbAcc, __ubuf__ float *dAAcc,
     __ubuf__ float *rawGate, __ubuf__ float *upstream,
@@ -69,9 +95,18 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
         RegTensor<float> dbReg;
         RegTensor<float> dASum;
         RegTensor<float> upstreamAcc;
-        DataCopy(dbReg, dbAcc + col);
+        if constexpr (HAS_BIAS) {
+            DataCopy(dbReg, dbAcc + col);
+        }
         Duplicate(dASum, 0.0f, mask);
-        DataCopy(upstreamAcc, upstreamCarry + col);
+        if constexpr (SCAN_UPSTREAM && ZERO_CARRY) {
+            // Gate post resets the reverse cumsum at every KDA chunk.  Avoid
+            // a UB fill followed immediately by a second SIMD helper, which
+            // could cold-read stale carry contents on A5.
+            Duplicate(upstreamAcc, 0.0f, mask);
+        } else if constexpr (SCAN_UPSTREAM) {
+            DataCopy(upstreamAcc, upstreamCarry + col);
+        }
         RegTensor<float> biasReg;
         if constexpr (HAS_BIAS) {
             DataCopy(biasReg, bias + col);
@@ -98,16 +133,26 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             Adds(oneMinus, oneMinus, 1.0f, mask);
             Mul(gradient, oneMinus, sigmoid, mask);
             DataCopy(upstreamReg, upstream + offset);
-            Add(upstreamAcc, upstreamAcc, upstreamReg, mask);
-            Mul(gradient, gradient, upstreamAcc, mask);
+            if constexpr (SCAN_UPSTREAM) {
+                Add(upstreamAcc, upstreamAcc, upstreamReg, mask);
+                Mul(gradient, gradient, upstreamAcc, mask);
+            } else {
+                Mul(gradient, gradient, upstreamReg, mask);
+            }
             Muls(gradient, gradient, chainScale, mask);
             Mul(dAReg, gradient, raw, mask);
-            Add(dbReg, dbReg, gradient, mask);
+            if constexpr (HAS_BIAS) {
+                Add(dbReg, dbReg, gradient, mask);
+            }
             Add(dASum, dASum, dAReg, mask);
             DataCopy(dg + offset, gradient, mask);
         }
-        DataCopy(dbAcc + col, dbReg, mask);
-        DataCopy(upstreamCarry + col, upstreamAcc, mask);
+        if constexpr (HAS_BIAS) {
+            DataCopy(dbAcc + col, dbReg, mask);
+        }
+        if constexpr (SCAN_UPSTREAM && !ZERO_CARRY) {
+            DataCopy(upstreamCarry + col, upstreamAcc, mask);
+        }
         RegTensor<float> dABlock;
         RegTensor<float> dATotal;
         ReduceSum(dABlock, dASum, mask);
@@ -117,6 +162,7 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             dAAcc, dATotal, mask);
     }
 }
+
 #endif
 
 template <bool SAFE_GATE, typename RawGateT>
@@ -143,8 +189,10 @@ public:
         pipe_ = pipe;
         dgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dg_));
         if (tiling_.useGateInKernel != 0) {
-            rawGGm_.SetGlobalBuffer(
-                reinterpret_cast<__gm__ RawGateT *>(rawG_));
+            rawGFloatGm_.SetGlobalBuffer(
+                reinterpret_cast<__gm__ float *>(rawG_));
+            rawGBf16Gm_.SetGlobalBuffer(
+                reinterpret_cast<__gm__ bfloat16_t *>(rawG_));
             aLogGm_.SetGlobalBuffer(
                 reinterpret_cast<__gm__ float *>(aLog_));
             if (tiling_.hasDtBias != 0) {
@@ -213,7 +261,7 @@ private:
                 laneBegin < headCount ? laneBegin + 1U : laneBegin;
             for (uint32_t lane = laneBegin; lane < laneEnd; ++lane) {
                 ProcessChunk(
-                    taskIdx, headBase + lane, false, nullptr, nullptr);
+                    taskIdx, headBase + lane, false, nullptr, nullptr, 0.0f);
             }
         }
     }
@@ -241,11 +289,26 @@ private:
             AscendC::Duplicate(dAAcc, 0.0f, 8);
             AscendC::PipeBarrier<PIPE_V>();
 
+            // A_log is head-wise and is shared by every chunk.  Materialize
+            // exp(A_log) once here instead of repeating a scalar GM load,
+            // Exp and V->S hand-off for every chunk of a long sequence.
+            auto aScalar = reduce_.Get<float>()[136];
+            AscendC::DataCopyPad(
+                aScalar, aLogGm_[head],
+                {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
+                {false, 0, 0, 0});
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+            AscendC::Exp(aScalar, aScalar, 1);
+            AscendC::PipeBarrier<PIPE_V>();
+            const float expA = ReadScalar(aScalar);
+
             if (tiling_.isVarLen != 0) {
                 for (uint32_t task = 0;
                      task < static_cast<uint32_t>(tiling_.chunkNum);
                      ++task) {
-                    ProcessChunk(task, head, true, &dAAcc, &dbAcc);
+                    ProcessChunk(
+                        task, head, true, &dAAcc, &dbAcc, expA);
                 }
             } else {
                 for (uint32_t batch = 0;
@@ -259,7 +322,7 @@ private:
                             batch * static_cast<uint32_t>(
                                 tiling_.chunkNumPerBatch) + local;
                         ProcessChunk(
-                            task, head, true, &dAAcc, &dbAcc);
+                            task, head, true, &dAAcc, &dbAcc, expA);
                     }
                 }
             }
@@ -282,7 +345,7 @@ private:
     __aicore__ inline void ProcessChunk(
         uint32_t taskIdx, uint32_t head, bool applyRaw,
         AscendC::LocalTensor<float> *dAAcc,
-        AscendC::LocalTensor<float> *dbAcc)
+        AscendC::LocalTensor<float> *dbAcc, float expA)
     {
         const WyChunkTask task = GetWyChunkTask(
             cuSeqlens_, chunkIndices_, tiling_, taskIdx);
@@ -299,15 +362,24 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        // Materialize the accumulated gate gradient first.  The following
-        // raw-gate helper applies the chain rule to this upstream gradient;
-        // it does not replace the Intra reconstruction scan.
-        KdaBwdCGateReverseScanA5(
-            (__ubuf__ float *)dst.GetPhyAddr(),
-            (__ubuf__ float *)src.GetPhyAddr(),
-            static_cast<uint16_t>(validC));
-        auto upstream = dst;
-#else
+        if constexpr (SAFE_GATE) {
+            // A dense sequence made entirely of full chunks never switches
+            // between the fused and split helpers, so the fast one-pass
+            // register recurrence has a uniform lifecycle for every task.
+            const bool denseFullChunks =
+                tiling_.isVarLen == 0 &&
+                static_cast<uint32_t>(tiling_.seqlen) %
+                    static_cast<uint32_t>(tiling_.chunkSize) == 0;
+            if (applyRaw && denseFullChunks) {
+                ApplyRawGate<true>(
+                    task, head, validC, src, *dAAcc, *dbAcc, expA);
+                return;
+            }
+        }
+#endif
+        // Use a six-step UB scan on A5 as well.  The former single-pass
+        // register recurrence carried one accumulator through a dynamic row
+        // loop and could intermittently lose a dependency on cold launches.
         bool srcIsInput = true;
         for (uint32_t step = 1; step < validC; step <<= 1U) {
             auto in = srcIsInput ? src : dst;
@@ -322,19 +394,27 @@ private:
             srcIsInput = !srcIsInput;
         }
         auto upstream = srcIsInput ? src : dst;
-#endif
         if (applyRaw) {
-            ApplyRawGate(task, head, validC, upstream, *dAAcc, *dbAcc);
+            ApplyRawGate<false>(
+                task, head, validC, upstream, *dAAcc, *dbAcc, expA);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if constexpr (SAFE_GATE) {
+                // The next chunk reloads dA/db from the same UB accumulator
+                // addresses in a new SIMD helper invocation.
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+#endif
         } else {
             StoreDg(offset, upstream, count);
         }
     }
 
+    template <bool SCAN_SAFE_GATE>
     __aicore__ inline void ApplyRawGate(
         const WyChunkTask &task, uint32_t head, uint32_t rows,
         AscendC::LocalTensor<float> upstream,
         AscendC::LocalTensor<float> dAAcc,
-        AscendC::LocalTensor<float> dbAcc)
+        AscendC::LocalTensor<float> dbAcc, float expA)
     {
         const uint32_t count = rows * 128;
         const uint64_t offset = WyTokenOffset(
@@ -342,30 +422,26 @@ private:
         auto x = raw_.Get<float>();
         auto tmp = tmp_.Get<float>();
         auto aux = aux_.Get<float>();
-        if constexpr (AscendC::IsSameType<RawGateT, float>::value) {
+        if (tiling_.rawGateIsBf16 == 0) {
             AscendC::DataCopyPad(
-                x, rawGGm_[offset],
+                x, rawGFloatGm_[offset],
                 {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
                 {false, 0, 0, 0});
         } else {
             // tmp is dead until the chain-rule arithmetic below.  Use its
             // first half as the BF16 staging area and avoid another UB plane.
-            auto rawStage = tmp_.Get<RawGateT>();
+            auto rawStage = tmp_.Get<bfloat16_t>();
             AscendC::DataCopyPad(
-                rawStage, rawGGm_[offset],
-                {1, static_cast<uint32_t>(count * sizeof(RawGateT)), 0, 0, 0},
+                rawStage, rawGBf16Gm_[offset],
+                {1, static_cast<uint32_t>(count * sizeof(bfloat16_t)), 0, 0, 0},
                 {false, 0, 0, 0});
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
-            AscendC::Cast(
-                x, rawStage, AscendC::RoundMode::CAST_NONE, count);
-            AscendC::PipeBarrier<PIPE_V>();
+            KdaBwdCCastBf16ToFp32A5(
+                (__ubuf__ float *)x.GetPhyAddr(),
+                (__ubuf__ bfloat16_t *)rawStage.GetPhyAddr(),
+                static_cast<uint16_t>(count));
         }
-        auto scalar = reduce_.Get<float>()[136];
-        AscendC::DataCopyPad(
-            scalar, aLogGm_[head],
-            {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
-            {false, 0, 0, 0});
         if (tiling_.hasDtBias != 0) {
             auto bias = reduce_.Get<float>()[144];
             AscendC::DataCopy(
@@ -375,24 +451,25 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
         if (tiling_.hasDtBias != 0) {
             auto bias = reduce_.Get<float>()[144];
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if constexpr (!SAFE_GATE) {
+#endif
             for (uint32_t row = 0; row < rows; ++row) {
                 AscendC::Add(x[row * 128], x[row * 128], bias, 128);
             }
             AscendC::PipeBarrier<PIPE_V>();
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            }
 #endif
         }
 
         if constexpr (SAFE_GATE) {
-            AscendC::Exp(scalar, scalar, 1);
-            AscendC::PipeBarrier<PIPE_V>();
-            const float a = ReadScalar(scalar);
+            const float a = expA;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            KdaBwdCGateFillA5(
-                (__ubuf__ float *)aux.GetPhyAddr(), 0.0f, 128);
             if (tiling_.hasDtBias != 0) {
                 auto bias = reduce_.Get<float>()[144];
-                KdaBwdCSafeGateBackwardA5<true>(
+                KdaBwdCSafeGateBackwardA5<
+                    true, SCAN_SAFE_GATE, SCAN_SAFE_GATE>(
                     (__ubuf__ float *)tmp.GetPhyAddr(),
                     (__ubuf__ float *)dbAcc.GetPhyAddr(),
                     (__ubuf__ float *)dAAcc.GetPhyAddr(),
@@ -402,7 +479,8 @@ private:
                     (__ubuf__ float *)aux.GetPhyAddr(),
                     static_cast<uint16_t>(rows), a, tiling_.lowerBound);
             } else {
-                KdaBwdCSafeGateBackwardA5<false>(
+                KdaBwdCSafeGateBackwardA5<
+                    false, SCAN_SAFE_GATE, SCAN_SAFE_GATE>(
                     (__ubuf__ float *)tmp.GetPhyAddr(),
                     (__ubuf__ float *)dbAcc.GetPhyAddr(),
                     (__ubuf__ float *)dAAcc.GetPhyAddr(),
@@ -426,9 +504,7 @@ private:
             AscendC::Mul(aux, tmp, x, count);
 #endif
         } else {
-            AscendC::Exp(scalar, scalar, 1);
-            AscendC::PipeBarrier<PIPE_V>();
-            const float a = -ReadScalar(scalar);
+            const float a = -expA;
             Sigmoid(aux, x, count);
             AscendC::Mul(tmp, upstream, aux, count);
             AscendC::Muls(tmp, tmp, a, count);
@@ -547,7 +623,8 @@ private:
     ChunkKdaBwdCTilingData tiling_{};
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::GlobalTensor<float> dgGm_;
-    AscendC::GlobalTensor<RawGateT> rawGGm_;
+    AscendC::GlobalTensor<float> rawGFloatGm_;
+    AscendC::GlobalTensor<bfloat16_t> rawGBf16Gm_;
     AscendC::GlobalTensor<float> aLogGm_;
     AscendC::GlobalTensor<float> dtBiasGm_;
     AscendC::GlobalTensor<float> dAGm_;

@@ -90,6 +90,9 @@ public:
             ctx_.shapes[KDA_C_DT_BIAS] != nullptr &&
             ctx_.shapes[KDA_C_DT_BIAS]->GetStorageShape().GetShapeSize() > 0 ?
                 1 : 0;
+        tiling_.rawGateIsBf16 =
+            ctx_.useGateInKernel &&
+            ctx_.types[KDA_C_RAW_G] == ge::DT_BF16 ? 1 : 0;
 
         const ge::DataType dataType = ctx_.types[KDA_C_Q];
         OP_CHECK_IF(dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16,
@@ -168,10 +171,9 @@ public:
         tiling_.valueDim = static_cast<int64_t>(v.GetDim(dimAxis));
         tiling_.chunkSize = ctx_.chunkSize;
         tiling_.scale = ctx_.scale;
-        OP_CHECK_IF(tiling_.keyDim != 128 ||
-                        (tiling_.valueDim != 128 && tiling_.valueDim != 256),
+        OP_CHECK_IF(tiling_.keyDim != 128 || tiling_.valueDim != 128,
                     OP_LOGE(ctx_.nodeName,
-                            "Kernel C P0 requires K=128 and V in {128,256}"),
+                            "Kernel C P0 requires K=128 and V=128"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(k.GetDim(dimAxis) != 128 ||
                         gk.GetDim(dimAxis) != 128 ||
@@ -387,10 +389,12 @@ private:
             tiling_.zaOutputOffset = 224 * 1024;
         }
         const uint64_t wyEnd = std::max<uint64_t>(
-            static_cast<uint64_t>(tiling_.zaInputOffset) +
-                64U * 64U * sizeof(float),
-            static_cast<uint64_t>(tiling_.zaOutputOffset) +
-                64U * 64U * sizeof(uint16_t));
+            std::max<uint64_t>(
+                static_cast<uint64_t>(tiling_.zaInputOffset) +
+                    64U * 64U * sizeof(float),
+                static_cast<uint64_t>(tiling_.zaOutputOffset) +
+                    64U * 64U * sizeof(uint16_t)),
+            240U * 1024U + 2U * 128U * sizeof(float));
         OP_CHECK_IF(wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES),
                     OP_LOGE(ctx_.nodeName,
                             "derived WY slot exceeds the shared 256 KiB slot"),

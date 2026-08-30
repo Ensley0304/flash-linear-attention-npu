@@ -45,7 +45,9 @@ __aicore__ inline void RunChunkKdaBwd(
         RunChunkKdaBwdA<DataT, V_DIM>(
             aqk, vNew, h, dO, cuSeqlens, chunkIndices,
             dv0, dqRaw, dAqk,
-            userWorkspace + tiling.kernelCWorkspaceOffset,
+            userWorkspace + tiling.kernelCWorkspaceOffset -
+                static_cast<uint64_t>(tiling.kernelC.usedCoreNum) *
+                    KDA_BWD_A_WORKSPACE_CORE_BYTES,
             aTiling, tiling.kernelC);
     }
     AscendC::SyncAll<false>();
@@ -57,8 +59,12 @@ __aicore__ inline void RunChunkKdaBwd(
         dh, dvScan, userWorkspace + tiling.kernelBWorkspaceOffset,
         tiling.kernelB);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if (tiling.kernelC.useGateInKernel != 0) {
+    if (tiling.kernelC.useGateInKernel != 0 &&
+        tiling.kernelC.deferGatePost != 0) {
         if ASCEND_IS_AIV {
+            // The in-kernel Gate path overwrites every dA/dbias head from its
+            // private UB accumulators.  Only a deferred post kernel needs the
+            // outputs pre-zeroed here.
             RunChunkKdaBwdCInitGateOutputsA5(
                 dA, dBias, tiling.kernelC);
             AscendC::PipeBarrier<PIPE_MTE3>();

@@ -107,13 +107,15 @@ static __simd_vf__ inline void KdaRegbaseScatterScalars(
 
 static __simd_vf__ inline void KdaRegbaseMaskLowerA(
     __ubuf__ float *dst, __ubuf__ float *src, uint16_t validRows,
-    uint16_t rowStart, uint16_t prefix, uint16_t rowBlock)
+    uint16_t rowStart, uint16_t prefix, uint16_t rowBlock,
+    uint16_t includeDiagonal)
 {
     RegTensor<float> value;
     RegTensor<float> zero;
     Duplicate(zero, 0.0f);
     for (uint32_t row = 0; row < rowBlock; ++row) {
-        const uint32_t validCols = row < validRows ? rowStart + row + 1 : 0;
+        const uint32_t validCols =
+            row < validRows ? rowStart + row + includeDiagonal : 0;
         uint32_t remaining = prefix;
         for (uint32_t col = 0; col < prefix; col += kKdaRegbaseFp32Elements) {
             MaskReg storeMask = UpdateMask<float>(remaining);
@@ -130,13 +132,14 @@ static __simd_vf__ inline void KdaRegbaseMaskLowerA(
 
 static __simd_vf__ inline void KdaRegbaseMaskUpperA(
     __ubuf__ float *dst, __ubuf__ float *src, uint16_t future,
-    uint16_t validRows, uint16_t rowBlock)
+    uint16_t validRows, uint16_t rowBlock, uint16_t includeDiagonal)
 {
     RegTensor<float> value;
     RegTensor<float> zero;
     Duplicate(zero, 0.0f);
     for (uint32_t row = 0; row < future; ++row) {
-        const uint32_t validCols = row < validRows ? row + 1 : rowBlock;
+        const uint32_t validCols =
+            row < validRows ? row + includeDiagonal : rowBlock;
         uint32_t fullRowRemaining = rowBlock;
         MaskReg fullRowMask = UpdateMask<float>(fullRowRemaining);
         StoreAlign(dst + row * rowBlock, zero, fullRowMask);
