@@ -71,23 +71,59 @@ public:
             if (!chunk.valid) {
                 continue;
             }
+            // Queue the complete four-head window into four independent L1
+            // owners before consuming it.  Pair copies keep the lower MTE2
+            // instruction count, while the second pair can progress in MTE2
+            // during the first pair's MTE1/MMAD/FixPipe work.
+            uint64_t preloadGeneration = headGeneration;
+            for (int64_t preloadHead = headBegin; preloadHead < headEnd;) {
+                const uint32_t preloadOwner =
+                    static_cast<uint32_t>(preloadGeneration & (OWNER_COUNT - 1U));
+                const uint32_t remaining = static_cast<uint32_t>(headEnd - preloadHead);
+                const uint32_t preloadCount =
+                    preloadOwner + 1U < OWNER_COUNT && remaining >= 2U ? 2U : 1U;
+                const int64_t preloadAqkOffset =
+                    TokenOffset(*tiling_, chunk, preloadHead, tiling_->chunkSize);
+                const int64_t preloadTokenOffset =
+                    TokenOffset(*tiling_, chunk, preloadHead, tiling_->V);
+                const int64_t preloadStateOffset =
+                    StateOffset(*tiling_, chunk, preloadHead);
+                const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+                const uint32_t tokenHeadStride = preloadCount == 2U
+                    ? static_cast<uint32_t>(
+                          TokenOffset(*tiling_, chunk, preloadHead + 1, tiling_->V) -
+                          preloadTokenOffset)
+                    : 0U;
+                const uint32_t stateHeadStride = preloadCount == 2U
+                    ? static_cast<uint32_t>(
+                          StateOffset(*tiling_, chunk, preloadHead + 1) -
+                          preloadStateOffset)
+                    : 0U;
+                const uint32_t aqkHeadStride = preloadCount == 2U
+                    ? static_cast<uint32_t>(
+                          TokenOffset(*tiling_, chunk, preloadHead + 1, tiling_->chunkSize) -
+                          preloadAqkOffset)
+                    : 0U;
+
+                LoadAStage(
+                    resource, preloadOwner, preloadTokenOffset, rows,
+                    preloadCount, tokenHeadStride);
+                LoadQStage(
+                    resource, preloadOwner, preloadStateOffset,
+                    preloadCount, stateHeadStride);
+                LoadDStage(
+                    resource, preloadOwner, preloadAqkOffset, rows,
+                    preloadCount, aqkHeadStride);
+                preloadHead += preloadCount;
+                preloadGeneration += preloadCount;
+            }
+
             for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
-                const uint32_t owner = static_cast<uint32_t>(headGeneration & 1U);
+                const uint32_t owner =
+                    static_cast<uint32_t>(headGeneration & (OWNER_COUNT - 1U));
                 const uint32_t aivIdx = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t aivSlot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
-                const int64_t aqkOffset = TokenOffset(*tiling_, chunk, head, tiling_->chunkSize);
-                const int64_t tokenOffset = TokenOffset(*tiling_, chunk, head, tiling_->V);
-                const int64_t stateOffset = StateOffset(*tiling_, chunk, head);
                 const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
-
-                // Issue all three MTE2 batches first.  Their L1 regions are
-                // disjoint, so A's MTE1/Cube/FixPipe can start as soon as the A
-                // ready flag arrives while Q and D are still moving through
-                // MTE2.  This is the same resident-L1 scheduling pattern used
-                // by the mature DHU A5 path.
-                LoadAStage(resource, owner, tokenOffset, rows);
-                LoadQStage(resource, owner, stateOffset);
-                LoadDStage(resource, owner, aqkOffset, rows);
                 const uint32_t aSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyA, TileCopyAToUB, bfloat16_t,
                             false, true, false>(
@@ -105,7 +141,7 @@ public:
                 const uint32_t qSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyQ, TileCopyQToUB, float,
                             false, false, true>(
-                    resource, STAGE_Q,
+                    resource, STAGE_QD,
                     owner, DO_OFFSET, H_OFFSET, rows, KDA_PREPARE_DIM, KDA_PREPARE_DIM,
                     KDA_PREPARE_DIM, qSlot, aSlot, aivIdx,
                     KDA_PREPARE_Q_UB_OFFSET,
@@ -114,7 +150,7 @@ public:
                 const uint32_t dSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyD, TileCopyDToUB, bfloat16_t,
                             true, true, true>(
-                    resource, STAGE_D,
+                    resource, STAGE_NO_WAIT,
                     owner, AQK_OFFSET, DO_OFFSET, rows, KDA_PREPARE_DIM, rows,
                     KDA_PREPARE_DIM, dSlot, dSlot, aivIdx,
                     KDA_PREPARE_D_UB_OFFSET,
@@ -152,12 +188,13 @@ private:
     using TileCopyDToUB = Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, DT, LayoutCM, DT, LayoutRM, bfloat16_t, LayoutRM>;
 
-    static constexpr uint32_t OWNER_COUNT = 2;
+    static constexpr uint32_t OWNER_COUNT = 4;
+    static constexpr uint32_t L0_SLOT_COUNT = 2;
     static constexpr int64_t HEADS_PER_WORK_TASK = 4;
-    static constexpr uint32_t STAGE_COUNT = 3;
+    static constexpr uint32_t STAGE_COUNT = 2;
     static constexpr uint32_t STAGE_A = 0;
-    static constexpr uint32_t STAGE_Q = 1;
-    static constexpr uint32_t STAGE_D = 2;
+    static constexpr uint32_t STAGE_QD = 1;
+    static constexpr uint32_t STAGE_NO_WAIT = STAGE_COUNT;
     static constexpr uint32_t OWNER_BYTES = 72 * 1024;
     static constexpr uint32_t DO_OFFSET = 0;
     static constexpr uint32_t VNEW_OFFSET = 16 * 1024;
@@ -165,10 +202,11 @@ private:
     static constexpr uint32_t AQK_OFFSET = 64 * 1024;
     static constexpr uint32_t L0_TILE_BYTES = 32 * 1024;
     static constexpr uint32_t L0C_TILE_BYTES = 32 * 1024;
+    static constexpr uint32_t OWNER_ELEMENTS = OWNER_BYTES / sizeof(DT);
 
     __aicore__ inline uint32_t FormulaSlot(uint64_t generation) const
     {
-        return static_cast<uint32_t>(generation & 1U);
+        return static_cast<uint32_t>(generation & (L0_SLOT_COUNT - 1U));
     }
 
     __aicore__ inline uint32_t OwnerBase(uint32_t owner) const
@@ -183,7 +221,8 @@ private:
 
     __aicore__ inline void LoadAStage(
         Catlass::Arch::Resource<ArchTag> &resource,
-        uint32_t owner, int64_t tokenOffset, uint32_t rows)
+        uint32_t owner, int64_t tokenOffset, uint32_t rows,
+        uint32_t headCount, uint32_t tokenHeadStride)
     {
         auto l1DO = resource.l1Buf.template GetBufferByByte<DT>(OwnerBase(owner) + DO_OFFSET);
         auto l1V = resource.l1Buf.template GetBufferByByte<DT>(OwnerBase(owner) + VNEW_OFFSET);
@@ -209,15 +248,21 @@ private:
         using CopyV = typename TileCopyA::template CopyGmToL1B<decltype(blockV)>;
         CopyDO copyDO;
         CopyV copyV;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ownerCredit_[owner]);
-        copyDO(tensorL1DO, blockDO);
-        copyV(tensorL1V, blockV);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, STAGE_A));
+        for (uint32_t i = 0; i < headCount; ++i) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ownerCredit_[owner + i]);
+        }
+        copyDO(tensorL1DO, blockDO, headCount, tokenHeadStride, OWNER_ELEMENTS);
+        copyV(tensorL1V, blockV, headCount, tokenHeadStride, OWNER_ELEMENTS);
+        for (uint32_t i = 0; i < headCount; ++i) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+                StageReady(owner + i, STAGE_A));
+        }
     }
 
     __aicore__ inline void LoadQStage(
         Catlass::Arch::Resource<ArchTag> &resource,
-        uint32_t owner, int64_t stateOffset)
+        uint32_t owner, int64_t stateOffset,
+        uint32_t headCount, uint32_t stateHeadStride)
     {
         auto l1H = resource.l1Buf.template GetBufferByByte<DT>(OwnerBase(owner) + H_OFFSET);
         AscendC::GlobalTensor<DT> gmH;
@@ -234,13 +279,13 @@ private:
             Catlass::Arch::PositionL1{});
         using CopyH = typename TileCopyQ::template CopyGmToL1B<decltype(blockH)>;
         CopyH copyH;
-        copyH(tensorL1H, blockH);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, STAGE_Q));
+        copyH(tensorL1H, blockH, headCount, stateHeadStride, OWNER_ELEMENTS);
     }
 
     __aicore__ inline void LoadDStage(
         Catlass::Arch::Resource<ArchTag> &resource,
-        uint32_t owner, int64_t aqkOffset, uint32_t rows)
+        uint32_t owner, int64_t aqkOffset, uint32_t rows,
+        uint32_t headCount, uint32_t aqkHeadStride)
     {
         auto l1Aqk = resource.l1Buf.template GetBufferByByte<DT>(OwnerBase(owner) + AQK_OFFSET);
         AscendC::GlobalTensor<DT> gmAqk;
@@ -255,8 +300,11 @@ private:
             Catlass::Arch::PositionL1{});
         using CopyAqk = typename TileCopyD::template CopyGmToL1A<decltype(blockAqk)>;
         CopyAqk copyAqk;
-        copyAqk(tensorL1Aqk, blockAqk);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, STAGE_D));
+        copyAqk(tensorL1Aqk, blockAqk, headCount, aqkHeadStride, OWNER_ELEMENTS);
+        for (uint32_t i = 0; i < headCount; ++i) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+                StageReady(owner + i, STAGE_QD));
+        }
     }
 
     template <typename TileCopy, typename DirectTileCopy, typename OutT,
@@ -301,7 +349,9 @@ private:
         CopyL1ToL0B copyL1ToL0B;
         TileMmad tileMmad;
 
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, stage));
+        if (stage < STAGE_COUNT) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(StageReady(owner, stage));
+        }
         if constexpr (COPY_L0A) {
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[l0ASlot]);
             copyL1ToL0A(tileL0A, tileL1A);
@@ -354,15 +404,17 @@ private:
             // buffers, so use direction-local fixed event IDs and avoid the
             // AIC TPipe destructor reserving/releasing M_MTE1 IDs 0..2.
             ownerCredit_[owner] = static_cast<AscendC::TEventID>(owner);
-            l0Ready_[owner] = static_cast<AscendC::TEventID>(owner);
-            l0AFree_[owner] = static_cast<AscendC::TEventID>(owner);
-            l0BFree_[owner] = static_cast<AscendC::TEventID>(OWNER_COUNT + owner);
-            l0cReady_[owner] = static_cast<AscendC::TEventID>(owner);
-            l0cFree_[owner] = static_cast<AscendC::TEventID>(owner);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(ownerCredit_[owner]);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[owner]);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[owner]);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0cFree_[owner]);
+        }
+        for (uint32_t slot = 0; slot < L0_SLOT_COUNT; ++slot) {
+            l0Ready_[slot] = static_cast<AscendC::TEventID>(slot);
+            l0AFree_[slot] = static_cast<AscendC::TEventID>(slot);
+            l0BFree_[slot] = static_cast<AscendC::TEventID>(L0_SLOT_COUNT + slot);
+            l0cReady_[slot] = static_cast<AscendC::TEventID>(slot);
+            l0cFree_[slot] = static_cast<AscendC::TEventID>(slot);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[slot]);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[slot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
         }
     }
 
@@ -370,17 +422,21 @@ private:
     {
         for (uint32_t owner = 0; owner < OWNER_COUNT; ++owner) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ownerCredit_[owner]);
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[owner]);
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[owner]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0cFree_[owner]);
+        }
+        for (uint32_t slot = 0; slot < L0_SLOT_COUNT; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BFree_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
+        }
+        for (uint32_t aivIdx = 0; aivIdx < 2; ++aivIdx) {
             for (uint32_t slot = 0; slot < KDA_PREPARE_RAW_SLOT_COUNT; ++slot) {
                 const uint64_t flagOffset =
-                    static_cast<uint64_t>(owner) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
+                    static_cast<uint64_t>(aivIdx) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
                     KDA_PREPARE_FREE_FLAG_BASE + flagOffset + slot);
             }
             const uint64_t flagOffset =
-                static_cast<uint64_t>(owner) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
+                static_cast<uint64_t>(aivIdx) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
             AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
                 KDA_PREPARE_Q_FREE_FLAG + flagOffset);
             AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
@@ -399,11 +455,11 @@ private:
     GM_ADDR dqRaw_ = nullptr;
     const ChunkKdaBwdPrepareTilingData *tiling_ = nullptr;
     AscendC::TEventID ownerCredit_[OWNER_COUNT];
-    AscendC::TEventID l0Ready_[OWNER_COUNT];
-    AscendC::TEventID l0AFree_[OWNER_COUNT];
-    AscendC::TEventID l0BFree_[OWNER_COUNT];
-    AscendC::TEventID l0cReady_[OWNER_COUNT];
-    AscendC::TEventID l0cFree_[OWNER_COUNT];
+    AscendC::TEventID l0Ready_[L0_SLOT_COUNT];
+    AscendC::TEventID l0AFree_[L0_SLOT_COUNT];
+    AscendC::TEventID l0BFree_[L0_SLOT_COUNT];
+    AscendC::TEventID l0cReady_[L0_SLOT_COUNT];
+    AscendC::TEventID l0cFree_[L0_SLOT_COUNT];
 };
 
 } // namespace KDA
