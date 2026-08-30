@@ -21,6 +21,10 @@ namespace KDA {
 constexpr uint8_t KDA_PREPARE_CROSS_CORE_MODE = 0x4;
 constexpr uint64_t KDA_PREPARE_FREE_FLAG_BASE = 0;
 constexpr uint64_t KDA_PREPARE_READY_FLAG_BASE = 6;
+constexpr uint64_t KDA_PREPARE_Q_FREE_FLAG = 2;
+constexpr uint64_t KDA_PREPARE_D_FREE_FLAG = 3;
+constexpr uint64_t KDA_PREPARE_Q_READY_FLAG = 8;
+constexpr uint64_t KDA_PREPARE_D_READY_FLAG = 9;
 constexpr uint64_t KDA_PREPARE_SUBBLOCK_FLAG_STRIDE = 16;
 constexpr uint32_t KDA_PREPARE_RAW_SLOT_COUNT = 2;
 constexpr uint32_t KDA_PREPARE_CHUNK = 64;
@@ -29,6 +33,20 @@ constexpr uint32_t KDA_PREPARE_RAW_BF16_BYTES =
     KDA_PREPARE_CHUNK * KDA_PREPARE_CHUNK * sizeof(bfloat16_t);
 constexpr uint32_t KDA_PREPARE_FP32_BYTES =
     KDA_PREPARE_CHUNK * KDA_PREPARE_CHUNK * sizeof(float);
+constexpr uint32_t KDA_PREPARE_A_UB_BYTES =
+    2 * KDA_PREPARE_RAW_BF16_BYTES + 3 * KDA_PREPARE_FP32_BYTES;
+constexpr uint32_t KDA_PREPARE_Q_FP32_BYTES =
+    KDA_PREPARE_CHUNK * KDA_PREPARE_DIM * sizeof(float);
+constexpr uint32_t KDA_PREPARE_D_BF16_BYTES =
+    KDA_PREPARE_CHUNK * KDA_PREPARE_DIM * sizeof(bfloat16_t);
+constexpr uint32_t KDA_PREPARE_Q_UB_OFFSET = KDA_PREPARE_A_UB_BYTES;
+constexpr uint32_t KDA_PREPARE_D_UB_OFFSET =
+    KDA_PREPARE_Q_UB_OFFSET + KDA_PREPARE_Q_FP32_BYTES;
+constexpr uint32_t KDA_PREPARE_TOTAL_UB_BYTES =
+    KDA_PREPARE_D_UB_OFFSET + KDA_PREPARE_D_BF16_BYTES;
+constexpr uint32_t KDA_PREPARE_A5_UB_BUDGET_BYTES = 192 * 1024;
+static_assert(KDA_PREPARE_TOTAL_UB_BYTES <= KDA_PREPARE_A5_UB_BUDGET_BYTES,
+              "KernelA AIV buffers exceed the A5 192 KiB UB budget.");
 
 struct ChunkInfo {
     int64_t b = 0;

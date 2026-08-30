@@ -36,7 +36,7 @@ __aicore__ inline void ChunkKdaBwdPrepareImpl(
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
         ChunkKdaBwdPrepareVector vector;
-        vector.Init(cuSeqlens, chunkIndices, dAqk, tiling, &pipe);
+        vector.Init(cuSeqlens, chunkIndices, dAqk, dv, dqRaw, tiling, &pipe);
         vector.Process();
     }
 }

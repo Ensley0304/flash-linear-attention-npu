@@ -75,7 +75,8 @@ __simd_vf__ inline void ApplyTriScaleMaskRegbase(
 class ChunkKdaBwdPrepareVector {
 public:
     __aicore__ inline void Init(
-        GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dAqk,
+        GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+        GM_ADDR dAqk, GM_ADDR dv, GM_ADDR dqRaw,
         const ChunkKdaBwdPrepareTilingData *tiling, AscendC::TPipe *pipe)
     {
         cuSeqlens_ = cuSeqlens;
@@ -83,6 +84,8 @@ public:
         tiling_ = tiling;
         pipe_ = pipe;
         dAqk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk));
+        dv_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dv));
+        dqRaw_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dqRaw));
         subBlockNum_ = static_cast<uint32_t>(AscendC::GetSubBlockNum());
         if (subBlockNum_ == 0U) {
             subBlockNum_ = 1U;
@@ -96,11 +99,15 @@ public:
         pipe_->InitBuffer(outputPing_, KDA_PREPARE_FP32_BYTES);
         pipe_->InitBuffer(outputPong_, KDA_PREPARE_FP32_BYTES);
         pipe_->InitBuffer(maskBuf_, KDA_PREPARE_FP32_BYTES);
+        pipe_->InitBuffer(qRawBuf_, KDA_PREPARE_Q_FP32_BYTES);
+        pipe_->InitBuffer(dRawBuf_, KDA_PREPARE_D_BF16_BYTES);
         raw_[0] = rawPing_.Get<bfloat16_t>();
         raw_[1] = rawPong_.Get<bfloat16_t>();
         output_[0] = outputPing_.Get<float>();
         output_[1] = outputPong_.Get<float>();
         mask_ = maskBuf_.Get<float>();
+        qRaw_ = qRawBuf_.Get<float>();
+        dRaw_ = dRawBuf_.Get<bfloat16_t>();
         for (uint32_t slot = 0; slot < KDA_PREPARE_RAW_SLOT_COUNT; ++slot) {
             vToMte3_[slot] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
             mte3ToV_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
@@ -117,6 +124,10 @@ public:
             AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_V>(
                 KDA_PREPARE_FREE_FLAG_BASE + slot);
         }
+        AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
+            KDA_PREPARE_Q_FREE_FLAG);
+        AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
+            KDA_PREPARE_D_FREE_FLAG);
 
         // In a 1C2V launch GetBlockIdx() is the physical AIV index.  Both
         // vector sub-blocks belong to the same logical AIC task and therefore
@@ -165,6 +176,27 @@ public:
                 AscendC::DataCopy(dAqk_[out], output_[slot],
                                   static_cast<uint32_t>(chunk.validRows * tiling_->chunkSize));
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[slot]);
+
+                // Q/D are already in their public output dtypes.  Keep the
+                // transfer entirely on MTE3 so Vector does not serialize the
+                // A post-process, and publish FREE from PIPE_MTE3 only after
+                // the corresponding GM write has completed.
+                const int64_t qdOut = TokenOffset(*tiling_, chunk, head, tiling_->V);
+                AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
+                    KDA_PREPARE_Q_READY_FLAG);
+                AscendC::DataCopy(
+                    dqRaw_[qdOut], qRaw_,
+                    static_cast<uint32_t>(chunk.validRows * tiling_->V));
+                AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
+                    KDA_PREPARE_Q_FREE_FLAG);
+
+                AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
+                    KDA_PREPARE_D_READY_FLAG);
+                AscendC::DataCopy(
+                    dv_[qdOut], dRaw_,
+                    static_cast<uint32_t>(chunk.validRows * tiling_->V));
+                AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
+                    KDA_PREPARE_D_FREE_FLAG);
             }
         }
         for (uint32_t slot = 0; slot < KDA_PREPARE_RAW_SLOT_COUNT; ++slot) {
@@ -183,14 +215,20 @@ private:
     uint32_t subBlockIdx_ = 0;
     uint32_t subBlockNum_ = 1;
     AscendC::GlobalTensor<float> dAqk_;
+    AscendC::GlobalTensor<bfloat16_t> dv_;
+    AscendC::GlobalTensor<float> dqRaw_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> rawPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> rawPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> outputPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> outputPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> maskBuf_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> qRawBuf_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> dRawBuf_;
     AscendC::LocalTensor<bfloat16_t> raw_[KDA_PREPARE_RAW_SLOT_COUNT];
     AscendC::LocalTensor<float> output_[KDA_PREPARE_RAW_SLOT_COUNT];
     AscendC::LocalTensor<float> mask_;
+    AscendC::LocalTensor<float> qRaw_;
+    AscendC::LocalTensor<bfloat16_t> dRaw_;
     AscendC::TEventID vToMte3_[KDA_PREPARE_RAW_SLOT_COUNT];
     AscendC::TEventID mte3ToV_[KDA_PREPARE_RAW_SLOT_COUNT];
 };
