@@ -301,10 +301,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0Ready_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0Ready_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
-        // Each A/Q/D formula is a single-K-block GEMM.  Mark that block as
-        // both the first and last unit so the following FixPipe can retire
-        // the result instead of waiting for a later MMAD unit forever.
-        tileMmad(tileL0C, tileL0A, tileL0B, m, n, k, true, 0b11);
+        // L0C ownership is already protected by the explicit M_FIX/FIX_M
+        // events below. Keep MMAD/FixPipe unit-flag synchronization disabled
+        // so the two mechanisms do not serialize the same dependency twice.
+        tileMmad(tileL0C, tileL0A, tileL0B, m, n, k, true, 0);
         if constexpr (RELEASE_L0A) {
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AFree_[l0ASlot]);
         }
@@ -324,9 +324,10 @@ private:
             auto blockC = tla::GetTile(
                 tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
             using CopyL0CToUB = typename TileCopyAToUB::template CopyL0CToDst<decltype(blockC)>;
-            CopyL0CToUB copyL0CToUB;
-            copyL0CToUB(
-                blockC, tileL0C, m, static_cast<uint8_t>(aivIdx), 1, 0b11);
+            // Match PR404 finalize exactly: select the direct owner-AIV UB
+            // overload with an explicit sub-block id and unitFlag disabled.
+            CopyL0CToUB{}(
+                blockC, tileL0C, static_cast<uint8_t>(aivIdx), 0);
             AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
                 KDA_PREPARE_READY_FLAG_BASE + flagOffset + aivSlot);
         } else {
@@ -337,8 +338,7 @@ private:
             auto blockC = tla::GetTile(
                 tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
             using CopyL0CToDst = typename TileCopy::template CopyL0CToDst<decltype(blockC)>;
-            CopyL0CToDst copyL0CToDst;
-            copyL0CToDst(blockC, tileL0C, 0b11);
+            CopyL0CToDst{}(blockC, tileL0C);
         }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
     }
