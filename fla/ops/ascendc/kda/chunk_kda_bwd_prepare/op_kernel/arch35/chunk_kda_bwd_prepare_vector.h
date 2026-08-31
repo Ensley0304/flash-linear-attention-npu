@@ -138,8 +138,10 @@ public:
         uint64_t generation = 0;
         for (int64_t workTask = blockIdx; workTask < tiling_->workTaskNum;
              workTask += blockNum) {
-            const int64_t chunkTask = workTask / tiling_->headWindowNum;
-            const int64_t headWindow = workTask - chunkTask * tiling_->headWindowNum;
+            // Mirror the AIC head-major task order exactly so cross-core slots
+            // and generation counters stay paired with the same work item.
+            const int64_t headWindow = workTask / tiling_->chunkTaskNum;
+            const int64_t chunkTask = workTask - headWindow * tiling_->chunkTaskNum;
             const int64_t headBegin = headWindow * HEADS_PER_WORK_TASK;
             const int64_t headEnd = KdaMin(headBegin + HEADS_PER_WORK_TASK, tiling_->NV);
             ChunkInfo chunk;
