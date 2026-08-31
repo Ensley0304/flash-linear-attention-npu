@@ -77,10 +77,9 @@ public:
             // owners before consuming it.  Pair copies keep the lower MTE2
             // instruction count, while the second pair can progress in MTE2
             // during the first pair's MTE1/MMAD/FixPipe work.
-            uint64_t preloadGeneration = headGeneration;
             for (int64_t preloadHead = headBegin; preloadHead < headEnd;) {
                 const uint32_t preloadOwner =
-                    static_cast<uint32_t>(preloadGeneration & (OWNER_COUNT - 1U));
+                    static_cast<uint32_t>(preloadHead - headBegin);
                 const uint32_t remaining = static_cast<uint32_t>(headEnd - preloadHead);
                 const uint32_t preloadCount =
                     preloadOwner + 1U < OWNER_COUNT && remaining >= 2U ? 2U : 1U;
@@ -117,19 +116,19 @@ public:
                     resource, preloadOwner, preloadAqkOffset, rows,
                     preloadCount, aqkHeadStride);
                 preloadHead += preloadCount;
-                preloadGeneration += preloadCount;
             }
 
             for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
                 const uint32_t owner =
-                    static_cast<uint32_t>(headGeneration & (OWNER_COUNT - 1U));
+                    static_cast<uint32_t>(head - headBegin);
+                const bool pairLeader = (owner & 1U) == 0U;
                 const uint32_t aivIdx = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t aivSlot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
                 const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
                 const uint32_t aSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyA, TileCopyAToUB, bfloat16_t,
                             false, true, false>(
-                    resource, STAGE_A,
+                    resource, pairLeader ? STAGE_A : STAGE_NO_WAIT,
                     owner, DO_OFFSET, VNEW_OFFSET, rows, rows, KDA_PREPARE_DIM,
                     KDA_PREPARE_CHUNK, aSlot, aSlot, aivIdx,
                     aivSlot * KDA_PREPARE_RAW_BF16_BYTES,
@@ -143,7 +142,7 @@ public:
                 const uint32_t qSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyQ, TileCopyQToUB, float,
                             false, false, true>(
-                    resource, STAGE_QD,
+                    resource, pairLeader ? STAGE_Q : STAGE_NO_WAIT,
                     owner, DO_OFFSET, H_OFFSET, rows, KDA_PREPARE_DIM, KDA_PREPARE_DIM,
                     KDA_PREPARE_DIM, qSlot, aSlot, aivIdx,
                     KDA_PREPARE_Q_UB_OFFSET,
@@ -152,7 +151,7 @@ public:
                 const uint32_t dSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyD, TileCopyDToUB, bfloat16_t,
                             true, true, true>(
-                    resource, STAGE_NO_WAIT,
+                    resource, pairLeader ? STAGE_D : STAGE_NO_WAIT,
                     owner, AQK_OFFSET, DO_OFFSET, rows, KDA_PREPARE_DIM, rows,
                     KDA_PREPARE_DIM, dSlot, dSlot, aivIdx,
                     KDA_PREPARE_D_UB_OFFSET,
@@ -193,9 +192,13 @@ private:
     static constexpr uint32_t OWNER_COUNT = 4;
     static constexpr uint32_t L0_SLOT_COUNT = 2;
     static constexpr int64_t HEADS_PER_WORK_TASK = 4;
-    static constexpr uint32_t STAGE_COUNT = 2;
+    // MTE2_MTE1 supports event ids 0..7. Two adjacent heads share one
+    // readiness event per stage because each batched copy completes both
+    // owners before publishing READY: 2 pairs * 3 stages = 6 events.
+    static constexpr uint32_t STAGE_COUNT = 3;
     static constexpr uint32_t STAGE_A = 0;
-    static constexpr uint32_t STAGE_QD = 1;
+    static constexpr uint32_t STAGE_Q = 1;
+    static constexpr uint32_t STAGE_D = 2;
     static constexpr uint32_t STAGE_NO_WAIT = STAGE_COUNT;
     static constexpr uint32_t OWNER_BYTES = 72 * 1024;
     static constexpr uint32_t DO_OFFSET = 0;
@@ -218,7 +221,7 @@ private:
 
     __aicore__ inline AscendC::TEventID StageReady(uint32_t owner, uint32_t stage) const
     {
-        return static_cast<AscendC::TEventID>(owner * STAGE_COUNT + stage);
+        return static_cast<AscendC::TEventID>((owner >> 1U) * STAGE_COUNT + stage);
     }
 
     __aicore__ inline void LoadAStage(
@@ -255,10 +258,8 @@ private:
         }
         copyDO(tensorL1DO, blockDO, headCount, tokenHeadStride, OWNER_ELEMENTS);
         copyV(tensorL1V, blockV, headCount, tokenHeadStride, OWNER_ELEMENTS);
-        for (uint32_t i = 0; i < headCount; ++i) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
-                StageReady(owner + i, STAGE_A));
-        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+            StageReady(owner, STAGE_A));
     }
 
     __aicore__ inline void LoadQStage(
@@ -282,6 +283,8 @@ private:
         using CopyH = typename TileCopyQ::template CopyGmToL1B<decltype(blockH)>;
         CopyH copyH;
         copyH(tensorL1H, blockH, headCount, stateHeadStride, OWNER_ELEMENTS);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+            StageReady(owner, STAGE_Q));
     }
 
     __aicore__ inline void LoadDStage(
@@ -303,10 +306,8 @@ private:
         using CopyAqk = typename TileCopyD::template CopyGmToL1A<decltype(blockAqk)>;
         CopyAqk copyAqk;
         copyAqk(tensorL1Aqk, blockAqk, headCount, aqkHeadStride, OWNER_ELEMENTS);
-        for (uint32_t i = 0; i < headCount; ++i) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
-                StageReady(owner + i, STAGE_QD));
-        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+            StageReady(owner, STAGE_D));
     }
 
     template <typename TileCopy, typename DirectTileCopy, typename OutT,
