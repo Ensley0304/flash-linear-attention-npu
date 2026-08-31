@@ -127,7 +127,7 @@ public:
                 const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
                 const uint32_t aSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyA, TileCopyAToUB, bfloat16_t,
-                            false, false, true, false>(
+                            false, true, false>(
                     resource, pairLeader ? STAGE_A : STAGE_NO_WAIT,
                     owner, DO_OFFSET, VNEW_OFFSET, rows, rows, KDA_PREPARE_DIM,
                     KDA_PREPARE_CHUNK, aSlot, aSlot, aivIdx,
@@ -140,21 +140,22 @@ public:
                 // the next L0B slot. Q releases the resident L0A tile after
                 // its MMAD has consumed it.
                 const uint32_t qSlot = FormulaSlot(formulaGeneration++);
-                const int64_t qdOut = TokenOffset(*tiling_, chunk, head, tiling_->V);
                 RunResident<TileCopyQ, TileCopyQToUB, float,
-                            true, false, false, true>(
+                            false, false, true>(
                     resource, pairLeader ? STAGE_Q : STAGE_NO_WAIT,
                     owner, DO_OFFSET, H_OFFSET, rows, KDA_PREPARE_DIM, KDA_PREPARE_DIM,
                     KDA_PREPARE_DIM, qSlot, aSlot, aivIdx,
-                    0U, 0U, 0U, dqRaw_, qdOut);
+                    KDA_PREPARE_Q_UB_OFFSET,
+                    KDA_PREPARE_Q_FREE_FLAG, KDA_PREPARE_Q_READY_FLAG);
 
                 const uint32_t dSlot = FormulaSlot(formulaGeneration++);
                 RunResident<TileCopyD, TileCopyDToUB, bfloat16_t,
-                            true, true, true, true>(
+                            true, true, true>(
                     resource, pairLeader ? STAGE_D : STAGE_NO_WAIT,
                     owner, AQK_OFFSET, DO_OFFSET, rows, KDA_PREPARE_DIM, rows,
                     KDA_PREPARE_DIM, dSlot, dSlot, aivIdx,
-                    0U, 0U, 0U, dv_, qdOut);
+                    KDA_PREPARE_D_UB_OFFSET,
+                    KDA_PREPARE_D_FREE_FLAG, KDA_PREPARE_D_READY_FLAG);
             }
         }
         DrainEvents();
@@ -310,15 +311,14 @@ private:
     }
 
     template <typename TileCopy, typename DirectTileCopy, typename OutT,
-              bool DIRECT_TO_GM, bool RELEASE_OWNER, bool COPY_L0A, bool RELEASE_L0A>
+              bool RELEASE_OWNER, bool COPY_L0A, bool RELEASE_L0A>
     __aicore__ inline void RunResident(
         Catlass::Arch::Resource<ArchTag> &resource, uint32_t stage,
         uint32_t owner, uint32_t l1AOffset, uint32_t l1BOffset,
         uint32_t m, uint32_t n, uint32_t k,
         uint32_t cStride, uint32_t slot, uint32_t l0ASlot,
         uint32_t aivIdx, uint32_t aivUbOffset,
-        uint64_t freeFlag, uint64_t readyFlag,
-        GM_ADDR directOut = nullptr, int64_t directOutOffset = 0)
+        uint64_t freeFlag, uint64_t readyFlag)
     {
         using LayoutC = Catlass::layout::RowMajor;
         using LayoutL1A = typename TileCopy::LayoutTagL1A;
@@ -381,37 +381,22 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0cReady_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0cReady_[slot]);
 
-        if constexpr (DIRECT_TO_GM) {
-            // Q/D need no Vector-side computation.  Write their native output
-            // types directly from L0C through FixPipe, keeping unitFlag=0 as
-            // in the no-unit-flag A5 path.
-            AscendC::GlobalTensor<OutT> gmOut;
-            gmOut.SetGlobalBuffer(
-                reinterpret_cast<__gm__ OutT *>(directOut) + directOutOffset);
-            auto tensorOut = tla::MakeTensor(
-                gmOut, tla::MakeLayout<OutT, LayoutC>(m, cStride), Catlass::Arch::PositionGM{});
-            auto blockOut = tla::GetTile(
-                tensorOut, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
-            using CopyL0CToGM = typename TileCopy::template CopyL0CToDst<decltype(blockOut)>;
-            CopyL0CToGM{}(blockOut, tileL0C, 0);
-        } else {
-            const uint64_t flagOffset =
-                static_cast<uint64_t>(aivIdx) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
-            AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
-                freeFlag + flagOffset);
-            auto aivUb = resource.ubBuf.template GetBufferByByte<OutT>(aivUbOffset);
-            auto tensorC = tla::MakeTensor(
-                aivUb, tla::MakeLayout<OutT, LayoutC>(m, cStride), Catlass::Arch::PositionUB{});
-            auto blockC = tla::GetTile(
-                tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
-            using CopyL0CToUB =
-                typename DirectTileCopy::template CopyL0CToDst<decltype(blockC)>;
-            // Direct owner-AIV handoff: L0C is reusable as soon as FixPipe has
-            // filled UB; the target AIV publishes FREE only after its last use.
-            CopyL0CToUB{}(blockC, tileL0C, static_cast<uint8_t>(aivIdx), 0);
-            AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
-                readyFlag + flagOffset);
-        }
+        const uint64_t flagOffset =
+            static_cast<uint64_t>(aivIdx) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
+        AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
+            freeFlag + flagOffset);
+        auto aivUb = resource.ubBuf.template GetBufferByByte<OutT>(aivUbOffset);
+        auto tensorC = tla::MakeTensor(
+            aivUb, tla::MakeLayout<OutT, LayoutC>(m, cStride), Catlass::Arch::PositionUB{});
+        auto blockC = tla::GetTile(
+            tensorC, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
+        using CopyL0CToUB =
+            typename DirectTileCopy::template CopyL0CToDst<decltype(blockC)>;
+        // Direct owner-AIV handoff: L0C is reusable as soon as FixPipe has
+        // filled UB; the target AIV publishes FREE only after its last use.
+        CopyL0CToUB{}(blockC, tileL0C, static_cast<uint8_t>(aivIdx), 0);
+        AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
+            readyFlag + flagOffset);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0cFree_[slot]);
     }
 
@@ -453,6 +438,12 @@ private:
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
                     KDA_PREPARE_FREE_FLAG_BASE + flagOffset + slot);
             }
+            const uint64_t flagOffset =
+                static_cast<uint64_t>(aivIdx) * KDA_PREPARE_SUBBLOCK_FLAG_STRIDE;
+            AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
+                KDA_PREPARE_Q_FREE_FLAG + flagOffset);
+            AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_FIX>(
+                KDA_PREPARE_D_FREE_FLAG + flagOffset);
         }
     }
 
