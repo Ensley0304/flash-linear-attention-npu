@@ -83,14 +83,8 @@ public:
                 RunStage1(resource, chunk, owner, aiv, slot,
                           coreIdx, groupGeneration);
             }
-            // Stage3 is deliberately outside this milestone.  Drain its READY
-            // tokens here so repeated work tasks cannot fill a fixed flag ID.
-            // The next patch replaces this drain with Stage3's first MTE1.
-            for (int64_t head = headBegin; head < headEnd; ++head) {
-                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
-                AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
-                    KDA_FINALIZE_ZB_READY_BASE + owner);
-            }
+            // Stage3 is deliberately outside this milestone.  It will own the
+            // zB-ready handshake once its first MTE1 consumer is added.
         }
         DrainEvents();
         AscendC::SetMMLayoutTransform(false);
@@ -308,8 +302,10 @@ private:
             L1_DW + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
         auto kEL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_KE + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
+        const uint64_t flagOffset =
+            static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
-            KDA_FINALIZE_KE_READY_BASE + owner);
+            KDA_FINALIZE_KE_READY_BASE + flagOffset + aivSlot);
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         GM_ADDR wsBase = workspace_ + ws;
         RunGemm<CopyRegular, ResultPath::GM_FP32>(

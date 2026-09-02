@@ -164,6 +164,9 @@ public:
         for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
             mte2ToV_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
             vToMte3_[slot] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
+            mte3ToMte2_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+            // The first Stage0 has no preceding zB MTE3 reader.
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         }
     }
 
@@ -209,6 +212,9 @@ public:
                 RunStage2(chunk, head, owner, slot);
             }
         }
+        for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
+        }
     }
 
 private:
@@ -227,6 +233,10 @@ private:
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
     {
+        // Stage0 reinterprets the same physical UB range used by the previous
+        // work task's zB source.  Do not let MTE2 overwrite it until MTE3 has
+        // finished the UB->L1 handoff.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         auto kUb = UbBytes(32 * 1024).ReinterpretCast<bfloat16_t>();
         auto gkUb = UbBytes(48 * 1024).ReinterpretCast<float>();
         auto hUb = UbBytes(80 * 1024).ReinterpretCast<bfloat16_t>();
@@ -275,7 +285,7 @@ private:
         AscendC::DataCopy(kEL1, kENz,
             AscendC::DataCopyParams(1, KDA_FINALIZE_VECTOR_BF16_BYTES / 32, 0, 0));
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
-            KDA_FINALIZE_KE_READY_BASE + owner);
+            KDA_FINALIZE_KE_READY_BASE + slot);
 
         // Only after all Stage0 uses of these physical ranges are drained may
         // AIC overwrite them with zV/zW.
@@ -288,12 +298,10 @@ private:
     __aicore__ inline void RunStage2(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot)
     {
-        const uint64_t flagOffset =
-            static_cast<uint64_t>(subBlockIdx_) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
-            KDA_FINALIZE_ZV_READY_BASE + flagOffset + slot);
+            KDA_FINALIZE_ZV_READY_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
-            KDA_FINALIZE_ZW_READY_BASE + flagOffset + slot);
+            KDA_FINALIZE_ZW_READY_BASE + slot);
         auto zV = UbBytes(KDA_FINALIZE_UB_ZV + slot * KDA_FINALIZE_MATRIX_FP32_BYTES)
                       .ReinterpretCast<float>();
         auto zW = UbBytes(KDA_FINALIZE_UB_ZW + slot * KDA_FINALIZE_MATRIX_FP32_BYTES)
@@ -322,19 +330,14 @@ private:
             reinterpret_cast<__ubuf__ float *>(zW.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(betaUb.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows));
-        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
-            KDA_FINALIZE_ZV_FREE_BASE + slot);
-        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
-            KDA_FINALIZE_ZW_FREE_BASE + slot);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         auto zBL1 = L1Bf16(160 * 1024 + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
         AscendC::DataCopy(zBL1, zB,
             AscendC::DataCopyParams(1, KDA_FINALIZE_MATRIX_BF16_BYTES / 32, 0, 0));
-        // Stage3 will consume this flag and return the L1 slot credit.  During
-        // the Stage0--2-only milestone there is intentionally no consumer.
-        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
-            KDA_FINALIZE_ZB_READY_BASE + owner);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
+        // Stage3 will publish/consume the zB L1 credit handshake when its
+        // first MTE1 consumer is introduced.  Stage0--2 has no such consumer.
     }
 
     AscendC::GlobalTensor<bfloat16_t> k_;
@@ -351,6 +354,7 @@ private:
     AscendC::LocalTensor<uint8_t> ub_;
     AscendC::TEventID mte2ToV_[KDA_FINALIZE_AIV_SLOTS];
     AscendC::TEventID vToMte3_[KDA_FINALIZE_AIV_SLOTS];
+    AscendC::TEventID mte3ToMte2_[KDA_FINALIZE_AIV_SLOTS];
     uint32_t subBlockNum_ = KDA_FINALIZE_AIV_COUNT;
     uint32_t subBlockIdx_ = 0;
 };
