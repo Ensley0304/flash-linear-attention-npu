@@ -31,6 +31,14 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    uint32_t aicCoreNum = static_cast<uint32_t>(platform.GetCoreNumAic());
+    if (aicCoreNum == 0) {
+        // The A5 aclnn direct-launch context may omit platform info.  This
+        // checkpoint is A5-only and must still expose all 28 physical AICs.
+        aicCoreNum = 28;
+        OP_LOGW(context->GetNodeName(),
+                "platform info did not report AIC count; use A5 fallback core count 28");
+    }
     ChunkKdaBwdFinalizeTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(INPUT_Q),
@@ -47,7 +55,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         context->GetOptionalInputShape(INPUT_CU_SEQLENS),
         context->GetOptionalInputShape(INPUT_CHUNK_INDICES),
         *scale, *lowerBound, *chunkSize, *safeGate, *useGate, *useExp2, *stateVFirst,
-        static_cast<uint32_t>(platform.GetCoreNumAic()),
+        aicCoreNum,
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize())};
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
