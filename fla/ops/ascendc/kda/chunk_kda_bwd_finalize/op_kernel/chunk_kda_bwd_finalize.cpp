@@ -14,22 +14,24 @@
 
 namespace KDA {
 
-__aicore__ inline void ChunkKdaBwdFinalizeStage02Impl(
+__aicore__ inline void ChunkKdaBwdFinalizeStage03Impl(
     GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR akk,
     GM_ADDR vNew, GM_ADDR h, GM_ADDR dh, GM_ADDR dvScan,
+    GM_ADDR dqRaw, GM_ADDR dv,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
     const ChunkKdaBwdFinalizeTilingData *tiling)
 {
     if ASCEND_IS_AIC {
-        ChunkKdaBwdFinalizeCubeStage02 cube;
+        ChunkKdaBwdFinalizeCubeStage03 cube;
         cube.Init(v, akk, vNew, h, dh, dvScan, cuSeqlens, chunkIndices,
                   workspace, tiling);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkKdaBwdFinalizeVectorStage02 vector;
-        vector.Init(k, gk, beta, h, dh, cuSeqlens, chunkIndices,
+        ChunkKdaBwdFinalizeVectorStage03 vector;
+        vector.Init(k, v, gk, beta, h, dh, dqRaw, dv,
+                    cuSeqlens, chunkIndices,
                     workspace, tiling, &pipe);
         vector.Process();
     }
@@ -48,20 +50,17 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
     GM_ADDR dG, GM_ADDR dALog, GM_ADDR dDtBias,
     GM_ADDR workspace, GM_ADDR tiling)
 {
-    // Stage0--2 milestone: final outputs are intentionally not written until
-    // their producing stages are implemented.  Intermediate evidence lives in
-    // user workspace and in the documented L1/UB handoff slots.
+    // Stage0--3 milestone: dv is now produced by Stage3.  The remaining final
+    // outputs stay untouched until their producing stages are implemented.
     (void)q;
     (void)rawG;
     (void)aLog;
     (void)dtBias;
     (void)dAqk;
-    (void)dqRaw;
     (void)qRstd;
     (void)kRstd;
     (void)dq;
     (void)dk;
-    (void)dv;
     (void)dBeta;
     (void)dG;
     (void)dALog;
@@ -73,8 +72,9 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
         TILING_KEY_IS(3) || TILING_KEY_IS(4)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-        KDA::ChunkKdaBwdFinalizeStage02Impl(
+        KDA::ChunkKdaBwdFinalizeStage03Impl(
             k, v, gk, beta, akk, vNew, h, dh, dvScan,
+            dqRaw, dv,
             cuSeqlens, chunkIndices, userWorkspace, &tilingData);
     }
 }

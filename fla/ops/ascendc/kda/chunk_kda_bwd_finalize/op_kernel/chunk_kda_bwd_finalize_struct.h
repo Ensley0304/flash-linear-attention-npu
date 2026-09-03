@@ -10,7 +10,7 @@
 namespace KDA {
 
 // The public contract is already complete, while this development branch only
-// executes Stage0--2.  Keeping the final tiling schema from the first patch
+// executes Stage0--3.  Keeping the final tiling schema from the first patch
 // prevents a later ABI change when Stage3--12 are appended.
 struct ChunkKdaBwdFinalizeTilingData {
     int64_t B;

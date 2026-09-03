@@ -40,6 +40,8 @@ constexpr uint32_t KDA_FINALIZE_WS_EXP2_GK = 96 * 1024;
 constexpr uint32_t KDA_FINALIZE_WS_KE = 128 * 1024;
 constexpr uint32_t KDA_FINALIZE_WS_GK_LAST = 144 * 1024;
 constexpr uint32_t KDA_FINALIZE_WS_RH = 144 * 1024 + 512;
+constexpr uint32_t KDA_FINALIZE_WS_GATE_STATE = 144 * 1024;
+constexpr uint32_t KDA_FINALIZE_WS_DB_V = 145 * 1024;
 
 // Per-AIV BuildZ fixed UB layout.
 constexpr uint32_t KDA_FINALIZE_UB_ZV = 0;
@@ -59,6 +61,7 @@ constexpr uint64_t KDA_FINALIZE_ZV_READY_BASE = 4;
 constexpr uint64_t KDA_FINALIZE_ZW_READY_BASE = 6;
 constexpr uint64_t KDA_FINALIZE_KE_READY_BASE = 8;
 constexpr uint64_t KDA_FINALIZE_ZB_READY_BASE = 10;
+constexpr uint64_t KDA_FINALIZE_ZB_FREE_BASE = 12;
 
 struct FinalizeChunkInfo {
     int64_t b = 0;
@@ -144,8 +147,8 @@ __aicore__ inline uint64_t FinalizeWorkspaceSlotBase(
         KDA_FINALIZE_SLOT_BYTES;
 }
 
-static_assert(KDA_FINALIZE_WS_RH + 512 <= KDA_FINALIZE_SLOT_BYTES,
-              "Stage0--2 workspace slot exceeds 160 KiB.");
+static_assert(KDA_FINALIZE_WS_DB_V + 512 <= KDA_FINALIZE_SLOT_BYTES,
+              "Stage0--3 workspace slot exceeds 160 KiB.");
 static_assert(KDA_FINALIZE_UB_WORK < KDA_FINALIZE_UB_BYTES,
               "BuildZ fixed UB handoff exceeds A5 UB.");
 
