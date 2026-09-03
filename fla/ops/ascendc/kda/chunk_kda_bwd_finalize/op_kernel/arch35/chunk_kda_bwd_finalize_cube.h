@@ -246,7 +246,8 @@ private:
         const uint32_t streamBase = L1_STREAM + stream * STREAM_BYTES;
         constexpr uint32_t kVNewDhReady = 0U;
         constexpr uint32_t kAkkDvScanReady = 1U;
-        constexpr uint32_t kHVReady = 2U;
+        constexpr uint32_t kHReady = 2U;
+        constexpr uint32_t kVReady = 3U;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
         auto dwL1 = resource.l1Buf.template GetBufferByByte<DT>(
@@ -274,9 +275,10 @@ private:
 
         LoadGmToL1B<CopyTransB, LayoutCM>(
             hL1, h_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kHReady);
         LoadGmToL1B<CopyTransB, LayoutCM>(
             vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kHVReady);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kVReady);
 
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         GM_ADDR wsBase = workspace_ + ws;
@@ -288,10 +290,11 @@ private:
         RunGemm<CopyTransA, ResultPath::GM_FP32>(
             resource, akkL1, dvScanL1, rows, KDA_FINALIZE_DIM, rows,
             NextSlot(), wsBase + KDA_FINALIZE_WS_DVB, {}, 0, 0, 0, 0, 0);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kHVReady);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kHReady);
         RunGemm<CopyTransB, ResultPath::L1_BF16>(
             resource, dvScanL1, hL1, rows, KDA_FINALIZE_DIM, KDA_FINALIZE_DIM,
             NextSlot(), nullptr, dwL1, 0, 0, 0, 0, 0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kVReady);
         RunGemm<CopyTransB, ResultPath::AIV_UB_FP32>(
             resource, dvScanL1, vL1, rows, rows, KDA_FINALIZE_DIM,
             NextSlot(), nullptr, {}, aiv, aivSlot,
