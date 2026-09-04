@@ -14,23 +14,23 @@
 
 namespace KDA {
 
-__aicore__ inline void ChunkKdaBwdFinalizeStage03Impl(
-    GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR akk,
+__aicore__ inline void ChunkKdaBwdFinalizeStage05Impl(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR akk,
     GM_ADDR vNew, GM_ADDR h, GM_ADDR dh, GM_ADDR dvScan,
     GM_ADDR dqRaw, GM_ADDR dv,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
     const ChunkKdaBwdFinalizeTilingData *tiling)
 {
     if ASCEND_IS_AIC {
-        ChunkKdaBwdFinalizeCubeStage03 cube;
+        ChunkKdaBwdFinalizeCubeStage05 cube;
         cube.Init(v, akk, vNew, h, dh, dvScan, cuSeqlens, chunkIndices,
                   workspace, tiling);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkKdaBwdFinalizeVectorStage03 vector;
-        vector.Init(k, v, gk, beta, h, dh, dqRaw, dv,
+        ChunkKdaBwdFinalizeVectorStage05 vector;
+        vector.Init(q, k, v, gk, beta, h, dh, dqRaw, dv,
                     cuSeqlens, chunkIndices,
                     workspace, tiling, &pipe);
         vector.Process();
@@ -50,9 +50,9 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
     GM_ADDR dG, GM_ADDR dALog, GM_ADDR dDtBias,
     GM_ADDR workspace, GM_ADDR tiling)
 {
-    // Stage0--3 milestone: dv is now produced by Stage3.  The remaining final
-    // outputs stay untouched until their producing stages are implemented.
-    (void)q;
+    // Stage0--5 milestone: Stage5 materializes the four per-head Cube
+    // operands in L1.  The remaining public outputs stay untouched until
+    // their producing stages are implemented.
     (void)rawG;
     (void)aLog;
     (void)dtBias;
@@ -72,8 +72,8 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
         TILING_KEY_IS(3) || TILING_KEY_IS(4)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-        KDA::ChunkKdaBwdFinalizeStage03Impl(
-            k, v, gk, beta, akk, vNew, h, dh, dvScan,
+        KDA::ChunkKdaBwdFinalizeStage05Impl(
+            q, k, v, gk, beta, akk, vNew, h, dh, dvScan,
             dqRaw, dv,
             cuSeqlens, chunkIndices, userWorkspace, &tilingData);
     }

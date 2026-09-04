@@ -21,7 +21,7 @@
 
 namespace KDA {
 
-class ChunkKdaBwdFinalizeCubeStage03 {
+class ChunkKdaBwdFinalizeCubeStage05 {
 public:
     __aicore__ inline void Init(
         GM_ADDR v, GM_ADDR akk, GM_ADDR vNew, GM_ADDR h, GM_ADDR dh,
@@ -49,7 +49,6 @@ public:
         const int64_t coreNum = AscendC::GetBlockNum();
         uint64_t groupGeneration = 0;
         uint64_t headGeneration = 0;
-        bool stage0Prefetched = false;
         for (int64_t workTask = coreIdx; workTask < tiling_->workTaskNum;
              workTask += coreNum, ++groupGeneration) {
             const int64_t headWindow = workTask / tiling_->chunkTaskNum;
@@ -60,7 +59,6 @@ public:
             FinalizeChunkInfo chunk;
             ResolveFinalizeChunk(chunkTask, cuSeqlens_, chunkIndices_, *tiling_, chunk);
             if (!chunk.valid) {
-                stage0Prefetched = false;
                 continue;
             }
 
@@ -70,13 +68,10 @@ public:
             // MMAD / FixPipe in the same pattern as KernelA's resident-L1
             // preload, without increasing the L1 footprint.
             const int64_t preloadEnd = FinalizeMin(headBegin + 2, headEnd);
-            if (!stage0Prefetched) {
-                for (int64_t head = headBegin; head < preloadEnd; ++head) {
-                    const uint32_t owner = static_cast<uint32_t>(head - headBegin);
-                    LoadStage0(resource, chunk, head, owner);
-                }
+            for (int64_t head = headBegin; head < preloadEnd; ++head) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                LoadStage0(resource, chunk, head, owner);
             }
-            stage0Prefetched = false;
             for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
@@ -87,37 +82,6 @@ public:
                 if (nextHead < headEnd) {
                     LoadStage0(resource, chunk, nextHead,
                                static_cast<uint32_t>(nextHead - headBegin));
-                }
-            }
-
-            // The two Stage0 stream buffers are dead after the four heads.
-            // Prefetch the next work task's stream-only operands while the
-            // current task runs Stage1/Stage3.  Akk remains resident for the
-            // current task and is replaced only after Stage3 consumes it.
-            FinalizeChunkInfo nextChunk;
-            int64_t nextHeadBegin = 0;
-            int64_t nextHeadEnd = 0;
-            const int64_t nextWorkTask = workTask + coreNum;
-            bool prefetchNext = false;
-            if (nextWorkTask < tiling_->workTaskNum) {
-                const int64_t nextHeadWindow = nextWorkTask / tiling_->chunkTaskNum;
-                const int64_t nextChunkTask =
-                    nextWorkTask - nextHeadWindow * tiling_->chunkTaskNum;
-                nextHeadBegin = nextHeadWindow * KDA_FINALIZE_HEADS_PER_WINDOW;
-                nextHeadEnd = FinalizeMin(
-                    nextHeadBegin + KDA_FINALIZE_HEADS_PER_WINDOW, tiling_->NV);
-                ResolveFinalizeChunk(
-                    nextChunkTask, cuSeqlens_, chunkIndices_, *tiling_, nextChunk);
-                prefetchNext = nextChunk.valid && nextHeadBegin < nextHeadEnd;
-                if (prefetchNext) {
-                    const int64_t nextPreloadEnd =
-                        FinalizeMin(nextHeadBegin + 2, nextHeadEnd);
-                    for (int64_t head = nextHeadBegin;
-                         head < nextPreloadEnd; ++head) {
-                        LoadStage0Stream(
-                            resource, nextChunk, head,
-                            static_cast<uint32_t>(head - nextHeadBegin));
-                    }
                 }
             }
 
@@ -140,16 +104,28 @@ public:
                 const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
                 RunStage3(resource, chunk, owner, aiv, slot);
             }
-            if (prefetchNext) {
-                const int64_t nextPreloadEnd =
-                    FinalizeMin(nextHeadBegin + 2, nextHeadEnd);
-                for (int64_t head = nextHeadBegin;
-                     head < nextPreloadEnd; ++head) {
-                    LoadStage0Akk(
-                        resource, nextChunk, head,
-                        static_cast<uint32_t>(head - nextHeadBegin));
-                }
-                stage0Prefetched = true;
+            headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
+            // Stage4 consumes the four resident AkkT/Tza pairs.  Its result
+            // goes directly to the owner AIV's BF16 ping/pong while the AIV
+            // independently executes BaseFinalize.
+            for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
+                const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
+                RunStage4(resource, chunk, owner, aiv, slot);
+            }
+
+            // Stage5 publishes into [64,320) KiB, disjoint from Stage4's
+            // live Akk/Tza ranges.  It therefore needs no group-wide FREE
+            // barrier and can overlap later heads' Stage4 MMAD/FixPipe.
+            headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
+            for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
+                const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
+                const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
+                const uint64_t flagOffset =
+                    static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
+                AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
+                    KDA_FINALIZE_LOCAL_READY_BASE + flagOffset + slot);
             }
         }
         DrainEvents();
@@ -172,10 +148,17 @@ private:
         ArchTag, DT, LayoutCM, DT, LayoutCM, Acc, LayoutRM>;
     using CopyTransBToUb = Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, DT, LayoutRM, DT, LayoutCM, Acc, LayoutRM>;
+    using CopyTransAToUbBf16 = Common::Tile::PackedTileCopyTlaToUB<
+        ArchTag, DT, LayoutCM, DT, LayoutRM, DT, LayoutRM>;
     using TileMmad = Catlass::Gemm::Tile::TileMmadTla<
         ArchTag, DT, typename CopyRegular::LayoutTagL1A>;
 
-    enum class ResultPath : uint32_t { GM_FP32, L1_BF16, AIV_UB_FP32 };
+    enum class ResultPath : uint32_t {
+        GM_FP32,
+        L1_BF16,
+        AIV_UB_FP32,
+        AIV_UB_BF16,
+    };
 
     static constexpr uint32_t L1_AKK = 0;
     static constexpr uint32_t L1_DW = 32 * 1024;
@@ -227,7 +210,7 @@ private:
         typename TileCopy::template CopyGmToL1B<decltype(block)>{}(tensorL1, block);
     }
 
-    template <typename TileCopy, ResultPath PATH>
+    template <typename TileCopy, ResultPath PATH, bool SIGNAL_L1_READY = false>
     __aicore__ inline void RunGemm(
         Catlass::Arch::Resource<ArchTag> &resource,
         AscendC::LocalTensor<DT> l1A, AscendC::LocalTensor<DT> l1B,
@@ -287,7 +270,11 @@ private:
             params.quantPre = QuantMode_t::F322BF16;
             params.unitFlag = 0;
             AscendC::Fixpipe<DT, Acc, FIX_NZ_L1>(l1Dst, l0C, params);
-        } else {
+            if constexpr (SIGNAL_L1_READY) {
+                AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(
+                    static_cast<AscendC::TEventID>(readyFlag));
+            }
+        } else if constexpr (PATH == ResultPath::AIV_UB_FP32) {
             const uint64_t flagOffset =
                 static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
@@ -299,6 +286,21 @@ private:
             auto blockUb = tla::GetTile(
                 tensorUb, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
             typename CopyTransBToUb::template CopyL0CToDst<decltype(blockUb)>{}(
+                blockUb, tensorL0C, static_cast<uint8_t>(aiv), 0);
+            AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
+                readyFlag + flagOffset + aivSlot);
+        } else {
+            const uint64_t flagOffset =
+                static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
+            AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
+                freeFlag + flagOffset + aivSlot);
+            auto remoteUb = resource.ubBuf.template GetBufferByByte<DT>(aivUbOffset);
+            auto tensorUb = tla::MakeTensor(
+                remoteUb, tla::MakeLayout<DT, LayoutRM>(m, KDA_FINALIZE_CHUNK),
+                Catlass::Arch::PositionUB{});
+            auto blockUb = tla::GetTile(
+                tensorUb, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
+            typename CopyTransAToUbBf16::template CopyL0CToDst<decltype(blockUb)>{}(
                 blockUb, tensorL0C, static_cast<uint8_t>(aiv), 0);
             AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
                 readyFlag + flagOffset + aivSlot);
@@ -427,9 +429,9 @@ private:
             resource, akkL1, dvScanL1, rows, KDA_FINALIZE_DIM, rows,
             NextSlot(), wsBase + KDA_FINALIZE_WS_DVB, {}, 0, 0, 0, 0, 0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
-        RunGemm<CopyTransB, ResultPath::L1_BF16>(
+        RunGemm<CopyTransB, ResultPath::L1_BF16, true>(
             resource, dvScanL1, hL1, rows, KDA_FINALIZE_DIM, KDA_FINALIZE_DIM,
-            NextSlot(), nullptr, dwL1, 0, 0, 0, 0, 0);
+            NextSlot(), nullptr, dwL1, 0, 0, 0, 0, owner);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
         RunGemm<CopyTransB, ResultPath::AIV_UB_FP32>(
             resource, dvScanL1, vL1, rows, rows, KDA_FINALIZE_DIM,
@@ -452,13 +454,18 @@ private:
             L1_KE + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
         const uint64_t flagOffset =
             static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
-        AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
-            KDA_FINALIZE_KE_READY_BASE + flagOffset + aivSlot);
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         GM_ADDR wsBase = workspace_ + ws;
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(
+            static_cast<AscendC::TEventID>(owner));
         RunGemm<CopyRegular, ResultPath::GM_FP32>(
             resource, akkL1, dwL1, rows, KDA_FINALIZE_DIM, rows,
             NextSlot(), wsBase + KDA_FINALIZE_WS_DKGB_RAW, {}, 0, 0, 0, 0, 0);
+        // dKgb consumes only the Stage0-resident Akk and dW.  Do not delay it
+        // behind the independent AIV production of kE; wait at zW's first
+        // true consumer point instead.
+        AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
+            KDA_FINALIZE_KE_READY_BASE + flagOffset + aivSlot);
         RunGemm<CopyTransB, ResultPath::AIV_UB_FP32>(
             resource, dwL1, kEL1, rows, rows, KDA_FINALIZE_DIM,
             NextSlot(), nullptr, {}, aiv, aivSlot,
@@ -489,6 +496,26 @@ private:
         // Zb is certainly no longer read when the Tza FixPipe completes.
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
             KDA_FINALIZE_ZB_FREE_BASE + flagOffset + aivSlot);
+    }
+
+    __aicore__ inline void RunStage4(
+        Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
+        uint32_t owner, uint32_t aiv, uint32_t aivSlot)
+    {
+        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
+            L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
+        auto tzaL1 = resource.l1Buf.template GetBufferByByte<DT>(
+            L1_TZA + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
+        // FixPipe performs the required FP32->BF16 round-to-nearest direct
+        // handoff.  The leading minus is fused with Stage5's triangular VF,
+        // where every element is already visited exactly once.
+        RunGemm<CopyTransA, ResultPath::AIV_UB_BF16>(
+            resource, akkL1, tzaL1, rows, rows, rows,
+            NextSlot(), nullptr, {}, aiv, aivSlot,
+            KDA_FINALIZE_UB_DAKK_RAW +
+                aivSlot * KDA_FINALIZE_MATRIX_BF16_BYTES,
+            KDA_FINALIZE_DAKK_FREE_BASE, KDA_FINALIZE_DAKK_READY_BASE);
     }
 
     __aicore__ inline uint32_t NextSlot()
