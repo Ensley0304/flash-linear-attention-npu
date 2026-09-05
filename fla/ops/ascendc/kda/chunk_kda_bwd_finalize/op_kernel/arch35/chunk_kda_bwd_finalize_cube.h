@@ -45,6 +45,7 @@ public:
         AscendC::SetMMLayoutTransform(true);
         Catlass::Arch::Resource<ArchTag> resource;
         InitEvents();
+        ReleaseTaskL1();
         const int64_t coreIdx = AscendC::GetBlockIdx();
         const int64_t coreNum = AscendC::GetBlockNum();
         uint64_t groupGeneration = 0;
@@ -135,12 +136,21 @@ public:
             }
             // Next task's streams alias this task's LocalOperand owners.
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(2);
+            ReleaseTaskL1();
         }
         DrainEvents();
         AscendC::SetMMLayoutTransform(false);
     }
 
 private:
+    __aicore__ inline void ReleaseTaskL1()
+    {
+        for (uint32_t aiv = 0; aiv < 2; ++aiv) {
+            AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
+                KDA_FINALIZE_TASK_L1_FREE + aiv * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE);
+        }
+    }
+
     using ArchTag = Catlass::Arch::Ascend950;
     using DT = bfloat16_t;
     using Acc = float;
@@ -186,16 +196,25 @@ private:
     static constexpr AscendC::FixpipeConfig FIX_NZ_L1 = {
         AscendC::CO2Layout::NZ, false};
 
+    // The physical tile and GM leading dimension stay fixed, including Akk's
+    // 64-column stride. Only the copied sub-tile shrinks; clear its padding
+    // on the same MTE2 pipe before the load, as in the shared CATLASS block.
     template <typename TileCopy, typename GmLayout>
     __aicore__ inline void LoadGmToL1A(
         AscendC::LocalTensor<DT> dst, GM_ADDR src,
-        uint32_t m, uint32_t k)
+        uint32_t m, uint32_t k, uint32_t validM = 0, uint32_t validK = 0)
     {
+        validM = validM == 0 ? m : validM;
+        validK = validK == 0 ? k : validK;
+        if (validM != m || validK != k) {
+            AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
+                1, static_cast<uint16_t>(m * k * sizeof(DT) / 32), 0, static_cast<DT>(0)));
+        }
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
         auto tensorGm = tla::MakeTensor(
             gm, tla::MakeLayout<DT, GmLayout>(m, k), Catlass::Arch::PositionGM{});
-        auto block = tla::GetTile(tensorGm, tla::MakeCoord(0, 0), tla::MakeShape(m, k));
+        auto block = tla::GetTile(tensorGm, tla::MakeCoord(0, 0), tla::MakeShape(validM, validK));
         auto tensorL1 = tla::MakeTensor(
             dst, tla::MakeLayout<DT, typename TileCopy::LayoutTagL1A>(m, k),
             Catlass::Arch::PositionL1{});
@@ -205,13 +224,19 @@ private:
     template <typename TileCopy, typename GmLayout>
     __aicore__ inline void LoadGmToL1B(
         AscendC::LocalTensor<DT> dst, GM_ADDR src,
-        uint32_t k, uint32_t n)
+        uint32_t k, uint32_t n, uint32_t validK = 0, uint32_t validN = 0)
     {
+        validK = validK == 0 ? k : validK;
+        validN = validN == 0 ? n : validN;
+        if (validK != k || validN != n) {
+            AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
+                1, static_cast<uint16_t>(k * n * sizeof(DT) / 32), 0, static_cast<DT>(0)));
+        }
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
         auto tensorGm = tla::MakeTensor(
             gm, tla::MakeLayout<DT, GmLayout>(k, n), Catlass::Arch::PositionGM{});
-        auto block = tla::GetTile(tensorGm, tla::MakeCoord(0, 0), tla::MakeShape(k, n));
+        auto block = tla::GetTile(tensorGm, tla::MakeCoord(0, 0), tla::MakeShape(validK, validN));
         auto tensorL1 = tla::MakeTensor(
             dst, tla::MakeLayout<DT, typename TileCopy::LayoutTagL1B>(k, n),
             Catlass::Arch::PositionL1{});
@@ -363,7 +388,7 @@ private:
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
         int64_t head, uint32_t owner)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         const uint32_t stream = owner & 1U;
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stream);
         const uint32_t streamBase = L1_STREAM + stream * STREAM_BYTES;
@@ -379,22 +404,22 @@ private:
         const int64_t akkToken = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
         const int64_t state = FinalizeStateOffset(*tiling_, chunk, head);
         LoadGmToL1A<CopyTransB, LayoutRM>(
-            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM);
+            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
         LoadGmToL1B<CopyTransB, LayoutCM>(
             dhL1, dh_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 0));
 
         LoadGmToL1A<CopyTransA, LayoutCM>(
-            akkL1, akk_ + akkToken * sizeof(DT), rows, rows);
+            akkL1, akk_ + akkToken * sizeof(DT), rows, rows, chunk.validRows, chunk.validRows);
         LoadGmToL1A<CopyRegular, LayoutRM>(
-            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM);
+            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 1));
 
         LoadGmToL1B<CopyTransB, LayoutCM>(
             hL1, h_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
         LoadGmToL1B<CopyTransB, LayoutCM>(
-            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows);
+            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
     }
 
@@ -402,7 +427,7 @@ private:
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
         int64_t head, uint32_t owner)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         const uint32_t stream = owner & 1U;
         const uint32_t streamBase = L1_STREAM + stream * STREAM_BYTES;
         auto vNewL1 = resource.l1Buf.template GetBufferByByte<DT>(streamBase + STREAM_VNEW);
@@ -414,17 +439,17 @@ private:
         const int64_t state = FinalizeStateOffset(*tiling_, chunk, head);
 
         LoadGmToL1A<CopyTransB, LayoutRM>(
-            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM);
+            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
         LoadGmToL1B<CopyTransB, LayoutCM>(
             dhL1, dh_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 0));
         LoadGmToL1A<CopyRegular, LayoutRM>(
-            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM);
+            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
         LoadGmToL1B<CopyTransB, LayoutCM>(
             hL1, h_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
         LoadGmToL1B<CopyTransB, LayoutCM>(
-            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows);
+            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
     }
 
@@ -432,14 +457,14 @@ private:
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
         int64_t head, uint32_t owner)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         const uint32_t stream = owner & 1U;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
         const int64_t akkToken =
             FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
         LoadGmToL1A<CopyTransA, LayoutCM>(
-            akkL1, akk_ + akkToken * sizeof(DT), rows, rows);
+            akkL1, akk_ + akkToken * sizeof(DT), rows, rows, chunk.validRows, chunk.validRows);
         // dvScan was queued by LoadStage0Stream.  This event is emitted only
         // after Akk joins the same MTE2 stream, so MTE1 observes both inputs.
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 1));
@@ -450,7 +475,7 @@ private:
         uint32_t owner, uint32_t aiv, uint32_t aivSlot,
         int64_t coreIdx, uint64_t groupGeneration)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         const uint32_t stream = owner & 1U;
         const uint32_t streamBase = L1_STREAM + stream * STREAM_BYTES;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
@@ -491,7 +516,7 @@ private:
         uint32_t owner, uint32_t aiv, uint32_t aivSlot,
         int64_t coreIdx, uint64_t groupGeneration)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
         auto dwL1 = resource.l1Buf.template GetBufferByByte<DT>(
@@ -525,7 +550,7 @@ private:
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
         uint32_t owner, uint32_t aiv, uint32_t aivSlot)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         const uint64_t flagOffset =
             static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
@@ -551,7 +576,7 @@ private:
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
         uint32_t owner, uint32_t aiv, uint32_t aivSlot)
     {
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
         auto tzaL1 = resource.l1Buf.template GetBufferByByte<DT>(
@@ -582,7 +607,7 @@ private:
             KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES);
         auto dAqkL1 = local[KDA_FINALIZE_LOCAL_DAQK / sizeof(DT)];
         auto kNegL1 = local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(DT)];
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         RunGemm<CopyRegular, ResultPath::AIV_UB_FP32>(
             resource, dAqkL1, kNegL1, rows, KDA_FINALIZE_DIM, rows,
             NextSlot(), nullptr, {}, aiv, aivSlot,
@@ -603,7 +628,7 @@ private:
         auto kn = local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(DT)];
         auto qp = local[KDA_FINALIZE_LOCAL_Q_POS / sizeof(DT)];
         auto bp = local[KDA_FINALIZE_LOCAL_BK_POS / sizeof(DT)];
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         RunGemm<CopyRegular, ResultPath::AIV_UB_FP32>(
             resource, dak, kn, rows, KDA_FINALIZE_DIM, rows, NextSlot(),
             nullptr, {}, aiv, slot, slot * KDA_FINALIZE_VECTOR_FP32_BYTES,

@@ -113,6 +113,9 @@ constexpr uint64_t KDA_FINALIZE_DAKK_READY_BASE = KDA_FINALIZE_ZW_READY_BASE;
 // avoids aliasing earlier per-head handoffs without requiring a group-wide
 // barrier inside the uneven multi-core work-task loop.
 constexpr uint64_t KDA_FINALIZE_LOCAL_READY_BASE = 14;
+// AIC->AIV only: LOCAL_READY uses the opposite direction. Keep flag 14
+// unused in this direction because the final AIV-only SyncAll owns it.
+constexpr uint64_t KDA_FINALIZE_TASK_L1_FREE = 15;
 // Stage2 has consumed the zV pair before Stage5/6 starts. Stage5 republishes
 // FREE only after its UB->L1 egress, and Stage6 consumes it before publishing
 // dq_local_raw READY, so the pair remains balanced within each work task.

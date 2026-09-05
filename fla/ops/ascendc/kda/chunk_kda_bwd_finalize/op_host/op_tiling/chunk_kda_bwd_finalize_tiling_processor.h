@@ -140,7 +140,8 @@ public:
             static_cast<uint32_t>(tiling_.workTaskNum));
         const size_t slotBytes = static_cast<size_t>(blockDim_) * 8U * 160U * 1024U;
         const size_t taskHeads = static_cast<size_t>(tiling_.totalChunkNum * tiling_.NV);
-        const size_t gateBytes = Align512(taskHeads * sizeof(float));
+        // Give each concurrently written scalar partial a complete DMA block.
+        const size_t gateBytes = Align512(taskHeads * 32U);
         const size_t dtBytes = Align512(taskHeads * 128U * sizeof(float));
         tiling_.slotWorkspaceOffset = 0;
         tiling_.gatePartialOffset = slotBytes;
