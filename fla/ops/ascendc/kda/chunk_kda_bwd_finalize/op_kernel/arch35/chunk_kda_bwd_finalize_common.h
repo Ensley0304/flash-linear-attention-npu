@@ -69,12 +69,20 @@ constexpr uint32_t KDA_FINALIZE_UB_Q_POS = 48 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BK_POS = 80 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 112 * 1024;
 
+// Stage6 writes dq_local_raw into the former zV FP32 ping/pong range. Stage7
+// uses the remaining UB as one phase-wide working set.
+constexpr uint32_t KDA_FINALIZE_UB_DQ_LOCAL_RAW = 0;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_DQ_BASE = 64 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_DG_BASE = 96 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_EXP2_GK = 128 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q = 160 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 176 * 1024;
+
 // Four 64-KiB owner slots occupy [64,320) KiB of L1.  This range is disjoint
 // from the only Stage4-live operands, Akk [0,32) and Tza [416,448), so each
 // Stage5 head may publish immediately after its own dAkk becomes ready.
-// dAqk's first 8 KiB is
-// reserved for Stage6's direct GM->L1 load; Stage5 publishes the remaining
-// 56 KiB without a GM round trip.
+// Stage5 publishes all five operands directly from UB to L1. No Stage5
+// operand is mirrored through GM; the owner slot stays live through Stage8.
 constexpr uint32_t KDA_FINALIZE_LOCAL_BASE = 64 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_BYTES = 64 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_DAQK = 0;
@@ -95,16 +103,21 @@ constexpr uint64_t KDA_FINALIZE_KE_READY_BASE = 8;
 constexpr uint64_t KDA_FINALIZE_ZB_READY_BASE = 10;
 constexpr uint64_t KDA_FINALIZE_ZB_FREE_BASE = 12;
 // Stage4 executes only after Stage1 KE_READY has been consumed, so its pair
-// can safely carry the later AIV->AIC dAkk credit.  dAkk ready must not reuse
-// ZB_READY in the reverse direction: an early AIV can consume its own old ZB
-// token.  Reuse ZV_FREE instead; Stage2 cannot finish until AIC has consumed
-// that Stage0 AIC->AIV credit and returned ZV_READY.
+// can safely carry the later AIV->AIC dAkk credit.  Reuse ZW_READY for the
+// reverse credit: the owner AIV must consume it in Stage2 before reaching
+// Stage5, and the AIC cannot start the next task before Stage5 publishes its
+// final L1 payload.
 constexpr uint64_t KDA_FINALIZE_DAKK_FREE_BASE = KDA_FINALIZE_KE_READY_BASE;
-constexpr uint64_t KDA_FINALIZE_DAKK_READY_BASE = KDA_FINALIZE_ZV_FREE_BASE;
+constexpr uint64_t KDA_FINALIZE_DAKK_READY_BASE = KDA_FINALIZE_ZW_READY_BASE;
 // Keep the final Stage5 AIV->AIC publication on a dedicated pair.  This
 // avoids aliasing earlier per-head handoffs without requiring a group-wide
 // barrier inside the uneven multi-core work-task loop.
 constexpr uint64_t KDA_FINALIZE_LOCAL_READY_BASE = 14;
+// Stage2 has consumed the zV pair before Stage5/6 starts. Stage5 republishes
+// FREE only after its UB->L1 egress, and Stage6 consumes it before publishing
+// dq_local_raw READY, so the pair remains balanced within each work task.
+constexpr uint64_t KDA_FINALIZE_DQ_LOCAL_FREE_BASE = KDA_FINALIZE_ZV_FREE_BASE;
+constexpr uint64_t KDA_FINALIZE_DQ_LOCAL_READY_BASE = KDA_FINALIZE_ZV_READY_BASE;
 
 struct FinalizeChunkInfo {
     int64_t b = 0;
@@ -198,6 +211,8 @@ static_assert(KDA_FINALIZE_UB_STAGE4_WORK < KDA_FINALIZE_UB_BYTES,
               "Stage4 fixed UB handoff exceeds A5 UB.");
 static_assert(KDA_FINALIZE_UB_STAGE5_WORK < KDA_FINALIZE_UB_BYTES,
               "Stage5 fixed UB handoff exceeds A5 UB.");
+static_assert(KDA_FINALIZE_UB_STAGE7_Q_RSTD + 256 <= KDA_FINALIZE_UB_BYTES,
+              "Stage7 working set exceeds A5 UB.");
 static_assert(KDA_FINALIZE_HEADS_PER_WINDOW * KDA_FINALIZE_LOCAL_BYTES <= 256 * 1024,
               "Stage5 four-head LocalOperand window exceeds 256 KiB.");
 static_assert(KDA_FINALIZE_LOCAL_BASE +
