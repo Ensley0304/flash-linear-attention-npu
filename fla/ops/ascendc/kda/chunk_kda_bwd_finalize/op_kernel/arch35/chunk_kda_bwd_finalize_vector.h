@@ -29,20 +29,6 @@ __simd_callee__ inline void FinalizeCastBf16(
     Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(dst, even, mask);
 }
 
-__simd_callee__ inline void FinalizeZeroNzTail(
-    __ubuf__ bfloat16_t *dst, uint16_t validRows, uint16_t cols)
-{
-    uint32_t count = 16;
-    MaskReg mask = UpdateMask<bfloat16_t>(count);
-    RegTensor<bfloat16_t> zero;
-    Duplicate(zero, static_cast<bfloat16_t>(0), mask);
-    for (uint16_t col = 0; col < cols / 16; ++col) {
-        for (uint16_t row = validRows; row < KDA_FINALIZE_CHUNK; ++row) {
-            StoreAlign(dst + col * KDA_FINALIZE_CHUNK * 16 + row * 16, zero, mask);
-        }
-    }
-}
-
 __simd_callee__ inline void FinalizeZeroNdTail(
     __ubuf__ bfloat16_t *dst, uint16_t validRows, uint16_t cols)
 {
@@ -56,23 +42,63 @@ __simd_callee__ inline void FinalizeZeroNdTail(
 }
 
 __simd_vf__ inline void FinalizeStage5TailVF(
-    __ubuf__ bfloat16_t *daq, __ubuf__ bfloat16_t *dak,
-    __ubuf__ bfloat16_t *kn, __ubuf__ bfloat16_t *qp,
-    __ubuf__ bfloat16_t *bp, uint16_t validRows)
+    __ubuf__ FinalizeLocalType *daq, __ubuf__ FinalizeLocalType *dak,
+    __ubuf__ FinalizeLocalType *kn, __ubuf__ FinalizeLocalType *qp,
+    __ubuf__ FinalizeLocalType *bp, uint16_t validRows)
 {
-    FinalizeZeroNdTail(daq, validRows, KDA_FINALIZE_CHUNK);
-    FinalizeZeroNdTail(dak, validRows, KDA_FINALIZE_CHUNK);
-    FinalizeZeroNdTail(kn, validRows, KDA_FINALIZE_DIM);
-    FinalizeZeroNdTail(qp, validRows, KDA_FINALIZE_DIM);
-    FinalizeZeroNdTail(bp, validRows, KDA_FINALIZE_DIM);
+    uint32_t count = 64;
+    MaskReg mask = UpdateMask<FinalizeLocalType>(count);
+    RegTensor<FinalizeLocalType> zero;
+    Duplicate(zero, static_cast<FinalizeLocalType>(0), mask);
+    for (uint16_t row = validRows; row < KDA_FINALIZE_CHUNK; ++row) {
+        StoreAlign(daq + row * 64, zero, mask);
+        StoreAlign(dak + row * 64, zero, mask);
+        StoreAlign(daq + KDA_FINALIZE_MATRIX_ELEMS + row * 64, zero, mask);
+        StoreAlign(dak + KDA_FINALIZE_MATRIX_ELEMS + row * 64, zero, mask);
+        for (uint16_t col = 0; col < 128; col += 64) {
+            StoreAlign(kn + row * 128 + col, zero, mask);
+            StoreAlign(qp + row * 128 + col, zero, mask);
+            StoreAlign(bp + row * 128 + col, zero, mask);
+            StoreAlign(kn + KDA_FINALIZE_VECTOR_ELEMS + row * 128 + col, zero, mask);
+            StoreAlign(qp + KDA_FINALIZE_VECTOR_ELEMS + row * 128 + col, zero, mask);
+            StoreAlign(bp + KDA_FINALIZE_VECTOR_ELEMS + row * 128 + col, zero, mask);
+        }
+    }
 }
 
-// Stage0 VectorPre.  One VF call covers a complete head/chunk.  kE is emitted
-// in both layouts from the same register result: ND for its later Vector user
-// and NZ for the Stage1 Cube B operand.  This is one computation, not a second
-// exp/mul pass.
+__simd_callee__ inline void FinalizeStoreLocalPair(
+    __ubuf__ FinalizeLocalType *dst, RegTensor<float> &even,
+    RegTensor<float> &odd, MaskReg &mask)
+{
+    RegTensor<FinalizeLocalType> packed;
+    Cast<FinalizeLocalType, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, odd, mask);
+    Cast<FinalizeLocalType, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, even, mask);
+    MaskReg all = CreateMask<FinalizeLocalType, MaskPattern::ALL>();
+    StoreAlign(dst, packed, all);
+    RegTensor<float> hi0, hi1, low0, low1;
+    CastHalf2Float<FinalizeLocalType>(hi0, hi1, packed, all);
+    Sub(low0, even, hi0, mask);
+    Sub(low1, odd, hi1, mask);
+    FinalizeCastBf16(packed, low0, low1, mask);
+    StoreAlign(dst + KDA_FINALIZE_VECTOR_ELEMS, packed, all);
+}
+
+__simd_callee__ inline void FinalizeStoreLocalRow(
+    __ubuf__ bfloat16_t *dst, RegTensor<float> &value, MaskReg &mask)
+{
+    RegTensor<bfloat16_t> packed;
+    RegTensor<float> high, residual;
+    Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
+    StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dst, packed, mask);
+    Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, mask);
+    Sub(residual, value, high, mask);
+    Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, residual, mask);
+    StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dst + KDA_FINALIZE_MATRIX_ELEMS, packed, mask);
+}
+
+// Stage0 emits paired ND kE. MTE3 converts to NZ while copying to L1.
 __simd_vf__ inline void FinalizeStage0VF(
-    __ubuf__ bfloat16_t *kENz, __ubuf__ bfloat16_t *kENd,
+    __ubuf__ bfloat16_t *kENd, __ubuf__ bfloat16_t *lowNd,
     __ubuf__ float *exp2Gk, __ubuf__ float *gkLast, __ubuf__ float *rH,
     __ubuf__ bfloat16_t *k, __ubuf__ float *gk,
     __ubuf__ bfloat16_t *h, __ubuf__ bfloat16_t *dh,
@@ -104,23 +130,17 @@ __simd_vf__ inline void FinalizeStage0VF(
         Mul(k1, k1, e1, fpMask);
         FinalizeCastBf16(out, k0, k1, fpMask);
         StoreAlign(kENd + rowOffset, out, bfMask);
-        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-
-        // NZ physical layout: [N1, M, C0].  Four 16-column fractals form one
-        // logical 64x128 kE tile.  Store only the valid logical row.
-        for (uint16_t n1 = 0; n1 < KDA_FINALIZE_DIM / 16; ++n1) {
-            uint32_t srcCount = 16;
-            MaskReg sixteen = UpdateMask<bfloat16_t>(srcCount);
-            RegTensor<bfloat16_t> segment;
-            LoadAlign(segment, kENd + rowOffset + n1 * 16);
-            const uint32_t nzOffset =
-                static_cast<uint32_t>(n1) * KDA_FINALIZE_CHUNK * 16 + row * 16;
-            StoreAlign(kENz + nzOffset, segment, sixteen);
-        }
+        RegTensor<float> high0, high1;
+        CastHalf2Float<bfloat16_t>(high0, high1, out, bfMask);
+        Sub(high0, k0, high0, fpMask);
+        Sub(high1, k1, high1, fpMask);
+        FinalizeCastBf16(out, high0, high1, fpMask);
+        StoreAlign(lowNd + rowOffset, out, bfMask);
     }
 
     if (validRows < KDA_FINALIZE_CHUNK) {
-        FinalizeZeroNzTail(kENz, validRows, KDA_FINALIZE_DIM);
+        FinalizeZeroNdTail(kENd, validRows, KDA_FINALIZE_DIM);
+        FinalizeZeroNdTail(lowNd, validRows, KDA_FINALIZE_DIM);
     }
 
     // gk_last is a full K row.
@@ -152,10 +172,9 @@ __simd_vf__ inline void FinalizeStage0VF(
 }
 
 // Stage2 BuildZ.  zV/zW are direct FP32 FixPipe results in row-major UB.
-// Zb is written directly in the NZ layout consumed by Stage3, avoiding an
-// on-chip relocation before UB->L1.
+// Paired ND Zb uses the same fused ND->NZ MTE3 path as the local operands.
 __simd_vf__ inline void FinalizeStage2VF(
-    __ubuf__ bfloat16_t *zbNz, __ubuf__ bfloat16_t *zbNd,
+    __ubuf__ bfloat16_t *zbNd,
     __ubuf__ float *zV, __ubuf__ float *zW,
     __ubuf__ bfloat16_t *beta, uint16_t validRows)
 {
@@ -186,19 +205,15 @@ __simd_vf__ inline void FinalizeStage2VF(
         Select(result, result, zero, lower);
         Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, result, fpMask);
         StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(zbNd + rowOffset, packed, fpMask);
-        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-        for (uint16_t n1 = 0; n1 < KDA_FINALIZE_CHUNK / 16; ++n1) {
-            uint32_t segmentCount = 16;
-            MaskReg sixteen = UpdateMask<bfloat16_t>(segmentCount);
-            RegTensor<bfloat16_t> segment;
-            LoadAlign(segment, zbNd + rowOffset + n1 * 16);
-            StoreAlign(
-                zbNz + static_cast<uint32_t>(n1) * KDA_FINALIZE_CHUNK * 16 + row * 16,
-                segment, sixteen);
-        }
+        RegTensor<float> high;
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, fpMask);
+        Sub(high, result, high, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, high, fpMask);
+        StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(zbNd + 4096 + rowOffset, packed, fpMask);
     }
     if (validRows < KDA_FINALIZE_CHUNK) {
-        FinalizeZeroNzTail(zbNz, validRows, KDA_FINALIZE_CHUNK);
+        FinalizeZeroNdTail(zbNd, validRows, KDA_FINALIZE_CHUNK);
+        FinalizeZeroNdTail(zbNd + 4096, validRows, KDA_FINALIZE_CHUNK);
     }
 }
 
@@ -420,9 +435,9 @@ __simd_vf__ inline void FinalizeStage4VF(
 // the ND->NZ layout conversion with strided vector-mode DataCopy, matching the
 // mature DHU producer path and avoiding an extra UB read/write transpose.
 __simd_vf__ inline void FinalizeStage5VF(
-    __ubuf__ bfloat16_t *dAkkNd, __ubuf__ bfloat16_t *kNegNd,
-    __ubuf__ bfloat16_t *qPosNd, __ubuf__ bfloat16_t *bkPosNd,
-    __ubuf__ bfloat16_t *dAkkRaw, __ubuf__ bfloat16_t *q,
+    __ubuf__ FinalizeLocalType *dAkkNd, __ubuf__ FinalizeLocalType *kNegNd,
+    __ubuf__ FinalizeLocalType *qPosNd, __ubuf__ FinalizeLocalType *bkPosNd,
+    __ubuf__ float *dAkkRaw, __ubuf__ bfloat16_t *q,
     __ubuf__ bfloat16_t *k, __ubuf__ float *exp2Gk,
     __ubuf__ bfloat16_t *beta, uint16_t validRows)
 {
@@ -436,20 +451,13 @@ __simd_vf__ inline void FinalizeStage5VF(
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t matrixOffset =
             static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
-        RegTensor<bfloat16_t> rawBf;
         RegTensor<float> raw0;
-        RegTensor<bfloat16_t> dakkPacked;
-        // A matrix row has 64 BF16 elements, unlike the 128-element vectors.
-        // Unpack one row into FP32 lanes and pack it back without dropping
-        // odd columns or reading the following row.
-        DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(rawBf, dAkkRaw + matrixOffset);
-        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(raw0, rawBf, fpMask);
+        LoadAlign(raw0, dAkkRaw + matrixOffset);
         Muls(raw0, raw0, -1.0f, fpMask);
         uint32_t lowerCount = row;
         MaskReg lower = UpdateMask<float>(lowerCount);
         Select(raw0, raw0, zero, lower);
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(dakkPacked, raw0, fpMask);
-        StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dAkkNd + matrixOffset, dakkPacked, fpMask);
+        FinalizeStoreLocalRow(dAkkNd + matrixOffset, raw0, fpMask);
 
         const uint32_t vectorOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<float> e0;
@@ -469,8 +477,7 @@ __simd_vf__ inline void FinalizeStage5VF(
         Div(kNeg1, one, e1, fpMask);
         Mul(kNeg0, kNeg0, k0, fpMask);
         Mul(kNeg1, kNeg1, k1, fpMask);
-        FinalizeCastBf16(packed, kNeg0, kNeg1, fpMask);
-        StoreAlign(kNegNd + vectorOffset, packed, bfMask);
+        FinalizeStoreLocalPair(kNegNd + vectorOffset, kNeg0, kNeg1, fpMask);
 
         // Reuse this row's K/exp registers without changing rounding boundaries.
         RegTensor<bfloat16_t> qBf;
@@ -480,8 +487,7 @@ __simd_vf__ inline void FinalizeStage5VF(
         CastHalf2Float<bfloat16_t>(q0, q1, qBf, bfMask);
         Mul(q0, q0, e0, fpMask);
         Mul(q1, q1, e1, fpMask);
-        FinalizeCastBf16(packed, q0, q1, fpMask);
-        StoreAlign(qPosNd + vectorOffset, packed, bfMask);
+        FinalizeStoreLocalPair(qPosNd + vectorOffset, q0, q1, fpMask);
 
         RegTensor<bfloat16_t> betaBf;
         RegTensor<float> betaFp;
@@ -491,28 +497,21 @@ __simd_vf__ inline void FinalizeStage5VF(
         Mul(k1, k1, e1, fpMask);
         Mul(k0, k0, betaFp, fpMask);
         Mul(k1, k1, betaFp, fpMask);
-        FinalizeCastBf16(packed, k0, k1, fpMask);
-        StoreAlign(bkPosNd + vectorOffset, packed, bfMask);
+        FinalizeStoreLocalPair(bkPosNd + vectorOffset, k0, k1, fpMask);
     }
 }
 
-// dAqk is a public FP32 input, while Cube consumes BF16 operands. Convert it
-// once at the Stage5 handoff so the complete LocalOperand owner slot has the
-// representation used by Stage6 and Stage8.
+// Retain the FP32 dAqk input as BF16 high/residual planes.
 __simd_vf__ inline void FinalizeStage5DaqkVF(
-    __ubuf__ bfloat16_t *dAqkBf16, __ubuf__ float *dAqk,
+    __ubuf__ FinalizeLocalType *dAqkOut, __ubuf__ float *dAqk,
     uint16_t validRows)
 {
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> value;
-        RegTensor<bfloat16_t> packed;
         LoadAlign(value, dAqk + offset);
-        // Match the public FP32 operand's PyTorch/Triton BF16 tie-to-even cast.
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, fpMask);
-        StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(
-            dAqkBf16 + offset, packed, fpMask);
+        FinalizeStoreLocalRow(dAqkOut + offset, value, fpMask);
     }
 }
 
@@ -688,6 +687,22 @@ __simd_vf__ inline void FinalizeStage10VF(
     StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dbOut, packedB, rowMask);
 }
 
+__simd_vf__ inline void FinalizeResidualVF(
+    __ubuf__ bfloat16_t *dst, __ubuf__ float *src, uint16_t blocks)
+{
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    for (uint16_t block = 0; block < blocks; ++block) {
+        RegTensor<float> value, high;
+        RegTensor<bfloat16_t> packed;
+        LoadAlign(value, src + block * 64U);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, mask);
+        Sub(value, value, high, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
+        StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dst + block * 64U, packed, mask);
+    }
+}
+
 class ChunkKdaBwdFinalizeVectorStage12 {
 public:
     __aicore__ inline void Init(
@@ -813,6 +828,15 @@ public:
                     KDA_FINALIZE_ZV_FREE_BASE + slot);
                 AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
                     KDA_FINALIZE_ZW_FREE_BASE + slot);
+                AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
+                    KDA_FINALIZE_LOCAL_READY_BASE + slot);
+            }
+
+            generation -= static_cast<uint64_t>(headEnd - headBegin);
+            for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
+                if ((generation & 1U) != subBlockIdx_) continue;
+                const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
+                RunDwResidual(static_cast<uint32_t>(head - headBegin), slot);
             }
 
             generation -= static_cast<uint64_t>(headEnd - headBegin);
@@ -855,6 +879,12 @@ public:
             }
 
             generation -= static_cast<uint64_t>(headEnd - headBegin);
+            for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
+                if ((generation & 1U) != subBlockIdx_) continue;
+                const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
+                RunTzaResidual(static_cast<uint32_t>(head - headBegin), slot);
+            }
+            generation -= static_cast<uint64_t>(headEnd - headBegin);
             // BaseFinalize is independent of the current Stage4 Cube result.
             // Publish one free dAkk slot per local head, then immediately use
             // the disjoint [16,248)-KiB working region.
@@ -865,8 +895,7 @@ public:
                     continue;
                 }
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
-                    KDA_FINALIZE_DAKK_FREE_BASE + slot);
+                // Tza residual-ready also releases its raw UB for dAkk.
                 RunStage4(chunk, head, owner, slot, logicalCore, groupGeneration);
             }
 
@@ -879,10 +908,8 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
 
-            // Stage5 preserves the same four-head ownership: AIV0 handles
-            // owners 0/2 and AIV1 handles owners 1/3, each with ping/pong
-            // egress.  Start each head as soon as its dAkk and L1 owner slot
-            // are both ready; no group-wide AIV input barrier is introduced.
+            // Each AIV owns one head in the two-head window. Event slots
+            // alternate across windows; physical FP32 dAkk storage does not.
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
@@ -1006,20 +1033,60 @@ private:
     }
 
     __aicore__ inline void CopyStage5NdToNzL1(
-        const AscendC::LocalTensor<bfloat16_t> &dstNz,
-        const AscendC::LocalTensor<bfloat16_t> &srcNd,
-        uint32_t rows, uint32_t cols)
+        const AscendC::LocalTensor<FinalizeLocalType> &dstNz,
+        const AscendC::LocalTensor<FinalizeLocalType> &srcNd,
+        uint32_t rows, uint32_t cols, uint32_t planes = 2)
     {
-        constexpr uint32_t c0Elems = 32 / sizeof(bfloat16_t);
+        constexpr uint32_t c0Elems = 32 / sizeof(FinalizeLocalType);
         AscendC::DataCopyEnhancedParams enhanced;
         enhanced.blockMode = AscendC::BlockMode::BLOCK_MODE_VECTOR;
         const AscendC::DataCopyParams params{
             static_cast<uint16_t>(rows), 1,
             static_cast<uint16_t>(cols / c0Elems - 1), 0};
-        for (uint32_t col = 0; col < cols; col += c0Elems) {
-            const uint32_t dstOffset = (col / c0Elems) * KDA_FINALIZE_CHUNK * c0Elems;
-            AscendC::DataCopy(dstNz[dstOffset], srcNd[col], params, enhanced);
+        for (uint32_t plane = 0; plane < planes; ++plane) {
+            for (uint32_t col = 0; col < cols; col += c0Elems) {
+                const uint32_t dstOffset = plane * rows * cols + (col / c0Elems) * KDA_FINALIZE_CHUNK * c0Elems;
+                AscendC::DataCopy(dstNz[dstOffset], srcNd[plane * rows * cols + col], params, enhanced);
+            }
         }
+    }
+
+    __aicore__ inline void RunTzaResidual(uint32_t owner, uint32_t slot)
+    {
+        // StatePre egress and the following BaseFinalize loads share this UB.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
+        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(KDA_FINALIZE_ZV_FREE_BASE + slot);
+        AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZW_READY_BASE + slot);
+        auto raw = UbBytes(0).ReinterpretCast<float>();
+        auto low = UbBytes(16 * 1024).ReinterpretCast<bfloat16_t>();
+        FinalizeResidualVF(reinterpret_cast<__ubuf__ bfloat16_t *>(low.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()), 64);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+        CopyStage5NdToNzL1(L1Bf16(416 * 1024 + (owner * 2 + 1) * KDA_FINALIZE_MATRIX_BF16_BYTES),
+            low, 64, 64, 1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(KDA_FINALIZE_KE_READY_BASE + slot);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
+    }
+
+    __aicore__ inline void RunDwResidual(uint32_t owner, uint32_t slot)
+    {
+        // Hold the next phase's MTE2 credit until the overlapping raw UB is consumed.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
+        AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZB_READY_BASE + slot);
+        auto raw = UbBytes(64 * 1024).ReinterpretCast<float>();
+        auto low = UbBytes(96 * 1024).ReinterpretCast<bfloat16_t>();
+        FinalizeResidualVF(reinterpret_cast<__ubuf__ bfloat16_t *>(low.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()), 128);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+        CopyStage5NdToNzL1(L1Bf16(64 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES), low, 64, 128, 1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(KDA_FINALIZE_KE_READY_BASE + slot);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
     }
 
     __aicore__ inline void RunStage0(
@@ -1042,7 +1109,7 @@ private:
         auto kENd = UbBytes(176 * 1024).ReinterpretCast<bfloat16_t>();
         auto gkLast = UbBytes(192 * 1024).ReinterpretCast<float>();
         auto rH = UbBytes(193 * 1024).ReinterpretCast<float>();
-        auto kENz = UbBytes(slot * KDA_FINALIZE_VECTOR_BF16_BYTES).ReinterpretCast<bfloat16_t>();
+        auto lowNd = UbBytes(224 * 1024).ReinterpretCast<bfloat16_t>();
 
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const int64_t state = FinalizeStateOffset(*tiling_, chunk, head);
@@ -1053,8 +1120,8 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage0VF(
-            reinterpret_cast<__ubuf__ bfloat16_t *>(kENz.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(kENd.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(lowNd.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(expUb.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
@@ -1078,13 +1145,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
 
         // Direct UB->L1 egress for Stage1.  The fixed destination is the
-        // corresponding owner in the four-head kE resident window.
+        // corresponding owner in the two-head kE resident window.
         auto kEL1 = L1Bf16(96 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
-        AscendC::DataCopy(kEL1, kENz,
-            AscendC::DataCopyParams(1, KDA_FINALIZE_VECTOR_BF16_BYTES / 32, 0, 0));
-        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
-            KDA_FINALIZE_KE_READY_BASE + slot);
-
+        CopyStage5NdToNzL1(kEL1, kENd, 64, 128, 1);
+        CopyStage5NdToNzL1(L1Bf16(128 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES), lowNd, 64, 128, 1);
         // Only after all Stage0 uses of these physical ranges are drained may
         // AIC overwrite them with zV/zW.
     }
@@ -1101,8 +1165,6 @@ private:
                       .ReinterpretCast<float>();
         auto zW = UbBytes(KDA_FINALIZE_UB_ZW + slot * KDA_FINALIZE_MATRIX_FP32_BYTES)
                       .ReinterpretCast<float>();
-        auto zB = UbBytes(KDA_FINALIZE_UB_ZB + slot * KDA_FINALIZE_MATRIX_BF16_BYTES)
-                      .ReinterpretCast<bfloat16_t>();
         auto betaUb = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<bfloat16_t>();
         auto zBNd = UbBytes(KDA_FINALIZE_UB_WORK).ReinterpretCast<bfloat16_t>();
         const int64_t betaOffset = FinalizeTokenOffset(*tiling_, chunk, head, 1);
@@ -1120,7 +1182,6 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage2VF(
-            reinterpret_cast<__ubuf__ bfloat16_t *>(zB.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(zBNd.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(zV.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(zW.GetPhyAddr()),
@@ -1128,13 +1189,12 @@ private:
             static_cast<uint16_t>(chunk.validRows));
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        auto zBL1 = L1Bf16(160 * 1024 + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
+        auto zBL1 = L1Bf16(160 * 1024 + owner * 2 * KDA_FINALIZE_MATRIX_BF16_BYTES);
         if (zBPublishCount_[slot] != 0U) {
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
                 KDA_FINALIZE_ZB_FREE_BASE + slot);
         }
-        AscendC::DataCopy(zBL1, zB,
-            AscendC::DataCopyParams(1, KDA_FINALIZE_MATRIX_BF16_BYTES / 32, 0, 0));
+        CopyStage5NdToNzL1(zBL1, zBNd, 64, 64);
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
             KDA_FINALIZE_ZB_READY_BASE + slot);
         ++zBPublishCount_[slot];
@@ -1316,30 +1376,19 @@ private:
         // it need not wait for the disjoint UB->L1 egress.
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage5VToMte2_);
 
-        auto dAkkRaw = UbBytes(
-            KDA_FINALIZE_UB_DAKK_RAW + slot * KDA_FINALIZE_MATRIX_BF16_BYTES)
-                               .ReinterpretCast<bfloat16_t>();
-        auto kNegNd = UbBytes(
-            KDA_FINALIZE_UB_K_NEG + slot * KDA_FINALIZE_VECTOR_BF16_BYTES)
-                          .ReinterpretCast<bfloat16_t>();
-        auto qPosNd = UbBytes(
-            KDA_FINALIZE_UB_Q_POS + slot * KDA_FINALIZE_VECTOR_BF16_BYTES)
-                          .ReinterpretCast<bfloat16_t>();
-        auto bkPosNd = UbBytes(
-            KDA_FINALIZE_UB_BK_POS + slot * KDA_FINALIZE_VECTOR_BF16_BYTES)
-                           .ReinterpretCast<bfloat16_t>();
-        auto q = UbBytes(112 * 1024).ReinterpretCast<bfloat16_t>();
-        auto k = UbBytes(128 * 1024).ReinterpretCast<bfloat16_t>();
-        auto exp2Gk = UbBytes(144 * 1024).ReinterpretCast<float>();
-        auto beta = UbBytes(176 * 1024).ReinterpretCast<bfloat16_t>();
-        // Keep a dedicated dAkk ND egress slot per local head. The old
-        // workNd and shared dAkkNd transpose scratch are no longer needed.
-        auto dAkkNd = UbBytes(232 * 1024 + slot * KDA_FINALIZE_MATRIX_BF16_BYTES)
-                          .ReinterpretCast<bfloat16_t>();
-        // The Stage5 phase has a disjoint gap between beta and dAkkNd. Keep
-        // dAqk there so all GM inputs share one MTE2->V event cycle.
-        auto dAqkFp32 = UbBytes(184 * 1024).ReinterpretCast<float>();
-        auto dAqkBf16 = UbBytes(200 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dAkkRaw = UbBytes(KDA_FINALIZE_UB_DAKK_RAW).ReinterpretCast<float>();
+        // Two-head windows give each AIV one head. The MTE3 handoff drains
+        // before this phase is reused, so one FP32 egress region suffices.
+        auto dAqkBf16 = UbBytes(16 * 1024).ReinterpretCast<FinalizeLocalType>();
+        auto dAkkNd = UbBytes(32 * 1024).ReinterpretCast<FinalizeLocalType>();
+        auto kNegNd = UbBytes(48 * 1024).ReinterpretCast<FinalizeLocalType>();
+        auto qPosNd = UbBytes(80 * 1024).ReinterpretCast<FinalizeLocalType>();
+        auto bkPosNd = UbBytes(112 * 1024).ReinterpretCast<FinalizeLocalType>();
+        auto q = UbBytes(144 * 1024).ReinterpretCast<bfloat16_t>();
+        auto k = UbBytes(160 * 1024).ReinterpretCast<bfloat16_t>();
+        auto exp2Gk = UbBytes(176 * 1024).ReinterpretCast<float>();
+        auto beta = UbBytes(208 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dAqkFp32 = UbBytes(216 * 1024).ReinterpretCast<float>();
 
         const int64_t token =
             FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
@@ -1367,48 +1416,48 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage5VF(
-            reinterpret_cast<__ubuf__ bfloat16_t *>(dAkkNd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(kNegNd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(qPosNd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(bkPosNd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(dAkkRaw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ FinalizeLocalType *>(dAkkNd.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ FinalizeLocalType *>(kNegNd.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ FinalizeLocalType *>(qPosNd.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ FinalizeLocalType *>(bkPosNd.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dAkkRaw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(beta.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows));
         FinalizeStage5DaqkVF(
-            reinterpret_cast<__ubuf__ bfloat16_t *>(dAqkBf16.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ FinalizeLocalType *>(dAqkBf16.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dAqkFp32.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows));
         if (chunk.validRows < KDA_FINALIZE_CHUNK) {
             FinalizeStage5TailVF(
-                reinterpret_cast<__ubuf__ bfloat16_t *>(dAqkBf16.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ bfloat16_t *>(dAkkNd.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ bfloat16_t *>(kNegNd.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ bfloat16_t *>(qPosNd.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ bfloat16_t *>(bkPosNd.GetPhyAddr()), chunk.validRows);
+                reinterpret_cast<__ubuf__ FinalizeLocalType *>(dAqkBf16.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ FinalizeLocalType *>(dAkkNd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ FinalizeLocalType *>(kNegNd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ FinalizeLocalType *>(qPosNd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ FinalizeLocalType *>(bkPosNd.GetPhyAddr()), chunk.validRows);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage5VToMte2_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
 
         auto local = L1Bf16(
-            KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES);
+            KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES).ReinterpretCast<FinalizeLocalType>();
         CopyStage5NdToNzL1(
-            local[KDA_FINALIZE_LOCAL_DAQK / sizeof(bfloat16_t)], dAqkBf16,
+            local[KDA_FINALIZE_LOCAL_DAQK / sizeof(FinalizeLocalType)], dAqkBf16,
             KDA_FINALIZE_CHUNK, KDA_FINALIZE_CHUNK);
         CopyStage5NdToNzL1(
-            local[KDA_FINALIZE_LOCAL_DAKK / sizeof(bfloat16_t)], dAkkNd,
+            local[KDA_FINALIZE_LOCAL_DAKK / sizeof(FinalizeLocalType)], dAkkNd,
             KDA_FINALIZE_CHUNK, KDA_FINALIZE_CHUNK);
         CopyStage5NdToNzL1(
-            local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(bfloat16_t)], kNegNd,
+            local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(FinalizeLocalType)], kNegNd,
             KDA_FINALIZE_CHUNK, KDA_FINALIZE_DIM);
         CopyStage5NdToNzL1(
-            local[KDA_FINALIZE_LOCAL_Q_POS / sizeof(bfloat16_t)], qPosNd,
+            local[KDA_FINALIZE_LOCAL_Q_POS / sizeof(FinalizeLocalType)], qPosNd,
             KDA_FINALIZE_CHUNK, KDA_FINALIZE_DIM);
         CopyStage5NdToNzL1(
-            local[KDA_FINALIZE_LOCAL_BK_POS / sizeof(bfloat16_t)], bkPosNd,
+            local[KDA_FINALIZE_LOCAL_BK_POS / sizeof(FinalizeLocalType)], bkPosNd,
             KDA_FINALIZE_CHUNK, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);

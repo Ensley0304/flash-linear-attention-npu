@@ -15,9 +15,11 @@
 
 namespace KDA {
 
+using FinalizeLocalType = bfloat16_t;
+
 constexpr uint32_t KDA_FINALIZE_CHUNK = 64;
 constexpr uint32_t KDA_FINALIZE_DIM = 128;
-constexpr uint32_t KDA_FINALIZE_HEADS_PER_WINDOW = 4;
+constexpr uint32_t KDA_FINALIZE_HEADS_PER_WINDOW = 2;
 constexpr uint32_t KDA_FINALIZE_AIV_COUNT = 2;
 constexpr uint32_t KDA_FINALIZE_AIV_SLOTS = 2;
 constexpr uint32_t KDA_FINALIZE_WORKSPACE_SLOTS = 8;
@@ -55,19 +57,17 @@ constexpr uint32_t KDA_FINALIZE_UB_BETA = 80 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_WORK = 81 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BYTES = 248 * 1024;
 
-// Per-AIV Stage4 layout.  dAkk_raw occupies two 8-KiB BF16 slots while
+// Per-AIV Stage4 layout. dAkk_raw occupies one 16-KiB FP32 region while
 // BaseFinalize uses the disjoint [16, 248)-KiB range.
 constexpr uint32_t KDA_FINALIZE_UB_DAKK_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE4_WORK = 16 * 1024;
 
-// Stage5 IntraPre keeps one BF16 NZ egress slot per local head generation.
-// dAkk_raw remains in [0,16) KiB until VF has consumed it; the other three
-// outputs use independent ping/pong ranges.  [112,248) KiB is phase-local
-// input/scratch storage and does not overlap any live handoff.
-constexpr uint32_t KDA_FINALIZE_UB_K_NEG = 16 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_Q_POS = 48 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_BK_POS = 80 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 112 * 1024;
+// Stage5: raw [0,16), paired dAqk/dAkk [16,48), then three paired vectors.
+// Input/scratch begins at 144 KiB, disjoint from the live egress regions.
+constexpr uint32_t KDA_FINALIZE_UB_K_NEG = 48 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_Q_POS = 80 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_BK_POS = 112 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 144 * 1024;
 
 // Stage6 writes dq_local_raw into the former zV FP32 ping/pong range. Stage7
 // uses the remaining UB as one phase-wide working set.
@@ -78,18 +78,18 @@ constexpr uint32_t KDA_FINALIZE_UB_STAGE7_EXP2_GK = 128 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q = 160 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 176 * 1024;
 
-// Four 64-KiB owner slots occupy [64,320) KiB of L1.  This range is disjoint
-// from the only Stage4-live operands, Akk [0,32) and Tza [416,448), so each
+// Two 128-KiB owner slots occupy [64,320) KiB of L1. This range is disjoint
+// from the only Stage4-live operands, Akk [0,16) and Tza [416,448), so each
 // Stage5 head may publish immediately after its own dAkk becomes ready.
 // Stage5 publishes all five operands directly from UB to L1. No Stage5
 // operand is mirrored through GM; the owner slot stays live through Stage8.
 constexpr uint32_t KDA_FINALIZE_LOCAL_BASE = 64 * 1024;
-constexpr uint32_t KDA_FINALIZE_LOCAL_BYTES = 64 * 1024;
+constexpr uint32_t KDA_FINALIZE_LOCAL_BYTES = 128 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_DAQK = 0;
-constexpr uint32_t KDA_FINALIZE_LOCAL_DAKK = 8 * 1024;
-constexpr uint32_t KDA_FINALIZE_LOCAL_K_NEG = 16 * 1024;
-constexpr uint32_t KDA_FINALIZE_LOCAL_Q_POS = 32 * 1024;
-constexpr uint32_t KDA_FINALIZE_LOCAL_BK_POS = 48 * 1024;
+constexpr uint32_t KDA_FINALIZE_LOCAL_DAKK = 16 * 1024;
+constexpr uint32_t KDA_FINALIZE_LOCAL_K_NEG = 32 * 1024;
+constexpr uint32_t KDA_FINALIZE_LOCAL_Q_POS = 64 * 1024;
+constexpr uint32_t KDA_FINALIZE_LOCAL_BK_POS = 96 * 1024;
 
 // KernelA-compatible directed 1C2V handshake.  AIV1's hardware flag bank is
 // selected with the fixed +16 sub-block stride.
@@ -102,11 +102,9 @@ constexpr uint64_t KDA_FINALIZE_ZW_READY_BASE = 6;
 constexpr uint64_t KDA_FINALIZE_KE_READY_BASE = 8;
 constexpr uint64_t KDA_FINALIZE_ZB_READY_BASE = 10;
 constexpr uint64_t KDA_FINALIZE_ZB_FREE_BASE = 12;
-// Stage4 executes only after Stage1 KE_READY has been consumed, so its pair
-// can safely carry the later AIV->AIC dAkk credit.  Reuse ZW_READY for the
-// reverse credit: the owner AIV must consume it in Stage2 before reaching
-// Stage5, and the AIC cannot start the next task before Stage5 publishes its
-// final L1 payload.
+// KE_READY is consumed at Stage1, then carries Tza-pair ready together with
+// dAkk UB-free. ZW_READY is consumed at Stage2, then carries Tza raw, and
+// finally dAkk raw only after the AIV has consumed the preceding payload.
 constexpr uint64_t KDA_FINALIZE_DAKK_FREE_BASE = KDA_FINALIZE_KE_READY_BASE;
 constexpr uint64_t KDA_FINALIZE_DAKK_READY_BASE = KDA_FINALIZE_ZW_READY_BASE;
 // Keep the final Stage5 AIV->AIC publication on a dedicated pair.  This
@@ -217,7 +215,7 @@ static_assert(KDA_FINALIZE_UB_STAGE5_WORK < KDA_FINALIZE_UB_BYTES,
 static_assert(KDA_FINALIZE_UB_STAGE7_Q_RSTD + 256 <= KDA_FINALIZE_UB_BYTES,
               "Stage7 working set exceeds A5 UB.");
 static_assert(KDA_FINALIZE_HEADS_PER_WINDOW * KDA_FINALIZE_LOCAL_BYTES <= 256 * 1024,
-              "Stage5 four-head LocalOperand window exceeds 256 KiB.");
+              "Stage5 paired LocalOperand window exceeds 256 KiB.");
 static_assert(KDA_FINALIZE_LOCAL_BASE +
                   KDA_FINALIZE_HEADS_PER_WINDOW * KDA_FINALIZE_LOCAL_BYTES <=
               512 * 1024,

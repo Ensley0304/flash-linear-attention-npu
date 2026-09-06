@@ -124,7 +124,7 @@ public:
             return ge::GRAPH_FAILED;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;
-        tiling_.headWindowNum = (tiling_.NV + 3) / 4;
+        tiling_.headWindowNum = (tiling_.NV + 1) / 2;
         tiling_.workTaskNum = tiling_.headWindowNum * tiling_.chunkTaskNum;
         tiling_.chunkSize = ctx_.chunkSize;
         tiling_.isVariable = variable ? 1U : 0U;

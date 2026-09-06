@@ -53,7 +53,7 @@ def cube_intra_reference(oracle, values, base, cu):
     return {'dq_hv': dq, 'dk_hv': dk, 'db': db, 'dg_hv': dg}
 
 
-def reference(oracle, inputs, dtype, legacy_intra=False):
+def reference(oracle, inputs, dtype, factored_intra=False):
     values = {
         name: None if value is None else value.transpose(1, 2).contiguous()
         for name, value in inputs.items() if name not in ('raw_g', 'a_log', 'dt_bias', 'cu_seqlens')
@@ -66,7 +66,7 @@ def reference(oracle, inputs, dtype, legacy_intra=False):
         values['dh'], values['dv_scan'], values['dq_raw'], 128 ** -.5, 64,
         cu, False, acc_dtype=dtype, preserve_output_dtypes=low,
         emulate_triton_casts=low)
-    if low and not legacy_intra:
+    if low and factored_intra:
         intra = cube_intra_reference(oracle, values, base, cu)
     else:
         intra = oracle.kernel_c_intra_torch(
@@ -81,7 +81,7 @@ def reference(oracle, inputs, dtype, legacy_intra=False):
             outputs[index] = values[name + '_rstd'].to(dtype)[..., None] * (
                 grad - vector * (grad * vector).sum(-1, keepdim=True))
     outputs = [value.bfloat16() if low else value for value in outputs]
-    if 'raw_g' in inputs and not legacy_intra:
+    if 'raw_g' in inputs:
         dg_act = oracle.reverse_chunk_cumsum(intra['dg_hv'], 64, cu)
         gate = oracle.gate_backward_torch(
             inputs['raw_g'].transpose(1, 2), inputs['a_log'], inputs['dt_bias'],
@@ -114,17 +114,17 @@ def main():
         assert torch.count_nonzero(aq.triu(1)) == 0, 'The oracle requires causal dAqk; inputs are not masked by the checker'
     golden = reference(oracle, inputs, torch.float64)
     benchmark = reference(oracle, inputs, torch.float32)
-    legacy_benchmark = reference(oracle, inputs, torch.float32, legacy_intra=True)
+    factored_benchmark = reference(oracle, inputs, torch.float32, factored_intra=True)
     report = {
         'benchmark_kind': 'CPU_FP32_BF16_NOT_GPU', 'level': 'L1',
         'shape': list(shape),
         'cu_seqlens': None if inputs.get('cu_seqlens') is None else inputs['cu_seqlens'].tolist(),
         'oracle_sha256': hashlib.sha256(args.oracle.read_bytes()).hexdigest(),
         'golden': 'FP64; no simulated Cube casts; no output downcast',
-        'benchmark': 'FP32; BF16 dA/k_neg/q_pos/bk_pos Cube operands; BF16 dq/dk/dv/db and FP32 gate outputs',
-        'legacy_benchmark': 'Previous unfactored intra oracle, quantizing dA only; diagnostic, not the implemented Cube dataflow',
+        'benchmark': 'Original FP32/BF16 oracle; unfactored intra quantizes dA only; BF16 dq/dk/dv/db and FP32 gate outputs',
+        'factored_benchmark': 'Historical BF16 factored operand model; diagnostic only, not acceptance',
         'outputs': {},
-        'legacy_outputs': {},
+        'factored_outputs': {},
     }
     names = ('dq', 'dk', 'dv', 'd_beta', 'd_g', 'd_a_log', 'd_dt_bias')[:len(golden)]
     for index, name in enumerate(names):
@@ -140,10 +140,10 @@ def main():
         result['dtype'] = str(expected_dtype)
         report['outputs'][name] = result
         if index < 4:
-            legacy = ct.dual(got, golden[index], legacy_benchmark[index], level='L1', dtype='bfloat16')
+            legacy = ct.dual(got, golden[index], factored_benchmark[index], level='L1', dtype='bfloat16')
             for key in ('metrics_test', 'metrics_bench'):
                 legacy[key] = dataclasses.asdict(legacy[key])
-            report['legacy_outputs'][name] = legacy
+            report['factored_outputs'][name] = legacy
     def serialize(value):
         if isinstance(value, np.ndarray):
             return value.tolist()

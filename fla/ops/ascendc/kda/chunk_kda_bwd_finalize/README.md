@@ -15,7 +15,8 @@ Q/K normalization inputs must either both be present or both be absent.
 
 - Stage0-5 form the base gradients and local operands.
 - Stage6/7 compute the local Q contribution and optional Q normalization.
-- Stage8 uses one left GEMM and a concatenated-reduction right GEMM.
+- Stage8 uses paired-BF16 left and concatenated-reduction right GEMMs.
+  Each retains the high/high and two high/residual products in FP32.
 - Stage9/10 combine the K/beta gradients and optional K normalization.
 - Stage11 reverse-scans each chunk's gate gradient, applies the sigmoid
   chain rule, writes FP32 `dG`, and produces per-chunk parameter partials.
@@ -32,6 +33,15 @@ Q/K normalization inputs must either both be present or both be absent.
   per-stream last-reader credits.
 - Vector FP32-to-BF16 conversions use nearest-even rounding, including exact
   FP32 midpoint inputs. Shared conversion helpers are not modified.
+- dW, kE, Zb, Tza and Stage5 operands retain BF16 high/residual planes.
+  This avoids amplifying Cube/CPU FP32 accumulation differences at BF16
+  midpoints. Two BF16 planes and three products are an approximation, not
+  exact FP32 emulation. The BF16 exponent range is retained.
+- A two-head window gives each AIV one physical FP32 dAkk handoff at
+  UB [0,16) KiB. Residual handoffs hold the following phase's MTE2 credit
+  until overlapping UB readers finish. Tza-ready also releases dAkk UB.
+- kE/Zb are produced in ND and converted to NZ by MTE3 while copying to L1,
+  removing the per-row Vector readback/transpose.
 - Stage4 reuses the FP32 exponential-gradient product for Vector beta/gate
   gradients instead of consuming the rounded BF16 Cube operand `kE`.
 - Cube uses fixed 64-row physical tiles and GM leading dimensions. Tail
@@ -44,6 +54,22 @@ Q/K normalization inputs must either both be present or both be absent.
   do not exceed the DMA per-side padding limit.
 
 ## Validation Scope
+
+The authoritative matrix is `tests/st/aclnnChunkKdaBwdFinalize` at repository
+root: 200 fixed ATK PyAclnn cases, 100 dense and 100 packed, checked against
+the unmodified CPU FP64 and FP32/BF16 oracle. Thresholds remain
+5 / 1.5 / 1.5, including the default small-value checks. The original intra
+reference, not a factored operand simulation, defines CPU acceptance.
+The final layout-optimized build passes all 200 cases and 1400 output
+comparisons, including B1/H96/T8192 and T16384. All seven outputs are bytewise
+deterministic over 20 repeated launches for B1/H96/T8192 and H3 packed
+lengths [64,1]. Performance approval remains separate from precision.
+
+### Historical Checks
+
+The results below describe the earlier BF16 implementation and its diagnostic
+models. They do not replace the original-oracle ATK gate above or establish
+the current build's precision, bitwise identity, or performance.
 
 CPU-only dual L1 checks cover K=V=128, chunk size 64 and these main cases:
 
@@ -96,16 +122,11 @@ python tests/check_cpu_dual.py --oracle /path/to/kernel_ac_torch_ref.py \
 
 The oracle supplies `kernel_c_base_torch`, `kernel_c_intra_torch`,
 `reverse_chunk_cumsum` and `gate_backward_torch`. Golden uses FP64 without
-simulated Cube downcasts. The low-precision CPU benchmark uses FP32
-accumulation and BF16 Cube boundaries. For all outputs the checker
-models the documented factored `k_neg/q_pos/bk_pos` BF16 operands; the
-original intra oracle rounds only dA and evaluates unfactored exponentials.
-Golden, the external oracle, and CT thresholds are unchanged. The previous
-first-four-output benchmark is retained in `legacy_outputs` as a separate
-diagnostic, including its failures; it does not describe the BF16 Cube
-dataflow. For example, H=2/T=7/seed=101 fails its dq/dk small-value counts,
-while dq is bitwise identical to the factored CPU model and dk differs in
-only one element by one BF16 step. Inputs are never changed.
+simulated Cube downcasts. The low-precision CPU benchmark uses the original
+FP32/BF16 base and unfactored intra oracle. It rounds dA only within intra.
+Golden, the external oracle and CT thresholds are unchanged. The historical
+factored `k_neg/q_pos/bk_pos` model is retained in `factored_outputs` as a
+diagnostic, not an acceptance criterion. Inputs are never changed.
 The checker records the oracle hash and raw RMSE ratios, in addition to CT's
 ratios, whose denominators include dtype-dependent lower bounds.
 
@@ -116,7 +137,18 @@ separate from the numerical dual-benchmark tolerance.
 
 ## Performance
 
-On Ascend950, an A/B/B/A comparison at B=1/H=96/T=8192 gives median
+The paired correctness checkpoint measured approximately 7.31 ms versus
+6.00 ms for the earlier BF16 implementation. Stage8 K concatenation and
+fused MTE3 ND-to-NZ conversion reduce the candidate to about 6.51 ms.
+Final A/B/B/A device measurements use two runs per build, three excluded
+warmups and ten measured launches per run. Baseline median is 5.990660 ms
+(5.940920--6.020410); final paired build median is 6.517315 ms
+(6.501640--6.538010), a measured 8.79% regression. Both compute all seven
+outputs. The final paired build passes the original 200-case ATK matrix;
+the baseline did not. The measured regression has been accepted for this
+precision fix; this does not imply upstream CI or merge approval.
+
+Historically, an Ascend950 A/B/B/A comparison at B=1/H=96/T=8192 gave median
 aicore time 5.994295 ms before the tail fix and 5.999095 ms after it:
 0.08% higher time. Each version has twenty measured samples from two runs,
 excluding three warmups per run. The ranges overlap: 5.969770-6.019850 ms
