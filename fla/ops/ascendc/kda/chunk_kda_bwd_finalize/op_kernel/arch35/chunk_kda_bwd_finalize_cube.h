@@ -211,6 +211,10 @@ private:
         if (validM != m || validK != k) {
             AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
                 1, static_cast<uint16_t>(m * k * sizeof(DT) / 32), 0, static_cast<DT>(0)));
+            // Clearing and ND-to-NZ DMA write overlapping L1 addresses.
+            // Finish the clear before loading valid rows, or its late writes
+            // can zero the last column blocks of a short tile.
+            AscendC::PipeBarrier<PIPE_MTE2>();
         }
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
@@ -233,6 +237,8 @@ private:
         if (validK != k || validN != n) {
             AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
                 1, static_cast<uint16_t>(k * n * sizeof(DT) / 32), 0, static_cast<DT>(0)));
+            // Same L1 write-after-write dependency as LoadGmToL1A.
+            AscendC::PipeBarrier<PIPE_MTE2>();
         }
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));

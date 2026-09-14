@@ -34,7 +34,8 @@ constexpr uint32_t KDA_FINALIZE_VECTOR_BF16_BYTES = KDA_FINALIZE_VECTOR_ELEMS * 
 constexpr uint32_t KDA_FINALIZE_VECTOR_FP32_BYTES = KDA_FINALIZE_VECTOR_ELEMS * sizeof(float);
 constexpr uint32_t KDA_FINALIZE_STATE_BF16_BYTES = KDA_FINALIZE_STATE_ELEMS * sizeof(bfloat16_t);
 
-// Per-slot GM layout frozen by the design document.
+// Keep the GM slot layout stable. EXP2_GK and KE are reserved;
+// these operands now stay on chip.
 constexpr uint32_t KDA_FINALIZE_WS_DK_STATE_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_WS_DVB = 32 * 1024;
 constexpr uint32_t KDA_FINALIZE_WS_DKGB_RAW = 64 * 1024;
@@ -53,12 +54,11 @@ constexpr uint32_t KDA_FINALIZE_WS_DB_BASE = KDA_FINALIZE_WS_DB_V;
 constexpr uint32_t KDA_FINALIZE_UB_ZV = 0;
 constexpr uint32_t KDA_FINALIZE_UB_ZW = 32 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_ZB = 64 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_BETA = 80 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_WORK = 81 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BYTES = 248 * 1024;
 
-// Per-AIV Stage4 layout. dAkk_raw occupies one 16-KiB FP32 region while
-// BaseFinalize uses the disjoint [16, 248)-KiB range.
+// Stage3/4 AIV work completes before the Tza residual handoff grants
+// the Stage4 Cube destination dAkk_raw at [0,16) KiB.
 constexpr uint32_t KDA_FINALIZE_UB_DAKK_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE4_WORK = 16 * 1024;
 
@@ -73,10 +73,19 @@ constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 144 * 1024;
 // uses the remaining UB as one phase-wide working set.
 constexpr uint32_t KDA_FINALIZE_UB_DQ_LOCAL_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE7_DQ_BASE = 64 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_STAGE7_DG_BASE = 96 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_STAGE7_EXP2_GK = 128 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q = 160 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 176 * 1024;
+// One head per AIV per window: these inputs survive phase transitions.
+// Q: Stage3/4 -> Stage7 (then overwritten with dq).
+// K and exp2_gk: Stage0 -> Stage9. Beta: Stage2 -> Stage9.
+// Stage11 reuses their dead regions for rawG and gate scratch.
+constexpr uint32_t KDA_FINALIZE_UB_Q = 144 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_K = 160 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_EXP2_GK = 176 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_BETA = 208 * 1024;
+// Delta survives Stage9 -> Stage10, including the intervening gate stage.
+constexpr uint32_t KDA_FINALIZE_UB_DB_DELTA = 209 * 1024;
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 212 * 1024;
+// Stage7 -> Stage9 -> Stage11. Reuses Stage5's dead dAqk input region.
+constexpr uint32_t KDA_FINALIZE_UB_DG = 216 * 1024;
 
 // Two 128-KiB owner slots occupy [64,320) KiB of L1. This range is disjoint
 // from the only Stage4-live operands, Akk [0,16) and Tza [416,448), so each
@@ -212,6 +221,17 @@ static_assert(KDA_FINALIZE_UB_STAGE4_WORK < KDA_FINALIZE_UB_BYTES,
               "Stage4 fixed UB handoff exceeds A5 UB.");
 static_assert(KDA_FINALIZE_UB_STAGE5_WORK < KDA_FINALIZE_UB_BYTES,
               "Stage5 fixed UB handoff exceeds A5 UB.");
+static_assert(KDA_FINALIZE_HEADS_PER_WINDOW == KDA_FINALIZE_AIV_COUNT,
+              "Retained inputs require one head per AIV per window.");
+static_assert(KDA_FINALIZE_UB_Q + KDA_FINALIZE_VECTOR_BF16_BYTES <= KDA_FINALIZE_UB_K &&
+                  KDA_FINALIZE_UB_K + KDA_FINALIZE_VECTOR_BF16_BYTES <= KDA_FINALIZE_UB_EXP2_GK &&
+                  KDA_FINALIZE_UB_EXP2_GK + KDA_FINALIZE_VECTOR_FP32_BYTES <= KDA_FINALIZE_UB_BETA,
+              "Retained head inputs overlap.");
+static_assert(KDA_FINALIZE_UB_DB_DELTA + KDA_FINALIZE_AIV_SLOTS * 256 <=
+                  KDA_FINALIZE_UB_STAGE7_Q_RSTD,
+              "Beta deltas overlap Q normalization scratch.");
+static_assert(KDA_FINALIZE_UB_DG + KDA_FINALIZE_VECTOR_FP32_BYTES <= KDA_FINALIZE_UB_BYTES,
+              "Retained dg exceeds A5 UB.");
 static_assert(KDA_FINALIZE_UB_STAGE7_Q_RSTD + 256 <= KDA_FINALIZE_UB_BYTES,
               "Stage7 working set exceeds A5 UB.");
 static_assert(KDA_FINALIZE_HEADS_PER_WINDOW * KDA_FINALIZE_LOCAL_BYTES <= 256 * 1024,

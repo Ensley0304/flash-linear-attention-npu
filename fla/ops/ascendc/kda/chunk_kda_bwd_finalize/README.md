@@ -14,6 +14,9 @@ Q/K normalization inputs must either both be present or both be absent.
 ## Implementation
 
 - Stage0-5 form the base gradients and local operands.
+- `RunStateAndBase` runs Stage3/4 Vector work consecutively in UB. Each AIV
+  retains one head's q/k/exp2(gk)/beta across stages, and Stage7 retains dg
+  through Stage9/11. See [UB lifetimes and performance](PERFORMANCE.md).
 - Stage6/7 compute the local Q contribution and optional Q normalization.
 - Stage8 uses paired-BF16 left and concatenated-reduction right GEMMs.
   Each retains the high/high and two high/residual products in FP32.
@@ -48,6 +51,9 @@ Q/K normalization inputs must either both be present or both be absent.
   loads copy only the valid region after clearing L1 padding; AIV producers
   initialize the inactive rows of kE, Zb and Stage5 operands. This fixes
   unaligned Fixpipe dimensions, compressed Akk strides and stale padding.
+- A partial L1 tile clear completes behind an MTE2 barrier before valid
+  data is loaded into the same addresses. This prevents intermittent zeroed
+  column blocks in short chunks; aligned chunks execute no extra barrier.
 - Scalar DMA padding stops at a block boundary rather than extending all
   the way to 64 elements. Stage2 explicitly masks inactive beta lanes;
   other scalar consumers use only valid rows. Very short tails therefore
@@ -60,10 +66,14 @@ root: 200 fixed ATK PyAclnn cases, 100 dense and 100 packed, checked against
 the unmodified CPU FP64 and FP32/BF16 oracle. Thresholds remain
 5 / 1.5 / 1.5, including the default small-value checks. The original intra
 reference, not a factored operand simulation, defines CPU acceptance.
-The final layout-optimized build passes all 200 cases and 1400 output
-comparisons, including B1/H96/T8192 and T16384. All seven outputs are bytewise
-deterministic over 20 repeated launches for B1/H96/T8192 and H3 packed
-lengths [64,1]. Performance approval remains separate from precision.
+The final UB-resident wheel passes all 200 cases at seed bases 20260906,
+20270906 and 20280906: 600 case runs and 4200 output comparisons, including
+B1/H96/T8192 and T16384 in every family. It also passes 10000 mixed tail
+launches with all seven outputs bytewise stable. The original two-head
+baseline reproduced intermittent tail errors under this repeated test;
+the L1-clear barrier fixes that dependency without changing arithmetic.
+See [validation and regression details](PERFORMANCE.md). Performance
+approval remains separate from precision.
 
 ### Historical Checks
 
@@ -136,6 +146,15 @@ check all seven saved outputs bitwise. This is an exact rounding check,
 separate from the numerical dual-benchmark tolerance.
 
 ## Performance
+
+The UB-resident implementation reduces median complete Stage0–12 device
+time from 6.523005 to 6.429630 ms at B1/H96/T8192 (1.43%), and from
+13.076435 to 12.823220 ms at T16384 (1.94%). The comparison uses the same
+Ascend950 device and 20 measured launches per version/shape in A/B/B/A
+order. All seven outputs and the existing residual products are retained.
+See [measurement details and tail regression](PERFORMANCE.md).
+
+### Earlier precision checkpoints
 
 The paired correctness checkpoint measured approximately 7.31 ms versus
 6.00 ms for the earlier BF16 implementation. Stage8 K concatenation and

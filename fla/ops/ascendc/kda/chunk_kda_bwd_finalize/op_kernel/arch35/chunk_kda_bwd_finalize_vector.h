@@ -763,6 +763,7 @@ public:
         stage5VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         stage7Mte3ToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
         gateVToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
+        stateVToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage5VToMte2_);
@@ -868,7 +869,7 @@ public:
                 }
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 stage3ActiveMask |= 1U << slot;
-                RunStage3(chunk, head, owner, slot, logicalCore, groupGeneration);
+                RunStateAndBase(chunk, head, owner, slot, logicalCore, groupGeneration);
             }
             // Tail head windows may leave one or both local slots unused.
             // Restore those consumed credits explicitly for the next task.
@@ -884,27 +885,8 @@ public:
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 RunTzaResidual(static_cast<uint32_t>(head - headBegin), slot);
             }
-            generation -= static_cast<uint64_t>(headEnd - headBegin);
-            // BaseFinalize is independent of the current Stage4 Cube result.
-            // Publish one free dAkk slot per local head, then immediately use
-            // the disjoint [16,248)-KiB working region.
-            for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
-                const uint32_t aiv = static_cast<uint32_t>(generation & 1U);
-                if (aiv != subBlockIdx_) {
-                    continue;
-                }
-                const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                // Tza residual-ready also releases its raw UB for dAkk.
-                RunStage4(chunk, head, owner, slot, logicalCore, groupGeneration);
-            }
-
-            // Stage4 and Stage5 reinterpret the same phase-wide UB working
-            // range.  The last Stage4 MTE3 store is asynchronous, so drain
-            // it before Stage5 starts loading q/k/exp2_gk/beta into that
-            // range.  Return the phase credit for the next work task; the
-            // per-slot credits below continue to protect Stage5's UB->L1
-            // ping/pong egress independently.
+            // Drain StateAndBase egress before Stage5 reuses [16,144) KiB.
+            // Retained q/k/exp/beta above that range remain live.
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
 
@@ -988,9 +970,9 @@ private:
         const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head)
     {
         // Stage9's dg is still resident. Its K/exp inputs are dead, while
-        // both K-delta slots [0,128) KiB and beta deltas at 240 KiB stay live.
-        auto dg = UbBytes(176 * 1024).ReinterpretCast<float>();
-        auto raw = UbBytes(128 * 1024).ReinterpretCast<float>();
+        // both K-delta slots [0,128) KiB and beta deltas at 209 KiB stay live.
+        auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
+        auto raw = UbBytes(176 * 1024).ReinterpretCast<float>();
         auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
         auto log = UbBytes(161 * 1024).ReinterpretCast<DTYPE_A_LOG>();
         auto da = UbBytes(162 * 1024).ReinterpretCast<float>();
@@ -1098,17 +1080,17 @@ private:
         // finished the UB->L1 handoff.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         // All heads on this AIV share the Stage0 UB layout.  Do not let this
-        // head's MTE2/V overwrite the preceding head while its four MTE3
+        // head's MTE2/V overwrite the preceding head while its MTE3
         // workspace stores are still reading that layout.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
-        auto kUb = UbBytes(32 * 1024).ReinterpretCast<bfloat16_t>();
+        auto kUb = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
         auto gkUb = UbBytes(48 * 1024).ReinterpretCast<float>();
         auto hUb = UbBytes(80 * 1024).ReinterpretCast<bfloat16_t>();
         auto dhUb = UbBytes(112 * 1024).ReinterpretCast<bfloat16_t>();
-        auto expUb = UbBytes(144 * 1024).ReinterpretCast<float>();
-        auto kENd = UbBytes(176 * 1024).ReinterpretCast<bfloat16_t>();
-        auto gkLast = UbBytes(192 * 1024).ReinterpretCast<float>();
-        auto rH = UbBytes(193 * 1024).ReinterpretCast<float>();
+        auto expUb = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto kENd = UbBytes(144 * 1024).ReinterpretCast<bfloat16_t>();
+        auto gkLast = UbBytes(208 * 1024).ReinterpretCast<float>();
+        auto rH = UbBytes(209 * 1024).ReinterpretCast<float>();
         auto lowNd = UbBytes(224 * 1024).ReinterpretCast<bfloat16_t>();
 
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
@@ -1134,12 +1116,8 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
 
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        auto wsExp = workspace_[ws + KDA_FINALIZE_WS_EXP2_GK].ReinterpretCast<float>();
-        auto wsKe = workspace_[ws + KDA_FINALIZE_WS_KE].ReinterpretCast<bfloat16_t>();
         auto wsLast = workspace_[ws + KDA_FINALIZE_WS_GK_LAST].ReinterpretCast<float>();
         auto wsRh = workspace_[ws + KDA_FINALIZE_WS_RH].ReinterpretCast<float>();
-        AscendC::DataCopy(wsExp, expUb, chunk.validRows * KDA_FINALIZE_DIM);
-        AscendC::DataCopy(wsKe, kENd, chunk.validRows * KDA_FINALIZE_DIM);
         AscendC::DataCopy(wsLast, gkLast, KDA_FINALIZE_DIM);
         AscendC::DataCopy(wsRh, rH, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
@@ -1204,7 +1182,7 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
-    __aicore__ inline void RunStage3(
+    __aicore__ inline void RunStateAndBase(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
     {
@@ -1215,23 +1193,21 @@ private:
         auto dkState = UbBytes(0).ReinterpretCast<float>();
         auto dvb = UbBytes(32 * 1024).ReinterpretCast<float>();
         auto dqRaw = UbBytes(64 * 1024).ReinterpretCast<float>();
-        auto exp2Gk = UbBytes(96 * 1024).ReinterpretCast<float>();
-        auto gk = UbBytes(128 * 1024).ReinterpretCast<float>();
-        auto k = UbBytes(160 * 1024).ReinterpretCast<bfloat16_t>();
-        auto v = UbBytes(176 * 1024).ReinterpretCast<bfloat16_t>();
-        auto dv = UbBytes(192 * 1024).ReinterpretCast<bfloat16_t>();
-        auto beta = UbBytes(208 * 1024).ReinterpretCast<bfloat16_t>();
+        auto exp2Gk = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto gk = UbBytes(96 * 1024).ReinterpretCast<float>();
+        auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
+        auto v = UbBytes(144 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dv = UbBytes(128 * 1024).ReinterpretCast<bfloat16_t>();
+        auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<bfloat16_t>();
         auto gkLast = UbBytes(209 * 1024).ReinterpretCast<float>();
         auto rH = UbBytes(210 * 1024).ReinterpretCast<float>();
         auto gateState = UbBytes(211 * 1024).ReinterpretCast<float>();
         auto dbV = UbBytes(212 * 1024).ReinterpretCast<float>();
 
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const int64_t betaOffset = FinalizeTokenOffset(*tiling_, chunk, head, 1);
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         auto wsDkState = workspace_[ws + KDA_FINALIZE_WS_DK_STATE_RAW].ReinterpretCast<float>();
         auto wsDvb = workspace_[ws + KDA_FINALIZE_WS_DVB].ReinterpretCast<float>();
-        auto wsExp = workspace_[ws + KDA_FINALIZE_WS_EXP2_GK].ReinterpretCast<float>();
         auto wsLast = workspace_[ws + KDA_FINALIZE_WS_GK_LAST].ReinterpretCast<float>();
         auto wsRh = workspace_[ws + KDA_FINALIZE_WS_RH].ReinterpretCast<float>();
 
@@ -1240,19 +1216,10 @@ private:
         AscendC::DataCopy(dkState, wsDkState, vectorElems);
         AscendC::DataCopy(dvb, wsDvb, vectorElems);
         AscendC::DataCopy(dqRaw, dqRaw_[token], vectorElems);
-        AscendC::DataCopy(exp2Gk, wsExp, vectorElems);
         AscendC::DataCopy(gk, gk_[token], vectorElems);
-        AscendC::DataCopy(k, k_[token], vectorElems);
         AscendC::DataCopy(v, v_[token], vectorElems);
         AscendC::DataCopy(gkLast, wsLast, KDA_FINALIZE_DIM);
         AscendC::DataCopy(rH, wsRh, KDA_FINALIZE_DIM);
-        AscendC::DataCopyExtParams betaCopy{
-            1, static_cast<uint32_t>(chunk.validRows * sizeof(bfloat16_t)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<bfloat16_t> betaPad{
-            true, 0,
-            0,
-            static_cast<bfloat16_t>(0)};
-        AscendC::DataCopyPad(beta, beta_[betaOffset], betaCopy, betaPad);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage3VF(
@@ -1270,14 +1237,36 @@ private:
             reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
             tiling_->scale, static_cast<uint16_t>(chunk.validRows));
+        // Stage4 consumes the FP32 Stage3 results directly from UB.
+        // gk and v are dead after StatePre; reuse them for dKgb_raw and q.
+        // V->MTE2 protects the last reads of those inputs before DMA writes.
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
+        auto dKgbRaw = gk;
+        auto q = v;
+        auto wsDkg = workspace_[ws + KDA_FINALIZE_WS_DKGB_RAW].ReinterpretCast<float>();
+        AscendC::DataCopy(dKgbRaw, wsDkg, vectorElems);
+        AscendC::DataCopy(q, q_[token], vectorElems);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        FinalizeStage4VF(
+            reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dKgbRaw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(beta.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gateState.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dbV.GetPhyAddr()),
+            static_cast<uint16_t>(chunk.validRows));
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
 
-        auto wsGate = workspace_[ws + KDA_FINALIZE_WS_GATE_STATE].ReinterpretCast<float>();
         auto wsDbV = workspace_[ws + KDA_FINALIZE_WS_DB_V].ReinterpretCast<float>();
         AscendC::DataCopy(wsDkState, dkState, vectorElems);
         AscendC::DataCopy(wsDvb, dvb, vectorElems);
-        AscendC::DataCopy(wsGate, gateState, KDA_FINALIZE_DIM);
+        AscendC::DataCopy(wsDkg, dKgbRaw, vectorElems);
         AscendC::DataCopyExtParams dbCopy{
             1, static_cast<uint32_t>(chunk.validRows * sizeof(float)), 0, 0, 0};
         AscendC::DataCopyPad(wsDbV, dbV, dbCopy);
@@ -1292,76 +1281,6 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
     }
 
-    __aicore__ inline void RunStage4(
-        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
-        uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
-    {
-        // Stage3 and Stage4 reinterpret one shared UB working range.  Wait for
-        // the preceding phase/head's final MTE3 before issuing new MTE2 loads.
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
-        auto dkState = UbBytes(16 * 1024).ReinterpretCast<float>();
-        auto dqBase = UbBytes(48 * 1024).ReinterpretCast<float>();
-        auto dKgbRaw = UbBytes(80 * 1024).ReinterpretCast<float>();
-        auto exp2Gk = UbBytes(112 * 1024).ReinterpretCast<float>();
-        auto q = UbBytes(160 * 1024).ReinterpretCast<bfloat16_t>();
-        auto k = UbBytes(176 * 1024).ReinterpretCast<bfloat16_t>();
-        auto beta = UbBytes(192 * 1024).ReinterpretCast<bfloat16_t>();
-        auto gateState = UbBytes(193 * 1024).ReinterpretCast<float>();
-        auto dbV = UbBytes(194 * 1024).ReinterpretCast<float>();
-
-        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const int64_t betaOffset = FinalizeTokenOffset(*tiling_, chunk, head, 1);
-        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        auto wsDk = workspace_[ws + KDA_FINALIZE_WS_DK_STATE_RAW].ReinterpretCast<float>();
-        auto wsDq = workspace_[ws + KDA_FINALIZE_WS_DQ_BASE].ReinterpretCast<float>();
-        auto wsDkg = workspace_[ws + KDA_FINALIZE_WS_DKGB_RAW].ReinterpretCast<float>();
-        auto wsExp = workspace_[ws + KDA_FINALIZE_WS_EXP2_GK].ReinterpretCast<float>();
-        auto wsGate = workspace_[ws + KDA_FINALIZE_WS_GATE_STATE].ReinterpretCast<float>();
-        auto wsDb = workspace_[ws + KDA_FINALIZE_WS_DB_V].ReinterpretCast<float>();
-
-        const uint32_t vectorElems =
-            static_cast<uint32_t>(chunk.validRows) * KDA_FINALIZE_DIM;
-        AscendC::DataCopy(dkState, wsDk, vectorElems);
-        AscendC::DataCopy(dqBase, wsDq, vectorElems);
-        AscendC::DataCopy(dKgbRaw, wsDkg, vectorElems);
-        AscendC::DataCopy(exp2Gk, wsExp, vectorElems);
-        AscendC::DataCopy(q, q_[token], vectorElems);
-        AscendC::DataCopy(k, k_[token], vectorElems);
-        AscendC::DataCopy(gateState, wsGate, KDA_FINALIZE_DIM);
-        AscendC::DataCopyExtParams betaCopy{
-            1, static_cast<uint32_t>(chunk.validRows * sizeof(bfloat16_t)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<bfloat16_t> betaPad{
-            true, 0,
-            0,
-            static_cast<bfloat16_t>(0)};
-        AscendC::DataCopyPad(beta, beta_[betaOffset], betaCopy, betaPad);
-        AscendC::DataCopyExtParams dbCopy{
-            1, static_cast<uint32_t>(chunk.validRows * sizeof(float)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<float> dbPad{
-            true, 0,
-            0, 0.0f};
-        AscendC::DataCopyPad(dbV, wsDb, dbCopy, dbPad);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        FinalizeStage4VF(
-            reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dqBase.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dKgbRaw.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(beta.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gateState.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dbV.GetPhyAddr()),
-            static_cast<uint16_t>(chunk.validRows));
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        AscendC::DataCopy(wsDk, dkState, vectorElems);
-        AscendC::DataCopy(wsDkg, dKgbRaw, vectorElems);
-        AscendC::DataCopyPad(wsDb, dbV, dbCopy);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
-    }
-
     __aicore__ inline void RunStage5(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
@@ -1371,9 +1290,8 @@ private:
         // Protect this ping/pong egress from its previous MTE3 reader while
         // allowing the other slot's MTE3 to overlap the current VF.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-        // q/k/exp/beta share one phase-wide input range.  The next head may
-        // start MTE2 as soon as this head's VF has completed its final load;
-        // it need not wait for the disjoint UB->L1 egress.
+        // Retained q/k/exp/beta stay disjoint from Stage5 outputs.
+        // Keep the phase credit protecting reuse in the next head window.
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage5VToMte2_);
 
         auto dAkkRaw = UbBytes(KDA_FINALIZE_UB_DAKK_RAW).ReinterpretCast<float>();
@@ -1384,35 +1302,17 @@ private:
         auto kNegNd = UbBytes(48 * 1024).ReinterpretCast<FinalizeLocalType>();
         auto qPosNd = UbBytes(80 * 1024).ReinterpretCast<FinalizeLocalType>();
         auto bkPosNd = UbBytes(112 * 1024).ReinterpretCast<FinalizeLocalType>();
-        auto q = UbBytes(144 * 1024).ReinterpretCast<bfloat16_t>();
-        auto k = UbBytes(160 * 1024).ReinterpretCast<bfloat16_t>();
-        auto exp2Gk = UbBytes(176 * 1024).ReinterpretCast<float>();
-        auto beta = UbBytes(208 * 1024).ReinterpretCast<bfloat16_t>();
+        auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>();
+        auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
+        auto exp2Gk = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<bfloat16_t>();
         auto dAqkFp32 = UbBytes(216 * 1024).ReinterpretCast<float>();
 
-        const int64_t token =
-            FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const int64_t betaOffset =
-            FinalizeTokenOffset(*tiling_, chunk, head, 1);
-        const uint64_t ws =
-            FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        auto wsExp = workspace_[ws + KDA_FINALIZE_WS_EXP2_GK].ReinterpretCast<float>();
-        const uint32_t vectorElems =
-            static_cast<uint32_t>(chunk.validRows) * KDA_FINALIZE_DIM;
         const int64_t matrixToken =
             FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
         const uint32_t matrixElems =
             static_cast<uint32_t>(chunk.validRows) * KDA_FINALIZE_CHUNK;
-        AscendC::DataCopy(q, q_[token], vectorElems);
-        AscendC::DataCopy(k, k_[token], vectorElems);
-        AscendC::DataCopy(exp2Gk, wsExp, vectorElems);
         AscendC::DataCopy(dAqkFp32, dAqk_[matrixToken], matrixElems);
-        AscendC::DataCopyExtParams betaCopy{
-            1, static_cast<uint32_t>(chunk.validRows * sizeof(bfloat16_t)), 0, 0, 0};
-        AscendC::DataCopyPadExtParams<bfloat16_t> betaPad{
-            true, 0, 0,
-            static_cast<bfloat16_t>(0)};
-        AscendC::DataCopyPad(beta, beta_[betaOffset], betaCopy, betaPad);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage5VF(
@@ -1481,9 +1381,9 @@ private:
             KDA_FINALIZE_UB_DQ_LOCAL_RAW +
             slot * KDA_FINALIZE_VECTOR_FP32_BYTES).ReinterpretCast<float>();
         auto dqBase = UbBytes(KDA_FINALIZE_UB_STAGE7_DQ_BASE).ReinterpretCast<float>();
-        auto dgBase = UbBytes(KDA_FINALIZE_UB_STAGE7_DG_BASE).ReinterpretCast<float>();
-        auto exp2Gk = UbBytes(KDA_FINALIZE_UB_STAGE7_EXP2_GK).ReinterpretCast<float>();
-        auto q = UbBytes(KDA_FINALIZE_UB_STAGE7_Q).ReinterpretCast<bfloat16_t>();
+        auto dgBase = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
+        auto exp2Gk = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>();
         auto qRstd = UbBytes(KDA_FINALIZE_UB_STAGE7_Q_RSTD).ReinterpretCast<float>();
 
         const int64_t token =
@@ -1492,13 +1392,10 @@ private:
             FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         auto wsDq = workspace_[ws + KDA_FINALIZE_WS_DQ_BASE].ReinterpretCast<float>();
         auto wsDg = workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>();
-        auto wsExp = workspace_[ws + KDA_FINALIZE_WS_EXP2_GK].ReinterpretCast<float>();
         const uint32_t vectorElems =
             static_cast<uint32_t>(chunk.validRows) * KDA_FINALIZE_DIM;
         AscendC::DataCopy(dqBase, wsDq, vectorElems);
         AscendC::DataCopy(dgBase, wsDg, vectorElems);
-        AscendC::DataCopy(exp2Gk, wsExp, vectorElems);
-        AscendC::DataCopy(q, q_[token], vectorElems);
         if (tiling_->hasQkL2Norm != 0U) {
             AscendC::DataCopyExtParams scalarCopy{
                 1, static_cast<uint32_t>(chunk.validRows * sizeof(float)), 0, 0, 0};
@@ -1522,7 +1419,6 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::DataCopy(dq_[token], q, vectorElems);
-        AscendC::DataCopy(wsDg, dgBase, vectorElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
     }
@@ -1537,23 +1433,11 @@ private:
         auto left = UbBytes(slot * 32 * 1024).ReinterpretCast<float>();
         auto right = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<float>();
         // Separate scalar scratch survives until all right raw slots die.
-        auto db = UbBytes(240 * 1024 + slot * 256).ReinterpretCast<float>();
-        auto k = UbBytes(128 * 1024).ReinterpretCast<bfloat16_t>();
-        auto e = UbBytes(144 * 1024).ReinterpretCast<float>();
-        auto dg = UbBytes(176 * 1024).ReinterpretCast<float>();
-        auto beta = UbBytes(208 * 1024).ReinterpretCast<bfloat16_t>();
-        const uint32_t elems = chunk.validRows * KDA_FINALIZE_DIM;
-        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        auto wsDg = workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>();
-        AscendC::DataCopy(k, k_[token], elems);
-        AscendC::DataCopy(e, workspace_[ws + KDA_FINALIZE_WS_EXP2_GK].ReinterpretCast<float>(), elems);
-        AscendC::DataCopy(dg, wsDg, elems);
-        AscendC::DataCopyPad(beta, beta_[token / KDA_FINALIZE_DIM],
-            AscendC::DataCopyExtParams{1, static_cast<uint32_t>(chunk.validRows * sizeof(bfloat16_t)), 0, 0, 0},
-            AscendC::DataCopyPadExtParams<bfloat16_t>{false, 0, 0, static_cast<bfloat16_t>(0)});
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        auto db = UbBytes(KDA_FINALIZE_UB_DB_DELTA + slot * 256).ReinterpretCast<float>();
+        auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
+        auto e = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
+        auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<bfloat16_t>();
         FinalizeStage9VF(
             reinterpret_cast<__ubuf__ float *>(left.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(right.GetPhyAddr()),
@@ -1572,7 +1456,7 @@ private:
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
         auto delta = UbBytes(slot * 32 * 1024).ReinterpretCast<float>();
-        auto dbDelta = UbBytes(240 * 1024 + slot * 256).ReinterpretCast<float>();
+        auto dbDelta = UbBytes(KDA_FINALIZE_UB_DB_DELTA + slot * 256).ReinterpretCast<float>();
         auto base = UbBytes(64 * 1024).ReinterpretCast<float>();
         auto k = UbBytes(96 * 1024).ReinterpretCast<bfloat16_t>();
         auto db = UbBytes(112 * 1024).ReinterpretCast<float>();
@@ -1642,6 +1526,7 @@ private:
     AscendC::TEventID stage5VToMte2_;
     AscendC::TEventID stage7Mte3ToMte2_;
     AscendC::TEventID gateVToMte2_;
+    AscendC::TEventID stateVToMte2_;
     uint32_t zBPublishCount_[KDA_FINALIZE_AIV_SLOTS];
     uint32_t subBlockNum_ = KDA_FINALIZE_AIV_COUNT;
     uint32_t subBlockIdx_ = 0;
