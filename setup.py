@@ -247,7 +247,8 @@ def _check_build_environment():
         if not include_torchnpugen:
             print("[fla-npu build][WARN] Skipping torchnpugen import checks")
         for probe in probe_legacy_build_capabilities(
-            include_torchnpugen=include_torchnpugen
+            include_torchnpugen=include_torchnpugen,
+            pytorch_version=getattr(torch, "__version__", None),
         ):
             if probe.available:
                 print(

@@ -437,7 +437,8 @@ def main() -> int:
         if args.skip_torchnpugen:
             _warn("skipping torchnpugen import checks")
         for probe in probe_legacy_build_capabilities(
-            include_torchnpugen=not args.skip_torchnpugen
+            include_torchnpugen=not args.skip_torchnpugen,
+            pytorch_version=getattr(torch, "__version__", None),
         ):
             if probe.available:
                 _ok(f"{probe.requirement}: {probe.detail}")

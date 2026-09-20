@@ -36,6 +36,28 @@ def _module(path: str, **attributes):
 
 
 class LegacyBuildCapabilityTest(unittest.TestCase):
+    def test_codegen_uses_build_torch_version_and_restores_environment(self) -> None:
+        import os
+
+        for previous in (None, "old-version"):
+            with self.subTest(previous=previous), mock.patch.dict(os.environ, {}, clear=True):
+                if previous is not None:
+                    os.environ["PYTORCH_VERSION"] = previous
+
+                def fake_import(name):
+                    if name == capabilities.CPP_EXTENSION_MODULE:
+                        return _module("/fake/cpp_extension.py", BuildExtension=object(), CppExtension=object())
+                    self.assertEqual(os.environ["PYTORCH_VERSION"], "2.7.1")
+                    if name == capabilities.TORCHNPUGEN_MODULES[-1]:
+                        raise ImportError("broken child dependency")
+                    return _module("/fake/codegen.py")
+
+                with mock.patch.object(capabilities.importlib, "import_module", side_effect=fake_import):
+                    probes = capabilities.probe_legacy_build_capabilities(pytorch_version="2.7.1+cpu")
+                self.assertEqual(os.environ.get("PYTORCH_VERSION"), previous)
+                self.assertFalse(probes[-1].available)
+                self.assertIn("broken child dependency", probes[-1].detail)
+
     def test_probes_real_modules_and_cpp_extension_symbols(self) -> None:
         cpp_extension = _module(
             "/fake/torch/utils/cpp_extension.py",
@@ -184,7 +206,7 @@ class CapabilityIntegrationTest(unittest.TestCase):
                 stack.enter_context(contextlib.redirect_stdout(output))
                 self.assertEqual(preflight.main(), int(legacy))
                 if legacy:
-                    probe.assert_called_once_with(include_torchnpugen=True)
+                    probe.assert_called_once_with(include_torchnpugen=True, pytorch_version="2.7.1")
                     self.assertIn("[OK] fake capability: imported", output.getvalue())
                     self.assertIn("GDN aclnn_extension stream fix", output.getvalue())
                 else:

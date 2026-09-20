@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -51,7 +52,7 @@ def _import_error(exc: Exception) -> str:
 
 
 def probe_legacy_build_capabilities(
-    *, include_torchnpugen: bool = True
+    *, include_torchnpugen: bool = True, pytorch_version: Optional[str] = None
 ) -> Tuple[CapabilityProbe, ...]:
     """Import the modules and symbols used by the legacy extension build.
 
@@ -94,28 +95,47 @@ def probe_legacy_build_capabilities(
                     )
                 )
 
-    if include_torchnpugen:
-        for module_name in TORCHNPUGEN_MODULES:
-            try:
-                module = importlib.import_module(module_name)
-            except Exception as exc:
-                probes.append(
-                    CapabilityProbe(
-                        requirement=module_name,
-                        available=False,
-                        detail=_import_error(exc),
-                    )
-                )
+    previous_version = os.environ.get("PYTORCH_VERSION")
+    if include_torchnpugen and pytorch_version is not None:
+        # gen.sh exports the installed torch version before invoking codegen.
+        # struct_codegen reads it at import time, even without running main().
+        os.environ["PYTORCH_VERSION"] = pytorch_version.split("+", 1)[0]
+    try:
+        if include_torchnpugen:
+            probes.extend(_probe_torchnpugen_modules())
+    finally:
+        if include_torchnpugen and pytorch_version is not None:
+            if previous_version is None:
+                os.environ.pop("PYTORCH_VERSION", None)
             else:
-                probes.append(
-                    CapabilityProbe(
-                        requirement=module_name,
-                        available=True,
-                        detail=_module_origin(module),
-                    )
-                )
+                os.environ["PYTORCH_VERSION"] = previous_version
 
     return tuple(probes)
+
+
+def _probe_torchnpugen_modules():
+    probes = []
+    for module_name in TORCHNPUGEN_MODULES:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            probes.append(
+                CapabilityProbe(
+                    requirement=module_name,
+                    available=False,
+                    detail=_import_error(exc),
+                )
+            )
+        else:
+            probes.append(
+                CapabilityProbe(
+                    requirement=module_name,
+                    available=True,
+                    detail=_module_origin(module),
+                )
+            )
+
+    return probes
 
 
 def _version_obj(value: str) -> Optional[Version]:
