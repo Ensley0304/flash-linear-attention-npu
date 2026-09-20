@@ -6,6 +6,8 @@
 
 #include "aclnn_chunk_kda_fwd.h"
 #include "chunk_kda_fwd.h"
+#include "aclnn_chunk_kda_fwd_v2.h"
+#include "chunk_kda_fwd_three_stage.h"
 
 #include <algorithm>
 #include <cstring>
@@ -30,8 +32,13 @@ extern "C" {
 #endif
 
 namespace {
-constexpr int64_t MAX_KDA_K_DIM = 256;
+// K/V 只交付两档且必须同档：K=V=64 或 K=V=128；混合档与其它取值都不支持。
+constexpr int64_t KDA_FWD_KV_DIM_SMALL = 64;
+constexpr int64_t KDA_FWD_KV_DIM_LARGE = 128;
 constexpr int64_t MAX_KDA_HEAD_NUM = 128;
+constexpr int64_t KDA_STAGE_FULL = -1;
+constexpr int64_t KDA_STAGE_GATE_PREPARE = 0;
+constexpr int64_t KDA_STAGE_COUNT = 4;
 
 constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
 
@@ -60,6 +67,13 @@ struct ChunkKdaFwdParams {
     double lowerBound = -5.0;
     bool useGateInKernel = false;
     bool stateVFirst = false;
+    // 归一化 / 指数开关：v1 入口固定使用与历史实现一致的默认值，
+    // 只有 aclnnChunkKdaFwdV2 才会按调用方传参设置。
+    double epsilon = 1.0e-6;
+    bool useQkL2normInKernel = false;
+    bool useBetaSigmoidInKernel = false;
+    bool allowNegEigval = false;
+    bool useExp2 = true;
     const aclTensor *attnOut = nullptr;
     const aclTensor *finalStateOut = nullptr;
     const aclTensor *gkOut = nullptr;
@@ -378,12 +392,16 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
     }
     const aclTensor *matrixOutputs[] = {params.aqkOut, params.akkOut};
     for (const aclTensor *output : matrixOutputs) {
+        if (output == nullptr) {
+            // Akk 为 OPTIONAL：省略时不导出，V2 组合入口退到 Prepare 的 none 档。
+            continue;
+        }
         const bool valid = info.isRank3
                                ? HasShape(output, {info.hvNum, info.seqlen, params.chunkSize})
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, params.chunkSize});
         CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout.");
+                   "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout when provided.");
     }
     const aclTensor *kOutputs[] = {params.wOut, params.qgOut, params.kgOut};
     for (const aclTensor *output : kOutputs) {
@@ -442,8 +460,10 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                    params.g != nullptr && params.beta != nullptr,
                ACLNN_ERR_PARAM_NULLPTR, "q, k, v, g and beta must not be nullptr.");
     CHECK_COND(params.attnOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "attnOut must not be nullptr.");
-    CHECK_COND(params.aqkOut != nullptr && params.akkOut != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "aqkOut and akkOut must not be nullptr.");
+    // aqkOut 对应 op def 的 REQUIRED 输出；akkOut 对应 OPTIONAL，省略时算子内部
+    // 自建不导出的占位张量，V2 组合入口随之使用 Prepare 的 none 档。
+    CHECK_COND(params.aqkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+               "aqkOut must not be nullptr.");
     CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
                "chunkSize must be 64 or 128.");
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -453,10 +473,15 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
     CHECK_COND(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM,
                ACLNN_ERR_PARAM_INVALID, "H and HV must be less than or equal to 128.");
-    CHECK_COND(info.kDim >= 16 && info.kDim <= MAX_KDA_K_DIM && info.kDim % 16 == 0 &&
-                   info.vDim >= 16 && info.vDim <= 256 && info.vDim % 16 == 0,
-               ACLNN_ERR_PARAM_INVALID,
-               "K/V must be multiples of 16, K must be <=256, and V must be <=256.");
+    // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
+    // 其它取值；报错打印实际 K/V，便于调用方直接定位 shape。
+    const bool kvDimSupported =
+        (info.kDim == KDA_FWD_KV_DIM_SMALL && info.vDim == KDA_FWD_KV_DIM_SMALL) ||
+        (info.kDim == KDA_FWD_KV_DIM_LARGE && info.vDim == KDA_FWD_KV_DIM_LARGE);
+    CHECK_COND(kvDimSupported, ACLNN_ERR_PARAM_INVALID,
+               "K/V must both be 64 or both be 128; mixed K/V and other dims are not "
+               "supported, but got Kdim=%ld, Vdim=%ld.",
+               info.kDim, info.vDim);
     CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
@@ -471,6 +496,13 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
                               params.stateVFirst) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
+    // 归一化 / gate 开关约束：epsilon 只在 in-kernel L2 norm 时参与计算，
+    // allowNegEigval 依赖 in-kernel beta sigmoid。
+    const float epsilonFp32 = static_cast<float>(params.epsilon);
+    CHECK_COND(std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F, ACLNN_ERR_PARAM_INVALID,
+               "epsilon must be a positive finite number, but got %f.", params.epsilon);
+    CHECK_COND(!params.allowNegEigval || params.useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
+               "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
     if (params.useGateInKernel) {
         CHECK_COND(params.aLogOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                    "aLogOptional is required when useGateInKernel is true.");
@@ -513,6 +545,103 @@ const aclTensor *AsRank4(const aclTensor *tensor, const op::Shape &shape, aclOpE
 {
     return l0op::Reshape(tensor, shape, executor);
 }
+
+bool AllOutputsContiguous(const ChunkKdaFwdParams &params)
+{
+    const aclTensor *outputs[] = {
+        params.attnOut,     params.finalStateOut, params.gkOut, params.aqkOut,
+        params.akkOut,      params.wOut,          params.uOut,  params.qgOut,
+        params.kgOut,       params.vNewOut,       params.hOut};
+    for (const aclTensor *output : outputs) {
+        if (output != nullptr && !IsContiguous(output)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// V2 场景判据：三个独立算子的公共约束（BF16、K=V=128、chunk=64、输出可直接写回、
+// cu_seqlens 严格递增）全部满足时才允许走组合实现。
+bool CanUseThreeStagePath(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
+{
+    if (params.q->GetDataType() != DataType::DT_BF16) {
+        return false;
+    }
+    if (info.kDim != 128 || info.vDim != 128) {
+        return false;
+    }
+    if (params.chunkSize != 64) {
+        return false;
+    }
+    // 本算子的 L2 允许 cuSeqlens 非递减（即空序列），三个独立算子要求严格递增。
+    if (params.cuSeqlensOptional != nullptr) {
+        const aclIntArray *cuSeqlens = params.cuSeqlensOptional;
+        for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
+            if ((*cuSeqlens)[idx] >= (*cuSeqlens)[idx + 1]) {
+                return false;
+            }
+        }
+    }
+    // 状态的 shape 与 FP32 约束已由 CheckParams 校验；三算子链沿用同一契约。
+    return AllOutputsContiguous(params);
+}
+
+l0op::KdaFwdThreeStageArgs MakeThreeStageArgs(const ChunkKdaFwdParams &params,
+                                              const KdaShapeInfo &info)
+{
+    l0op::KdaFwdThreeStageArgs args;
+    args.q = params.q;
+    args.k = params.k;
+    args.v = params.v;
+    args.g = params.g;
+    args.beta = params.beta;
+    args.aLog = params.aLogOptional;
+    args.dtBias = params.dtBiasOptional;
+    args.initialState = params.initialStateOptional;
+    args.cuSeqlens = params.cuSeqlensOptional;
+    args.chunkIndices = params.chunkIndicesOptional;
+    args.layout = params.layout;
+    // 公开 attnOut 固定 sequence-major：rank-4 为 BSND，rank-3 为 TND。
+    args.attnLayout = info.isRank3 ? "TND" : "BSND";
+    args.scale = params.scale;
+    args.epsilon = params.epsilon;
+    args.lowerBound = params.lowerBound;
+    args.chunkSize = params.chunkSize;
+    args.safeGate = params.safeGate;
+    args.useGateInKernel = params.useGateInKernel;
+    args.stateVFirst = params.stateVFirst;
+    args.useQkL2normInKernel = params.useQkL2normInKernel;
+    args.useBetaSigmoidInKernel = params.useBetaSigmoidInKernel;
+    args.allowNegEigval = params.allowNegEigval;
+    args.useExp2 = params.useExp2;
+    args.batch = info.batch;
+    args.qkHeads = info.hNum;
+    args.valueHeads = info.hvNum;
+    args.seqLen = info.seqlen;
+    args.kDim = info.kDim;
+    args.vDim = info.vDim;
+    args.seqNum = info.seqNum;
+    args.totalChunks = info.totalChunks;
+    args.packed = info.isRank3;
+    args.attnOut = params.attnOut;
+    args.finalStateOut = params.finalStateOut;
+    args.gkOut = params.gkOut;
+    args.aqkOut = params.aqkOut;
+    args.akkOut = params.akkOut;
+    args.wOut = params.wOut;
+    args.uOut = params.uOut;
+    args.qgOut = params.qgOut;
+    args.kgOut = params.kgOut;
+    args.vNewOut = params.vNewOut;
+    args.hOut = params.hOut;
+    return args;
+}
+
+bool IsAscend950()
+{
+    const char *socName = aclrtGetSocName();
+    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
+}
 } // namespace
 
 aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
@@ -550,8 +679,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     ChunkKdaFwdParams params{
         q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
         cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
-        safeGate, lowerBound, useGateInKernel, stateVFirst, attnOut, finalStateOut, gkOut,
-        aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
+        safeGate, lowerBound, useGateInKernel, stateVFirst, 1.0e-6, false, false, false, true,
+        attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
     L2_DFX_PHASE_1(
         aclnnChunkKdaFwd,
         DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
@@ -613,13 +742,21 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const op::Shape stateShape4 =
         MakeShape({info.seqNum, info.hvNum, info.kDim, info.vDim});
     const op::Shape placeholderShape = MakeShape({1});
+    const bool useDenseA5FastPath =
+        params.cuSeqlensOptional == nullptr && params.q->GetDataType() == DataType::DT_BF16 &&
+        params.chunkSize == 64 && info.kDim == 128 && info.vDim == 128 &&
+        info.seqlen % params.chunkSize == 0;
+    const bool splitStages =
+        IsAscend950() && info.totalChunks > 1 && !useDenseA5FastPath;
 
     const aclTensor *gkCompute = params.gkOut;
     if (gkCompute != nullptr && info.isRank3) {
         gkCompute = AsRank4(gkCompute, gkShape4, executorPtr);
     }
     if (gkCompute == nullptr) {
-        gkCompute = AllocTensor(executorPtr, placeholderShape, DataType::DT_FLOAT);
+        gkCompute = AllocTensor(
+            executorPtr, splitStages ? gkShape4 : placeholderShape,
+            DataType::DT_FLOAT);
     }
     CHECK_RET(gkCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
@@ -657,22 +794,27 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         akkCompute = AllocTensor(executorPtr, matrixShape4, params.q->GetDataType());
     }
     const aclTensor *wCompute = wExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? kShape4 : placeholderShape,
+                      params.q->GetDataType())
         : wExport;
     const aclTensor *uCompute = uExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? vShape4 : placeholderShape,
+                      params.q->GetDataType())
         : uExport;
     const aclTensor *qgCompute = qgExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? kShape4 : placeholderShape,
+                      params.q->GetDataType())
         : qgExport;
     const aclTensor *kgCompute = kgExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? kShape4 : placeholderShape,
+                      params.q->GetDataType())
         : kgExport;
     const aclTensor *vNewCompute = vNewExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? vShape4 : placeholderShape,
+                      params.q->GetDataType())
         : vNewExport;
     const aclTensor *hCompute = AllocTensor(
-        executorPtr, hExport == nullptr ? placeholderShape : hShape5,
+        executorPtr, hExport == nullptr && !splitStages ? placeholderShape : hShape5,
         params.q->GetDataType());
     CHECK_RET(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
                   uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr &&
@@ -686,7 +828,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     const bool outputFinalState = params.finalStateOut != nullptr;
     const aclTensor *finalStateCompute = AllocTensor(
-        executorPtr, outputFinalState ? stateShape4 : placeholderShape,
+        executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
     CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
@@ -697,16 +839,42 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(attnCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    auto result = l0op::KdaChunkForward(
-        qHead, kHead, vHead, gHead, betaHead, params.aLogOptional,
-        params.dtBiasOptional, initialStateCompute, params.cuSeqlensOptional,
-        params.chunkIndicesOptional, params.scale, params.chunkSize, params.safeGate,
-        parsedLayout == KdaFwdLayout::BSND, params.useGateInKernel,
-        params.lowerBound, attnCompute, finalStateCompute, gkCompute,
-        aqkCompute, akkCompute, wCompute, uCompute, qgCompute,
-        kgCompute, vNewCompute, hCompute, executorPtr);
-    for (const aclTensor *tensor : result) {
-        CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    const aclTensor *qgScaledCompute = AllocTensor(
+        executorPtr, splitStages ? kShape4 : placeholderShape,
+        params.q->GetDataType());
+    const aclTensor *uSeedCompute = AllocTensor(
+        executorPtr, splitStages ? vShape4 : placeholderShape,
+        params.q->GetDataType());
+    CHECK_RET(qgScaledCompute != nullptr && uSeedCompute != nullptr,
+              ACLNN_ERR_INNER_NULLPTR);
+
+    auto launchStage = [&](int64_t stage) {
+        return l0op::KdaChunkForward(
+            qHead, kHead, vHead, gHead, betaHead, params.aLogOptional,
+            params.dtBiasOptional, initialStateCompute, params.cuSeqlensOptional,
+            params.chunkIndicesOptional, params.scale, params.chunkSize,
+            params.safeGate, parsedLayout == KdaFwdLayout::BSND,
+            params.useGateInKernel, params.lowerBound, attnCompute,
+            finalStateCompute, gkCompute, aqkCompute, akkCompute, wCompute,
+            uCompute, qgCompute, kgCompute, vNewCompute, hCompute,
+            qgScaledCompute, uSeedCompute, stage, executorPtr);
+    };
+    l0op::KdaCoreOutputs result{};
+    if (splitStages) {
+        // Physical launch boundaries reset the A5 event state between the
+        // prepare, post-WU, recurrent, and output pipelines.
+        for (int64_t stage = KDA_STAGE_GATE_PREPARE; stage < KDA_STAGE_COUNT;
+             ++stage) {
+            result = launchStage(stage);
+            for (const aclTensor *tensor : result) {
+                CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            }
+        }
+    } else {
+        result = launchStage(KDA_STAGE_FULL);
+        for (const aclTensor *tensor : result) {
+            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
     }
 
     if (outputFinalState) {
@@ -739,6 +907,89 @@ aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaFwd launch failed.");
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
+    const aclTensor *q,
+    const aclTensor *k,
+    const aclTensor *v,
+    const aclTensor *g,
+    const aclTensor *beta,
+    const aclTensor *aLogOptional,
+    const aclTensor *dtBiasOptional,
+    const aclTensor *initialStateOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    const char *layout,
+    double scale,
+    int64_t chunkSize,
+    bool safeGate,
+    double lowerBound,
+    bool useGateInKernel,
+    bool stateVFirst,
+    double epsilon,
+    bool useQkL2normInKernel,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
+    bool useExp2,
+    const aclTensor *attnOut,
+    const aclTensor *finalStateOut,
+    const aclTensor *gkOut,
+    const aclTensor *aqkOut,
+    const aclTensor *akkOut,
+    const aclTensor *wOut,
+    const aclTensor *uOut,
+    const aclTensor *qgOut,
+    const aclTensor *kgOut,
+    const aclTensor *vNewOut,
+    const aclTensor *hOut,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor)
+{
+    ChunkKdaFwdParams params{
+        q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
+        cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
+        safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon, useQkL2normInKernel,
+        useBetaSigmoidInKernel, allowNegEigval, useExp2, attnOut, finalStateOut, gkOut,
+        aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
+    L2_DFX_PHASE_1(
+        aclnnChunkKdaFwdV2,
+        DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
+               cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
+               safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon,
+               useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2),
+        DFX_OUT(attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
+                qgOut, kgOut, vNewOut, hOut));
+
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    auto executorPtr = uniqueExecutor.get();
+    KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
+    KdaShapeInfo info;
+    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
+    // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
+    CHECK_COND(CanUseThreeStagePath(params, info), ACLNN_ERR_PARAM_INVALID,
+               "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
+               "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
+    const aclnnStatus threeStageStatus =
+        l0op::KdaFwdThreeStage(MakeThreeStageArgs(params, info), executorPtr);
+    CHECK_RET(threeStageStatus == ACLNN_SUCCESS, threeStageStatus);
+
+    *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+    uniqueExecutor.ReleaseTo(executor);
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnChunkKdaFwdV2(void *workspace, uint64_t workspaceSize,
+                               aclOpExecutor *executor, aclrtStream stream)
+{
+    L2_DFX_PHASE_2(aclnnChunkKdaFwdV2);
+    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+               ACLNN_ERR_INNER, "ChunkKdaFwdV2 launch failed.");
     return ACLNN_SUCCESS;
 }
 

@@ -3,10 +3,12 @@ import importlib
 from importlib import metadata as importlib_metadata
 import importlib.util
 import os
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -26,6 +28,10 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parent
 TORCH_EXTENSION_DIR = REPO_ROOT / "torch_custom" / "fla_npu"
 FLA_NPU_PACKAGE_DIR = TORCH_EXTENSION_DIR / "fla_npu"
+# The Triton core sources live outside torch_custom/fla_npu (in fla/), so the
+# root find_packages(where=TORCH_EXTENSION_DIR) cannot discover them. Mirror the
+# mapping used by torch_custom/fla_npu/setup.py so the root wheel also ships
+# fla_npu.ops.triton.triton_core.
 TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
 TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
@@ -264,12 +270,12 @@ def _check_build_environment():
 
 
 def _find_single_run_package():
-    run_files = sorted((REPO_ROOT / "build_out").glob("fla-npu-*.run"))
+    run_files = sorted((REPO_ROOT / "build_out").glob("fla_npu_linux-*.run"))
     if not run_files:
-        raise RuntimeError("No fla-npu-*.run package found in build_out")
+        raise RuntimeError("No fla_npu_linux-*.run package found in build_out")
     if len(run_files) > 1:
         raise RuntimeError(
-            "Multiple fla-npu-*.run packages found in build_out: "
+            "Multiple fla_npu_linux-*.run packages found in build_out: "
             + ", ".join(str(path) for path in run_files)
         )
     return run_files[0]
@@ -297,6 +303,7 @@ def _install_run_package(run_file, install_path):
 
 def _build_run_package():
     soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
+    ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
     build_out = REPO_ROOT / "build_out"
     if build_out.exists():
         shutil.rmtree(build_out)
@@ -307,6 +314,11 @@ def _build_run_package():
         "--pkg",
         f"--vendor_name={DEFAULT_VENDOR_NAME}",
     ]
+    if ops_filter:
+        cmd.append(f"--ops={ops_filter}")
+    build_args = os.getenv("FLA_NPU_BUILD_ARGS", "").strip()
+    if build_args:
+        cmd.extend(shlex.split(build_args))
     _run(cmd, REPO_ROOT)
 
     return _find_single_run_package()
@@ -359,7 +371,6 @@ def _rewrite_set_env(vendor_dir):
                 "}",
                 '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_VENDOR_DIR}"',
                 '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_OPP_ROOT}"',
-                '_fla_npu_prepend_path LD_LIBRARY_PATH "${_FLA_NPU_VENDOR_DIR}/op_api/lib"',
                 'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
                 'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
                 "unset -f _fla_npu_prepend_path",
@@ -494,6 +505,100 @@ def _build_torch_extension_inplace():
 _EXTERNAL_BUILD_DONE = False
 _RUN_PACKAGE = None
 
+_OFFLINE_BUNDLE_DST = "offline/third_party"
+
+
+def _stage_offline_bundle(build_lib: Path) -> None:
+    """Copy the minimal offline third-party bundle into the wheel (if available).
+
+    The wheel ships a prebuilt OPP, so end users install it without compiling.
+    Developers who need to rebuild from matching sources can also rely on this
+    wheel: the offline bundle placed under ``fla_npu/offline/third_party`` is the
+    minimal source subset each ``cmake/third_party/*.cmake`` probes for offline,
+    so it can be extracted into a source tree's ``third_party/`` to compile fully
+    without network.
+
+    When the repository ``third_party/`` cache is absent (e.g. a build that never
+    fetched it), the bundle is skipped and the wheel still works for normal use.
+
+    The bundle only ships when ``FLA_NPU_BUILD_OFFLINE_BUNDLE=1`` so ordinary
+    builds (e.g. CI) do not need to carry a complete offline third-party cache;
+    a cache that is present but incomplete aborts the build loudly rather than
+    embedding a partial bundle.
+    """
+    if not _env_flag("FLA_NPU_BUILD_OFFLINE_BUNDLE"):
+        print("[fla-npu build] offline bundle disabled "
+              "(set FLA_NPU_BUILD_OFFLINE_BUNDLE=1 to embed)", flush=True)
+        return
+
+    cache = REPO_ROOT / "third_party"
+    if not cache.is_dir() or not any(cache.iterdir()):
+        print("[fla-npu build] third_party cache not found; skipping offline bundle", flush=True)
+        return
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="fla-npu-bundle-"))
+    bundle_root = tmp_dir / "offline_bundle"
+    prepare = REPO_ROOT / "scripts" / "tools" / "prepare_offline_bundle.py"
+    if not prepare.is_file():
+        print("[fla-npu build] prepare_offline_bundle.py missing; skipping bundle", flush=True)
+        return
+
+    _run(
+        [sys.executable, str(prepare), "--cache", str(cache), "--out", str(bundle_root)],
+        REPO_ROOT,
+    )
+
+    third_party_dst = build_lib / "fla_npu" / _OFFLINE_BUNDLE_DST
+    if third_party_dst.exists():
+        shutil.rmtree(third_party_dst)
+    third_party_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(bundle_root, third_party_dst)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    print(f"[fla-npu build] Offline third-party bundle staged at {third_party_dst}", flush=True)
+
+
+def _stable_build_enabled() -> bool:
+    """Whether to build the ABI-free Stable-ABI launcher.
+
+    On by default; ``FLA_NPU_BUILD_STABLE_ABI=0`` produces a pure-ctypes wheel
+    (no compiled launcher at all).
+    """
+
+    value = os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE")
+    return value.upper() not in {"0", "FALSE", "NO", "OFF"}
+
+
+def _build_stable_inplace():
+    """Compile libfla_npu_stable.so into the source package before staging.
+
+    The artifact is a plain shared library (no CPython module init), so it ships
+    as package data: no CPython ABI, and the wheel tag keeps the Python/ABI tags
+    free (``py3-none-<platform>``) even though the payload is platform-specific.
+    """
+
+    if not _stable_build_enabled():
+        return
+    out = FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so"
+    _run(
+        [
+            sys.executable,
+            str(TORCH_EXTENSION_DIR / "csrc" / "build_stable.py"),
+            "--no-debug-probe",
+            "--out",
+            str(out),
+        ],
+        TORCH_EXTENSION_DIR,
+    )
+    if not out.exists():
+        raise RuntimeError(f"libfla_npu_stable.so was not produced under {FLA_NPU_PACKAGE_DIR}")
+
+
+# Nothing in the default build pins the CPython or the libtorch C++ ABI: the
+# launcher ships as an ordinary data file.  Only the legacy torch extension
+# puts a compiled module in the wheel.
+_LEGACY_BUILD_ENABLED = _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION")
+_STABLE_BUILD_ENABLED = _stable_build_enabled()
+
 
 class FlaNpuBuildPy(_build_py):
     def run(self):
@@ -502,6 +607,7 @@ class FlaNpuBuildPy(_build_py):
             _check_build_environment()
             _RUN_PACKAGE = _build_run_package()
             _build_torch_extension_inplace()
+            _build_stable_inplace()
             _EXTERNAL_BUILD_DONE = True
 
         built_package_dir = Path(self.build_lib) / "fla_npu"
@@ -510,26 +616,59 @@ class FlaNpuBuildPy(_build_py):
         super().run()
         run_package = _RUN_PACKAGE or _find_single_run_package()
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")
+        _stage_offline_bundle(Path(self.build_lib))
+        opp_env_src = REPO_ROOT / "torch_custom" / "fla_npu"
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth"):
+            src = opp_env_src / name
+            if src.exists():
+                shutil.copyfile(str(src), str(Path(self.build_lib) / name))
+        stable_so = FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so"
+        if _STABLE_BUILD_ENABLED and stable_so.exists():
+            shutil.copy2(
+                str(stable_so),
+                str(Path(self.build_lib) / "fla_npu" / stable_so.name),
+            )
 
 
 class BinaryDistribution(Distribution):
+    """Never pure: the payload is a host-specific launcher plus its OPP.
+
+    It pins a CPython/libtorch C++ ABI only when the legacy torch extension is
+    built, which is what ``has_ext_modules`` answers.
+    """
+
     def is_pure(self):
-        return True
+        return False
 
     def has_ext_modules(self):
-        return False
+        return _LEGACY_BUILD_ENABLED
 
 
 CMDCLASS = {"build_py": FlaNpuBuildPy}
+
 
 if _bdist_wheel is not None:
     class FlaNpuBdistWheel(_bdist_wheel):
         def finalize_options(self):
             super().finalize_options()
-            self.root_is_pure = True
+            # Never pure: even without the legacy extension the payload holds a
+            # launcher built for this host plus the OPP it loads.  What the
+            # wheel should *not* claim is a CPython version, which get_tag()
+            # below takes care of.
+            self.root_is_pure = False
             build_tag = get_wheel_build_tag(REPO_ROOT)
             if build_tag:
                 self.build_number = build_tag
+
+        def get_tag(self):
+            python, abi, plat = super().get_tag()
+            if _LEGACY_BUILD_ENABLED:
+                return python, abi, plat
+            # py3-none-<platform>: one wheel per host platform and SoC instead
+            # of one per Python minor.  "any" is wrong twice over here -- pip
+            # would happily install an aarch64 payload on x86_64 and the .so
+            # would fail to load.
+            return "py3", "none", plat
 
         def run(self):
             super().run()
@@ -546,7 +685,7 @@ setup(
     long_description_content_type="text/markdown",
     packages=_packages(),
     package_dir=_package_dir(),
-    package_data={"fla_npu": ["opp/**/*"]},
+    package_data={"fla_npu": ["opp/**/*", "offline/third_party/**/*"]},
     include_package_data=True,
     license_files=[
         "LICENSE",

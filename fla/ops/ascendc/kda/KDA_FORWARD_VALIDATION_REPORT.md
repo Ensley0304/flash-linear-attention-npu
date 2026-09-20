@@ -9,7 +9,7 @@
 - BF16、`Kdim=128`、BSND/NTD、dense/varlen、随机非对齐尾块。
 - Prepare AIV/Cube 双槽流水和 PostWu 双 AIV 大块路径的性能收益。
 
-第 2 至 5 节记录的 C128/V256 历史矩阵不使用双标杆。该矩阵的精度标杆使用 CPU FP32 中间计算：汇总指标比较 NPU BF16 输出转 FP32 后的值与 CPU FP32 结果；CT 可视化前再把 CPU 结果 cast 到 BF16 输出边界，与 NPU BF16 输出保持同一公开 dtype。PR228 四阶段拆分后的 fla-org 三方对标见第 6 节。每条历史用例使用：
+第 2 至 5 节记录的 C128/V256 历史矩阵使用单一 CPU FP32 参考：汇总指标比较 NPU BF16 输出转 FP32 后的值与 CPU FP32 结果；CT 可视化前再把 CPU 结果 cast 到 BF16 输出边界，与 NPU BF16 输出保持同一公开 dtype。PR228 四阶段拆分后的 fla-org 对标见第 6 节。每条历史用例使用：
 
 ```text
 ct viz <npu.pt> <cpu_fp32.pt> -wl 1 -sc 100000
@@ -93,7 +93,9 @@ test_chunk_kda_fwd_ntd_direct_matches_reference
 
 ## 5. 当前边界与后续优化
 
-- 当前交付验证范围为 `Kdim=128`、`Vdim=128/256`、`chunk_size=64/128`、FP16/BF16。
+- 本次验证范围为 `Kdim=128`、`Vdim=128/256`、`chunk_size=64/128`、FP16/BF16。
+  注意：公开契约后续收紧为 `K=V=64` 与 `K=V=128` 两档（不支持混合档与其它取值，含
+  `V=256`），上面 `V=256` 的数据是收紧之前的验证记录，参数校验现在会直接拒绝该 shape。
 - varlen partial chunk 已保证正确性，当前使用完整 tile 补中性值并只回写有效区；仍可增加专用 partial 性能模板。
 - Prepare 仍占长序列链路约 `62%~72%`，后续优先降低 score scratch 往返、score block 控制开销和 solve 串行段。
 - BSND 大 head 场景还受到 layout swap 影响；上游已提供 BNSD/NTD 时应直接使用性能 layout。

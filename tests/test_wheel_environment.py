@@ -4,6 +4,7 @@ import csv
 import importlib
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import setuptools
+import zipfile
 
 
 try:
@@ -39,6 +41,13 @@ if not hasattr(importlib, "metadata"):
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_SOURCE = (
+    REPO_ROOT
+    / "torch_custom"
+    / "fla_npu"
+    / "fla_npu"
+    / "__init__.py"
+)
 
 
 def _load_setup() -> tuple[dict[str, object], dict[str, object]]:
@@ -102,6 +111,18 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
         (vendor_dir / "op_api" / "lib" / "libopapi.so").write_bytes(b"unsafe")
 
 
+def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
+    package_dir = site_root / "fla_npu"
+    package_dir.mkdir(parents=True)
+    runtime_path = package_dir / "__init__.py"
+    shutil.copy2(RUNTIME_SOURCE, runtime_path)
+    vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
+    packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
+    packaged_opapi.parent.mkdir(parents=True)
+    packaged_opapi.write_bytes(b"packaged-test")
+    return runtime_path, vendor_dir, packaged_opapi
+
+
 class WheelEnvironmentTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -131,17 +152,126 @@ class WheelEnvironmentTest(unittest.TestCase):
             )
             self.assertTrue((lib_dir / "libcust_opapi.so").is_file())
             self.assertFalse((lib_dir / "libopapi.so").exists())
+            self.assertFalse((opp_root.parent / "_lib").exists())
+
+            custom_build = (REPO_ROOT / "cmake" / "custom_build.cmake").read_text(
+                encoding="utf-8"
+            )
+            symbol_build = (REPO_ROOT / "cmake" / "symbol.cmake").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("NO_SONAME ON", custom_build)
+            self.assertIn("NO_SONAME ON", symbol_build)
 
     def test_package_build_always_starts_from_clean_outputs(self) -> None:
         setup_source = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
         build_source = (REPO_ROOT / "build.sh").read_text(encoding="utf-8")
 
         self.assertNotIn("FLA_NPU_INCREMENTAL_BUILD", setup_source)
-        self.assertNotIn("FLA_NPU_OPS", setup_source)
         self.assertNotIn("FLA_NPU_SKIP_RUN_BUILD", setup_source)
         self.assertNotIn("FLA_NPU_SKIP_RUN_INSTALL", setup_source)
         self.assertNotIn("--incremental", build_source)
         self.assertIn("set_env\n\nclean\nclean_build_out", build_source)
+
+    def test_package_build_supports_single_op_filter(self) -> None:
+        setup_source = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
+        self.assertIn("FLA_NPU_OPS", setup_source)
+        self.assertIn("--ops=", setup_source)
+
+    def test_default_build_is_the_abi_free_one(self) -> None:
+        """The default artifact must not pin the CPython/libtorch C++ ABI.
+
+        The stable launcher is plain package data and the legacy extension is
+        off, so no CPython ABI is involved -- but the payload is still built for
+        one host platform, which is what the wheel has to say about itself.
+        """
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FLA_NPU_BUILD_STABLE_ABI", None)
+            setup_globals, setup_kwargs = _load_setup()
+            # The predicate reads os.environ, so it has to be called while the
+            # environment under test is still in place.
+            self.assertTrue(setup_globals["_stable_build_enabled"]())
+            distribution = setup_kwargs["distclass"]()
+            self.assertFalse(distribution.is_pure())
+            self.assertFalse(distribution.has_ext_modules())
+
+    def test_default_wheel_is_tagged_by_platform_not_by_python(self) -> None:
+        """py3-none-<platform>: one wheel per host, not one per Python minor.
+
+        ``any`` would let pip install an aarch64 launcher on x86_64, and a
+        cp3xx tag would multiply the release matrix for a wheel that carries no
+        CPython extension at all.
+        """
+
+        import sysconfig
+
+        setup_globals, setup_kwargs = _load_setup()
+        command = setup_globals["CMDCLASS"]["bdist_wheel"](
+            setup_kwargs["distclass"]({"name": "flash-linear-attention-npu",
+                                       "version": "0"}))
+        command.finalize_options()
+        python, abi, platform = command.get_tag()
+        self.assertEqual((python, abi), ("py3", "none"))
+        self.assertNotEqual(platform, "any")
+        self.assertEqual(
+            platform,
+            sysconfig.get_platform().replace("-", "_").replace(".", "_"))
+
+    def test_stable_launcher_can_be_turned_off(self) -> None:
+        with mock.patch.dict(os.environ,
+                             {"FLA_NPU_BUILD_STABLE_ABI": "0"}):
+            setup_globals, _ = _load_setup()
+            self.assertFalse(setup_globals["_stable_build_enabled"]())
+
+    def _write_minimal_wheel(self, path: Path, entries: dict) -> None:
+        info = "demo-1.0.dist-info"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{info}/METADATA", (
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"
+                "Requires-Dist: numpy\n"))
+            for name, payload in entries.items():
+                archive.writestr(name, payload)
+            archive.writestr(f"{info}/RECORD",
+                             f"{info}/METADATA,,\n{info}/RECORD,,\n")
+
+    @staticmethod
+    def _wheel_metadata(wheel: Path) -> str:
+        with zipfile.ZipFile(wheel) as archive:
+            name = next(entry for entry in archive.namelist()
+                        if entry.endswith("METADATA"))
+            return archive.read(name).decode("utf-8")
+
+    def test_abi_free_wheel_declares_a_torch_lower_bound(self) -> None:
+        """One wheel for every torch above the floor, not an exact pin.
+
+        The Stable-ABI launcher resolves its aoti_torch_* symbols at load, so
+        what it needs is a minimum version rather than the exact build it was
+        compiled against.
+        """
+
+        build_wheel = runpy.run_path(str(REPO_ROOT / "scripts" / "build_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / "demo-1.0-py3-none-any.whl"
+            self._write_minimal_wheel(
+                wheel, {"fla_npu/libfla_npu_stable.so": b"\x7fELF"})
+            build_wheel["_inject_runtime_pins"](wheel)
+            text = self._wheel_metadata(wheel)
+        self.assertIn("Requires-Dist: torch>=2.7.1", text)
+        self.assertIn("Requires-Dist: torch_npu>=2.7.1", text)
+        self.assertNotIn("Requires-Dist: torch==", text)
+
+    def test_pure_ctypes_wheel_declares_nothing(self) -> None:
+        """No compiled launcher means no torch constraint to add."""
+
+        build_wheel = runpy.run_path(str(REPO_ROOT / "scripts" / "build_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / "demo-1.0-py3-none-any.whl"
+            self._write_minimal_wheel(wheel, {"fla_npu/__init__.py": b""})
+            before = self._wheel_metadata(wheel)
+            build_wheel["_inject_runtime_pins"](wheel)
+            after = self._wheel_metadata(wheel)
+        self.assertEqual(before, after)
 
     def test_generated_set_env_is_idempotent(self) -> None:
         rewrite_set_env = self.setup_globals["_rewrite_set_env"]
@@ -158,7 +288,7 @@ unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
 source {set_env!s}
 source {set_env!s}
 [[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir.parent.parent}:{vendor_dir}" ]]
-[[ "${{LD_LIBRARY_PATH}}" == "{vendor_dir}/op_api/lib" ]]
+[[ -z "${{LD_LIBRARY_PATH-}}" ]]
 [[ "${{FLA_NPU_OPP_PATH}}" == "{vendor_dir.parent.parent}" ]]
 [[ "${{FLA_NPU_OP_API_LIB}}" == "{vendor_dir}/op_api/lib/libcust_opapi.so" ]]
 """
@@ -239,6 +369,7 @@ source {set_env!s}
             self.assertTrue(
                 (vendor_dir / "op_api" / "lib" / "libcust_opapi.so").is_file()
             )
+            self.assertFalse((package_dir / "_lib").exists())
             self.assertFalse(
                 (vendor_dir / "op_api" / "lib" / "libopapi.so").exists()
             )
@@ -264,7 +395,7 @@ unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
 source {set_env!s}
 source {set_env!s}
 [[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir.parent.parent}:{vendor_dir}" ]]
-[[ "${{LD_LIBRARY_PATH}}" == "{vendor_dir}/op_api/lib" ]]
+[[ -z "${{LD_LIBRARY_PATH-}}" ]]
 [[ "${{FLA_NPU_OPP_PATH}}" == "{vendor_dir.parent.parent}" ]]
 [[ "${{FLA_NPU_OP_API_LIB}}" == "{vendor_dir}/op_api/lib/libcust_opapi.so" ]]
 """
@@ -328,54 +459,193 @@ source {set_env!s}
         )
         self.assertIn("finalize_wheel_opp.py", custom_build)
 
-    def test_import_requires_cann_environment(self) -> None:
-        runtime_path = (
-            REPO_ROOT
-            / "torch_custom"
-            / "fla_npu"
-            / "fla_npu"
-            / "__init__.py"
+    def test_legacy_extension_rpath_keeps_standard_vendor_layout(self) -> None:
+        setup_source = (
+            REPO_ROOT / "torch_custom" / "fla_npu" / "setup.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("-Wl,-rpath,$ORIGIN/_lib", setup_source)
+        self.assertIn(
+            "-Wl,-rpath,$ORIGIN/opp/vendors/fla_npu_transformer/op_api/lib",
+            setup_source,
         )
-        with mock.patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "CANN environment is not initialized"):
-                runpy.run_path(str(runtime_path))
 
-    def test_import_loads_runtime_and_removes_stale_libopapi_alias(self) -> None:
-        runtime_path = (
-            REPO_ROOT
-            / "torch_custom"
-            / "fla_npu"
-            / "fla_npu"
-            / "__init__.py"
-        )
+    def test_public_environment_diagnostic_recognizes_packaged_opapi(self) -> None:
+        collector = runpy.run_path(str(REPO_ROOT / "scripts" / "collect_public_env.py"))
+        has_op_api = collector["_has_op_api"]
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            vendor_dir = (
+            packaged_opapi = (
                 Path(temp_dir)
+                / "fla_npu"
                 / "opp"
                 / "vendors"
                 / "fla_npu_transformer"
+                / "op_api"
+                / "lib"
+                / "libcust_opapi.so"
             )
-            _create_minimal_vendor(vendor_dir, include_alias=True)
+            packaged_opapi.parent.mkdir(parents=True)
+            packaged_opapi.write_bytes(b"packaged-test")
+            with mock.patch.dict(
+                os.environ,
+                {"FLA_NPU_OP_API_LIB": str(packaged_opapi)},
+                clear=True,
+            ):
+                self.assertTrue(has_op_api(Path(temp_dir) / "empty-opp"))
+
+    def test_import_requires_cann_environment(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "CANN environment is not initialized"):
+                runpy.run_path(str(RUNTIME_SOURCE))
+
+    def test_import_loads_runtime_and_removes_stale_libopapi_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, vendor_dir, packaged_opapi = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            stale_alias = vendor_dir / "op_api" / "lib" / "libopapi.so"
+            stale_alias.parent.mkdir(parents=True, exist_ok=True)
+            stale_alias.write_bytes(b"unsafe")
+            external_vendor = Path(temp_dir) / "cann" / "vendors" / "other"
+            _create_minimal_vendor(external_vendor)
 
             with mock.patch.dict(
                 os.environ,
                 {
                     "ASCEND_HOME_PATH": "/fake/cann",
-                    "FLA_NPU_OPP_PATH": str(vendor_dir),
+                    "FLA_NPU_OPP_PATH": str(external_vendor),
+                    "ASCEND_CUSTOM_OPP_PATH": str(external_vendor),
+                    "ASCEND_OPP_PATH": str(external_vendor.parent.parent),
                 },
                 clear=True,
             ):
-                with mock.patch("ctypes.CDLL", return_value=mock.sentinel.custom_opapi):
+                def fake_cdll(path, *, mode):
+                    del mode
+                    if str(path) == "libopapi.so":
+                        return mock.sentinel.cann_opapi
+                    return mock.sentinel.custom_opapi
+
+                with mock.patch("ctypes.CDLL", side_effect=fake_cdll) as cdll:
                     with self.assertWarnsRegex(RuntimeWarning, "Removed a stale"):
                         runtime_globals = runpy.run_path(str(runtime_path))
                     first = runtime_globals["load_ascendc_opapi_libraries"]()
                     second = runtime_globals["load_ascendc_opapi_libraries"]()
                     self.assertIs(first, second)
-                    self.assertEqual(first, [mock.sentinel.custom_opapi])
+                    self.assertEqual(
+                        first,
+                        [mock.sentinel.custom_opapi, mock.sentinel.cann_opapi],
+                    )
+
+                    self.assertEqual(len(cdll.call_args_list), 2)
+                    cann_call, custom_call = cdll.call_args_list
+                    cann_args, cann_kwargs = cann_call
+                    custom_args, custom_kwargs = custom_call
+                    self.assertEqual(cann_args, ("libopapi.so",))
+                    self.assertEqual(
+                        custom_args,
+                        (str(packaged_opapi),),
+                    )
+                    expected_mode = (
+                        getattr(os, "RTLD_LOCAL", 0)
+                        | getattr(os, "RTLD_NOW", 0)
+                        | getattr(os, "RTLD_NODELETE", 0)
+                    )
+                    self.assertEqual(cann_kwargs["mode"], expected_mode)
+                    self.assertEqual(custom_kwargs["mode"], expected_mode)
+                    self.assertEqual(
+                        expected_mode & getattr(os, "RTLD_GLOBAL", 0),
+                        0,
+                    )
+                    self.assertEqual(
+                        os.environ["ASCEND_CUSTOM_OPP_PATH"],
+                        os.pathsep.join(
+                            [
+                                str(vendor_dir.parent.parent),
+                                str(vendor_dir),
+                                str(external_vendor),
+                            ]
+                        ),
+                    )
+                    self.assertEqual(
+                        os.environ["ASCEND_OPP_PATH"],
+                        str(external_vendor.parent.parent),
+                    )
+                    self.assertNotIn("LD_LIBRARY_PATH", os.environ)
+                    self.assertEqual(
+                        os.environ["FLA_NPU_OP_API_LIB"],
+                        str(packaged_opapi),
+                    )
             self.assertFalse(
                 (vendor_dir / "op_api" / "lib" / "libopapi.so").exists()
             )
+
+    def test_import_reports_missing_cann_opapi(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, _, _ = _create_runtime_package(Path(temp_dir) / "site-packages")
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                },
+                clear=True,
+            ):
+                with mock.patch("ctypes.CDLL", side_effect=OSError("not found")):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        r"Unable to load the CANN op_api library.*source.*CANN set_env\.sh",
+                    ):
+                        runpy.run_path(str(runtime_path))
+
+    def test_import_accepts_packaged_opapi_in_standard_vendor_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, _, packaged_opapi = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"ASCEND_HOME_PATH": "/fake/cann"},
+                clear=True,
+            ):
+                with mock.patch(
+                    "ctypes.CDLL",
+                    side_effect=(mock.sentinel.cann_opapi, mock.sentinel.custom_opapi),
+                ) as cdll:
+                    runtime_globals = runpy.run_path(str(runtime_path))
+                    self.assertEqual(
+                        runtime_globals["load_ascendc_opapi_libraries"](),
+                        [mock.sentinel.custom_opapi, mock.sentinel.cann_opapi],
+                    )
+                    self.assertEqual(
+                        Path(cdll.call_args_list[1][0][0]).resolve(),
+                        packaged_opapi.resolve(),
+                    )
+
+    def test_import_does_not_fallback_to_external_custom_opp(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, _, packaged_opapi = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            packaged_opapi.unlink()
+            external_vendor = Path(temp_dir) / "cann" / "vendors" / "external"
+            _create_minimal_vendor(external_vendor)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                    "FLA_NPU_OPP_PATH": str(external_vendor),
+                    "ASCEND_CUSTOM_OPP_PATH": str(external_vendor),
+                    "ASCEND_OPP_PATH": str(external_vendor.parent.parent),
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    FileNotFoundError,
+                    r"packaged FLA NPU op_api library",
+                ):
+                    runpy.run_path(str(runtime_path))
 
 if __name__ == "__main__":
     unittest.main()

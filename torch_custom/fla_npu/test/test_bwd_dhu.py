@@ -73,6 +73,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
     scale: Optional[float] = None,
     chunk_size: int = 64,
     golden_mode: str = "fp32",
+    use_exp2: bool = False,
+    state_v_first: bool = False,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
     """GVA 形状 CPU 标杆。golden_mode: fp64 / npu / fp32。"""
     del dht
@@ -174,8 +176,13 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             "global_end_t": global_end_t,
         })
 
+    sequence_count = len(cu_seqlens) - 1 if cu_seqlens is not None else B
     dh = torch.zeros(B, Hv, NT, K, V, device=device, dtype=compute_dtype)
-    dh0 = torch.zeros_like(dh) if h0 is not None else None
+    dh0 = (
+        torch.zeros(sequence_count, Hv, K, V, device=device, dtype=compute_dtype)
+        if h0 is not None
+        else None
+    )
     dv2 = dv.clone() if cu_seqlens is not None else torch.zeros(B, Hv, T, V, device=device, dtype=dtype_)
 
     if cu_seqlens is None:
@@ -200,7 +207,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             if g is not None:
                 bg_last = g[:, :, global_last_idx].to(torch.float32)
                 b_g = g[:, :, gs:ge].to(torch.float32)
-                gate_factor = _gate_exp(bg_last.unsqueeze(-1) - b_g).unsqueeze(-1)
+                gate_exp = _gate_exp2 if use_exp2 else _gate_exp
+                gate_factor = gate_exp(bg_last.unsqueeze(-1) - b_g).unsqueeze(-1)
                 m_t = torch.arange(block_size_t, device=device, dtype=torch.float32) < float(block_size_t)
                 b_dv = b_dv * gate_factor * m_t.view(1, 1, block_size_t, 1)
 
@@ -210,8 +218,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             b_q_t = q_blk.transpose(-1, -2)
             b_w_t = w_blk.transpose(-1, -2)
             if g is not None:
-                bg_last_exp = _gate_exp(bg_last)
-                b_g_exp = _gate_exp(b_g)
+                bg_last_exp = gate_exp(bg_last)
+                b_g_exp = gate_exp(b_g)
                 b_dh_for_update = b_dh * bg_last_exp.unsqueeze(-1).unsqueeze(-1)
                 b_q_gated = b_q_t * b_g_exp.unsqueeze(-2)
             elif gK is not None:
@@ -227,7 +235,7 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             b_dh = _store(b_dh_for_update + term1 - term2)
 
         if dh0 is not None:
-            dh0[:, :, 0, :, :] = b_dh
+            dh0.copy_(b_dh)
     else:
         hq = torch.arange(Hv, device=device, dtype=torch.long) // hv_per_hk
         num_tokens = len(cu_seqlens) - 1
@@ -253,7 +261,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             if g is not None:
                 bg_last = g[:, :, global_last_idx].to(torch.float32)
                 b_g = g[:, :, gs:ge].to(torch.float32)
-                gate_factor = _gate_exp(bg_last.unsqueeze(-1) - b_g).unsqueeze(-1)
+                gate_exp = _gate_exp2 if use_exp2 else _gate_exp
+                gate_factor = gate_exp(bg_last.unsqueeze(-1) - b_g).unsqueeze(-1)
                 m_t = torch.arange(block_size_t, device=device, dtype=torch.float32) < float(block_size_t)
                 b_dv = b_dv * gate_factor * m_t.view(1, 1, block_size_t, 1)
 
@@ -263,8 +272,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             b_q_t = q_blk.transpose(-1, -2)
             b_w_t = w_blk.transpose(-1, -2)
             if g is not None:
-                bg_last_exp = _gate_exp(bg_last)
-                b_g_exp = _gate_exp(b_g)
+                bg_last_exp = gate_exp(bg_last)
+                b_g_exp = gate_exp(b_g)
                 b_dh_for_update = b_dh * bg_last_exp.unsqueeze(-1).unsqueeze(-1)
                 b_q_gated = b_q_t * b_g_exp.unsqueeze(-2)
             elif gK is not None:
@@ -280,8 +289,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             b_dh_buffers[:, :, i_n, :, :] = _store(b_dh_for_update + term1 - term2)
 
         if dh0 is not None:
-            for info in chunk_info:
-                if info["block_idx_in_token"] == 0:
-                    dh0[:, :, info["i_t"], :, :] = b_dh_buffers[:, :, info["i_n"], :, :]
+            dh0.copy_(b_dh_buffers[0].transpose(0, 1))
 
+    if state_v_first:
+        dh0 = dh0.transpose(-1, -2).contiguous() if dh0 is not None else None
     return dh, dh0, dv2

@@ -46,6 +46,7 @@ static constexpr int64_t CHUNK_SIZE_128 = 128;
 static constexpr int64_t CHUNK_INDICES_PAIR = 2;
 static constexpr int64_t VAR_LEN_B = 1;
 static constexpr int64_t HEADS_PER_TASK = 4;
+static constexpr int64_t MAX_TASKS_PER_CORE = 4;
 static constexpr int64_t WORKSPACE_BUFFER_COUNT = 8;
 static constexpr uint64_t VECTOR_SUB_BLOCK_NUM = 2;
 static constexpr uint64_t DTYPE_SIZE_HALF = 2;
@@ -79,6 +80,8 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     ge::DataType gDataType;
     bool hasG;
     bool hasGk;
+    bool useExp2;
+    bool stateVFirst;
     bool hasDh0;
     bool stage0Debug;
     double scale;
@@ -220,7 +223,9 @@ private:
 
     uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize) const
     {
-        uint64_t bytes = 4 * Align32(row * maxDim * qSize) +
+        const uint64_t outputRows = std::max<uint64_t>(row, 16UL);
+        uint64_t bytes = 2 * Align32(row * maxDim * qSize) +
+                         2 * Align32(outputRows * maxDim * qSize) +
                          2 * Align32(row * maxDim * DTYPE_SIZE_FLOAT) +
                          2 * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
         if (ctx_.qDataType == ge::DT_BF16) {
@@ -385,6 +390,12 @@ private:
         tiling_.HRatio = tiling_.HV / tiling_.HK;
         tiling_.hasDh0 = ctx_.hasDh0 ? 1 : 0;
         tiling_.hasGk = ctx_.hasGk ? 1 : 0;
+        if (ctx_.hasGk && !ctx_.useExp2) {
+            OP_LOGE(ctx_.nodeName, "use_exp2 must be true when gk is provided.");
+            return ge::GRAPH_FAILED;
+        }
+        tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;
+        tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
 
         if (tiling_.K != K_SIZE_128) {
             return ge::GRAPH_FAILED;
@@ -398,7 +409,6 @@ private:
             return ge::GRAPH_FAILED;
         }
         tiling_.chunkSize = chunkSize;
-        tiling_.headWindowNum = CeilDiv(tiling_.HV, HEADS_PER_TASK);
         return ge::GRAPH_SUCCESS;
     }
 
@@ -439,8 +449,16 @@ private:
 
     ge::graphStatus WorkspaceTiling()
     {
+        const uint32_t maxBlockDim = ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum;
+        const int64_t totalHeadTaskNum = tiling_.seqNum * tiling_.HV;
+        tiling_.headsPerTask = std::min(
+            HEADS_PER_TASK, CeilDiv(totalHeadTaskNum, static_cast<int64_t>(maxBlockDim)));
+        tiling_.headWindowNum = CeilDiv(tiling_.HV, tiling_.headsPerTask);
         tiling_.taskNum = tiling_.seqNum * tiling_.headWindowNum;
-        blockDim_ = ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum;
+        const int64_t targetTaskPerCore = std::min(
+            MAX_TASKS_PER_CORE, CeilDiv(tiling_.taskNum, static_cast<int64_t>(maxBlockDim)));
+        blockDim_ = std::min(
+            maxBlockDim, static_cast<uint32_t>(CeilDiv(tiling_.taskNum, targetTaskPerCore)));
 
         const uint64_t qSize = DtypeSize(ctx_.qDataType);
         tiling_.dh0ClearCoreNum = 0;
@@ -448,9 +466,8 @@ private:
         tiling_.dh0ClearTailElems = 0;
         if (ctx_.hasDh0) {
             const uint64_t dh0Elems =
-                static_cast<uint64_t>(tiling_.B) * static_cast<uint64_t>(tiling_.HV) *
-                static_cast<uint64_t>(tiling_.totalChunkNum) * static_cast<uint64_t>(tiling_.K) *
-                static_cast<uint64_t>(tiling_.V);
+                static_cast<uint64_t>(tiling_.seqNum) * static_cast<uint64_t>(tiling_.HV) *
+                static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V);
             const uint64_t dh0Bytes = dh0Elems * qSize;
             if (dh0Bytes > 0) {
                 const uint64_t maxVecCoreNum =

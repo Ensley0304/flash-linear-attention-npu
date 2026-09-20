@@ -150,6 +150,47 @@ class LegacyBuildCapabilityTest(unittest.TestCase):
 
 
 class CapabilityIntegrationTest(unittest.TestCase):
+    def test_preflight_modes_keep_stream_policy_separate(self) -> None:
+        import contextlib
+        import io
+        import os
+        import check_npu_env as preflight
+
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.dict(os.environ, {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                }, clear=True))
+                args = ["check_npu_env.py", "--build-only"]
+                if legacy:
+                    args.append("--legacy-extension")
+                stack.enter_context(mock.patch.object(sys, "argv", args))
+                stack.enter_context(mock.patch.object(preflight.shutil, "which", return_value="/fake/tool"))
+                for name in ("_check_cmake_version", "_check_gcc_version",
+                             "_check_make_exists", "_check_patch_exists",
+                             "_check_bisheng_exists", "_check_setuptools_version",
+                             "_check_build_system_deps"):
+                    stack.enter_context(mock.patch.object(preflight, name))
+                stack.enter_context(mock.patch.object(preflight, "_detect_cann_version", return_value="Version=9.1.0"))
+                stack.enter_context(mock.patch.object(preflight, "_distribution_version", return_value="3.2.1"))
+                modules = {
+                    "torch": _module("/fake/torch.py", __version__="2.7.1", npu=mock.Mock()),
+                    "torch_npu": _module("/fake/torch_npu.py", __version__="2.7.1.post5.dev20260618"),
+                    "triton": _module("/fake/triton.py"),
+                }
+                importer = stack.enter_context(mock.patch.object(preflight, "_import_module", side_effect=lambda failures, name: modules[name]))
+                probe = stack.enter_context(mock.patch.object(preflight, "probe_legacy_build_capabilities", return_value=(capabilities.CapabilityProbe("fake capability", True, "imported"),)))
+                output = io.StringIO()
+                stack.enter_context(contextlib.redirect_stdout(output))
+                self.assertEqual(preflight.main(), int(legacy))
+                if legacy:
+                    probe.assert_called_once_with(include_torchnpugen=True)
+                    self.assertIn("[OK] fake capability: imported", output.getvalue())
+                    self.assertIn("GDN aclnn_extension stream fix", output.getvalue())
+                else:
+                    probe.assert_not_called()
+                    importer.assert_not_called()
+
     @unittest.skipIf(setuptools is None, "setuptools is required to load setup.py")
     def test_python_only_setup_check_does_not_probe_legacy_dependencies(self) -> None:
         setup_kwargs = {}
