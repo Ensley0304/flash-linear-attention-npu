@@ -36,7 +36,7 @@ TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
 TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from fla_npu_build_capabilities import (  # noqa: E402
+from check_npu_env import (  # noqa: E402
     probe_legacy_build_capabilities,
     torch_npu_gdn_stream_fix_error,
 )
