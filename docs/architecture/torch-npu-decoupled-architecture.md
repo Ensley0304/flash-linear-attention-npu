@@ -97,9 +97,9 @@ Python 用户代码
 | wheel tag 携带 `cp311`、平台和 C++ ABI 信息 | wheel tag 为 `py3-none-<platform>`：平台照实写，Python 与 ABI 留空 | 同一 host/SoC wheel 可覆盖多个 Python minor 和已验证框架组合 |
 | 每次框架升级重新编译桥接扩展 | 运行时做 capability probe 和测试 | 框架升级不再天然要求重编 OPP wheel |
 
-legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 构建，但它是显式 opt-in，不属于默认解耦交付。legacy 预检通过真实导入构建实际使用的 `torchnpugen` 子模块和 `torch.utils.cpp_extension` 中的 `BuildExtension`、`CppExtension` 判断代码生成与编译能力；默认 Python-only 预检不执行这些 import。
+设置 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 可构建 legacy `torch.ops.npu.*` 扩展。预检通过实际导入检查 `torchnpugen` 和 PyTorch C++ 扩展接口；默认非 legacy 路径不执行这些检查。
 
-legacy 构建能力与 GDN `aclnn_extension` stream 安全性是两项独立约束。模块可导入只能证明代码生成或 C++ extension API 存在，不能证明 `torch_npu` 已包含 stream 修复；后者仍由独立命名的已知安全版本策略检查，直到上游提供可直接探测的 feature marker。预检必须分别报告两项结果，不能用版本号代替模块导入，也不能用模块导入代替 stream 安全检查。
+GDN stream 修复仍单独按版本校验，模块可导入不代表已包含修复。
 
 ### 2.4 依赖在哪个阶段确定
 

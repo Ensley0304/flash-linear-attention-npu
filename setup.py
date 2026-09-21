@@ -36,6 +36,7 @@ TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
 TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from check_build_ops import validate_ops_filter as _validate_ops_filter  # noqa: E402
 from check_npu_env import (  # noqa: E402
     probe_legacy_build_capabilities,
     torch_npu_gdn_stream_fix_error,
@@ -302,9 +303,23 @@ def _install_run_package(run_file, install_path):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _check_ops_filter(ops_filter):
+    """Reject unsupported FLA_NPU_OPS names before build.sh runs (issue #482)."""
+    if not ops_filter:
+        return
+    if not _validate_ops_filter(
+        ops_filter,
+        source="FLA_NPU_OPS",
+        origin="FLA_NPU_OPS environment variable",
+        repo_root=REPO_ROOT,
+    ):
+        raise SystemExit(1)
+
+
 def _build_run_package():
     soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
+    _check_ops_filter(ops_filter)
     build_out = REPO_ROOT / "build_out"
     if build_out.exists():
         shutil.rmtree(build_out)
