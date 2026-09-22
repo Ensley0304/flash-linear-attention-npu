@@ -57,7 +57,14 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_bwd -soc=ascend950 \
 
 - CPU 标杆自检、JSON/生成器一致性检查通过。
 - A5 私人环境 ATK 26.7.8 的混合容差命令在加载标准时失败，尚未进入 DUT 精度比较。
-- 混合容差 200 条：**未完成**；待支持该比较器的 ATK 版本补跑并完成值域校准。
+- 随后使用服务器上可访问的 ATK 26.9.8 wheel 创建独立环境，保持相同 JSON、输入与默认容差：
+  200 条均执行成功，**83 条精度通过、117 条精度失败**，不是正式精度验收通过。
+- saved 通过 69/100，recompute 通过 14/100。失败输出为 dA（83 条）、db（71 条）、
+  dbias（18 条），同一 case 可有多个失败输出；dq/dk/dv/dg 的混合容差检查全部通过。
+- 同环境以原版 fwd JSON/executor 运行第一个 case（id=250），混合容差 1/1 Pass。
+- ATK wheel SHA256：`f1ea03ad9310943d2dceef7428ba10325599a9f6c8fa9e79891ca1cd58c01b09`；
+  被测算子 wheel SHA256：`c3e71043f93bcac53c0c61c9be7d4f8b9345fc834011883ff9f14ab66b624bda`，
+  已核对安装的四个 Finalize 对象与该 wheel 一致。
 - 用户反馈此前双标杆精度、确定性和内存检测完成且无问题；该反馈作为历史记录，
   不改记为本次混合容差通过，也不据此宣称 sanitizer 零 WARNING。
 - 既有精度失败仍待解决；本次没有改 kernel、输入值域或输出 dtype。
