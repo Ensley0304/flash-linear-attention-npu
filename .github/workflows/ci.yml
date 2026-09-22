@@ -10,6 +10,8 @@
 
 name: NPU CI
 
+run-name: 'NPU CI · PR #${{ inputs.pr_number }}'
+
 on:
   workflow_dispatch:
     inputs:
@@ -31,7 +33,7 @@ on:
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   prepare:

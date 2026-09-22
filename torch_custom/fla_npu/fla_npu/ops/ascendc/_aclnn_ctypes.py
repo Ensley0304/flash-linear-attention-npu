@@ -2962,25 +2962,58 @@ def npu_causal_conv1d_bwd(
     activation=0,
     input_layout="BSND",
 ):
+    if not hasattr(x, "shape") or not hasattr(x, "ndim"):
+        raise TypeError(
+            f"x must be a torch.Tensor, got {type(x).__name__}."
+        )
+    if not hasattr(weight, "shape") or not hasattr(weight, "ndim"):
+        raise TypeError(
+            f"weight must be a torch.Tensor, got {type(weight).__name__}."
+        )
+    if weight.ndim != 2:
+        raise ValueError(
+            f"weight must have 2 dimensions, "
+            f"got shape {tuple(weight.shape)}."
+        )
+
     input_layout = str(input_layout)
     width, dim = int(weight.shape[0]), int(weight.shape[1])
-    if input_layout == "BNSD":
-        batch = int(x.shape[0])
-        dx_shape = _shape(x)
-    elif input_layout in {"NTD", "TND"}:
+
+    if input_layout in {"NTD", "TND"}:
         if query_start_loc is None:
-            raise RuntimeError(f"query_start_loc is required for {input_layout} input.")
-        batch = len(query_start_loc) - 1
-        dx_shape = _shape(x)
+            raise ValueError(
+                f"query_start_loc is required for {input_layout} input."
+            )
+        try:
+            batch = len(query_start_loc) - 1
+        except TypeError:
+            raise TypeError(
+                "query_start_loc must be an object with a valid length, "
+                f"got {type(query_start_loc).__name__}."
+            ) from None
+
+        if batch < 0:
+            raise ValueError(
+                "query_start_loc must contain at least one element."
+            )
     else:
+        if x.ndim == 0:
+            raise ValueError(
+                f"x can not be a scalar tensor for "
+                f"{input_layout} input."
+            )
         batch = int(x.shape[0])
-        dx_shape = _shape(x)
-    dx = _empty(dx_shape, x)
+
+    dx = _empty(_shape(x), x)
     dw = _empty((width, dim), weight)
     db = _empty((dim,), weight)
     dh0 = _empty((batch, width, dim), x)
     outputs = (dx, dw, db, dh0)
-    layout_buffer = ctypes.create_string_buffer(input_layout.encode("utf-8"))
+
+    layout_buffer = ctypes.create_string_buffer(
+        input_layout.encode("utf-8")
+    )
+
     return _call_aclnn(
         "aclnnCausalConv1dBwd",
         lambda ctx: [
@@ -3426,8 +3459,8 @@ def npu_chunk_kda_bwd(
 # V2 的三算子组合（ChunkKdaFwdPrepare + ChunkFwdH + ChunkKdaFwdFinalize）在
 # 大工作量下比融合实现快，但 ChunkFwdH 的耗时对 head 数不敏感：当 (chunk, head)
 # 总工作量偏小时整链会慢于单 kernel 的融合实现。
-# 这里只按工作量门控，并与 Stable-ABI 薄层（csrc/src/stable_kda.cpp 的
-# kChunkKdaFwdV2MinWorkItems）保持同一条判据，两条后端才会逐位一致。
+# 这里只按工作量门控，并与 Stable-ABI 适配层（csrc/src/stable_chunk_kda_fwd.cpp
+# 的 kChunkKdaFwdV2MinWorkItems）保持同一条判据，两条后端才会逐位一致。
 # 门控值取自 A2 实测：head 数 16、T=8192（2048 work item）时组合略慢，
 # head 数 32 及以上组合领先 15% 以上。
 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS = 4096
@@ -4576,7 +4609,7 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
         # kills the process inside aclnnSolveTri, with and without cu_seqlens.
         # Crashing has no defined semantics to be compatible with, so this one
         # is refused with a message instead -- see
-        # docs/architecture/stable-abi-macro-design.md.
+        # docs/architecture/适配层设计.md.
         #
         # `ntd` crashes the same way (re-measured: five of six shapes segfault,
         # the sixth is rejected 161001 -- see the inventory's known limits), and
