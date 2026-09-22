@@ -52,6 +52,16 @@ python -m pip install -r requirements.txt
 python scripts/check_npu_env.py            # 无 NPU 的纯构建环境可加 --build-only
 ```
 
+默认 wheel 会编译 stable ABI launcher，需要 PyTorch。设置 `FLA_NPU_BUILD_STABLE_ABI=0` 可构建纯 ctypes wheel；未启用 legacy 扩展时，不强制导入 torch 系依赖。`--build-only` 只检查基础编包依赖，不代表默认编包无需 PyTorch。
+
+显式构建 legacy 扩展时，执行：
+
+```sh
+python scripts/check_npu_env.py --build-only --legacy-extension
+```
+
+预检通过实际导入检查五个 `torchnpugen` 子模块和 `BuildExtension`、`CppExtension`，并单独校验 GDN stream 修复版本。模块可导入不代表已包含修复，例如 `2.7.1.post5.dev20260618` 仍不满足现有 stream 版本策略。
+
 #### 2.2 编译
 
 ```sh

@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.util
 import os
 import re
 import shutil
 import subprocess
 import sys
 from importlib import metadata
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from packaging.version import InvalidVersion, Version
-
 
 MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.6.0"
@@ -30,19 +29,7 @@ MIN_TRITON_ASCEND_CANN9 = "3.2.1"
 MIN_CMAKE = "3.16"
 MIN_GCC = "7.3"
 MIN_SETUPTOOLS = "70.1"
-TORCH_NPU_GDN_FIX_MINIMUMS = {
-    "2.7.1": "2.7.1.post5",
-    "2.8.0": "2.8.0.post5",
-    "2.9.0": "2.9.0.post3",
-    "2.10.0": "2.10.0.post2",
-    "2.11.0": "2.11.0rc3",
-    "2.12.0": "2.12.0rc1",
-}
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = "2.13.0"
-TORCH_NPU_GDN_FIX_RELEASE_URL = (
-    "https://gitcode.com/Ascend/pytorch/releases?"
-    "presetConfig={%22tags%22:229,%22release%22:122}"
-)
+
 
 TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_op_plugin_functions",
@@ -51,6 +38,156 @@ TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_backend_stubs",
     "torchnpugen.struct.gen_struct_opapi",
 )
+
+CPP_EXTENSION_MODULE = "torch.utils.cpp_extension"
+CPP_EXTENSION_SYMBOLS = ("BuildExtension", "CppExtension")
+
+KNOWN_GDN_STREAM_FIX_MINIMUMS = {
+    "2.7.1": "2.7.1.post5",
+    "2.8.0": "2.8.0.post5",
+    "2.9.0": "2.9.0.post3",
+    "2.10.0": "2.10.0.post2",
+    "2.11.0": "2.11.0rc3",
+    "2.12.0": "2.12.0rc1",
+}
+MIN_TORCH_NPU_FUTURE_STREAM_FIX_FAMILY = "2.13.0"
+TORCH_NPU_GDN_STREAM_FIX_RELEASE_URL = (
+    "https://gitcode.com/Ascend/pytorch/releases?"
+    "presetConfig={%22tags%22:229,%22release%22:122}"
+)
+
+
+@dataclass(frozen=True)
+class CapabilityProbe:
+    requirement: str
+    available: bool
+    detail: str
+
+
+def _module_origin(module) -> str:
+    return getattr(module, "__file__", None) or "built-in or namespace package"
+
+
+def _import_error(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def probe_legacy_build_capabilities(
+    *, include_torchnpugen: bool = True, pytorch_version: Optional[str] = None
+) -> Tuple[CapabilityProbe, ...]:
+    """Import the modules and symbols used by the legacy extension build.
+
+    The imports intentionally happen only when this function is called so the
+    default Python-only wheel build remains independent of torch, torch_npu,
+    torchnpugen, and the PyTorch C++ extension ABI.
+    """
+
+    probes = []
+
+    try:
+        cpp_extension = importlib.import_module(CPP_EXTENSION_MODULE)
+    except Exception as exc:
+        detail = f"module import failed: {_import_error(exc)}"
+        probes.extend(
+            CapabilityProbe(
+                requirement=f"{CPP_EXTENSION_MODULE}.{symbol}",
+                available=False,
+                detail=detail,
+            )
+            for symbol in CPP_EXTENSION_SYMBOLS
+        )
+    else:
+        origin = _module_origin(cpp_extension)
+        for symbol in CPP_EXTENSION_SYMBOLS:
+            if hasattr(cpp_extension, symbol):
+                probes.append(
+                    CapabilityProbe(
+                        requirement=f"{CPP_EXTENSION_MODULE}.{symbol}",
+                        available=True,
+                        detail=origin,
+                    )
+                )
+            else:
+                probes.append(
+                    CapabilityProbe(
+                        requirement=f"{CPP_EXTENSION_MODULE}.{symbol}",
+                        available=False,
+                        detail=f"required attribute is missing from {origin}",
+                    )
+                )
+
+    previous_version = os.environ.get("PYTORCH_VERSION")
+    if include_torchnpugen and pytorch_version is not None:
+        # gen.sh exports the installed torch version before invoking codegen.
+        # struct_codegen reads it at import time, even without running main().
+        os.environ["PYTORCH_VERSION"] = pytorch_version.split("+", 1)[0]
+    try:
+        if include_torchnpugen:
+            probes.extend(_probe_torchnpugen_modules())
+    finally:
+        if include_torchnpugen and pytorch_version is not None:
+            if previous_version is None:
+                os.environ.pop("PYTORCH_VERSION", None)
+            else:
+                os.environ["PYTORCH_VERSION"] = previous_version
+
+    return tuple(probes)
+
+
+def _probe_torchnpugen_modules():
+    probes = []
+    for module_name in TORCHNPUGEN_MODULES:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            probes.append(
+                CapabilityProbe(
+                    requirement=module_name,
+                    available=False,
+                    detail=_import_error(exc),
+                )
+            )
+        else:
+            probes.append(
+                CapabilityProbe(
+                    requirement=module_name,
+                    available=True,
+                    detail=_module_origin(module),
+                )
+            )
+
+    return probes
+
+
+def torch_npu_gdn_stream_fix_error(actual: str) -> Optional[str]:
+    """Return the legacy GDN stream-policy failure, independently of imports."""
+
+    actual_version = _version_obj(actual)
+    if actual_version is None:
+        return f"torch_npu has an unsupported version string: {actual}"
+
+    minimum = KNOWN_GDN_STREAM_FIX_MINIMUMS.get(actual_version.base_version)
+    if minimum and actual_version >= Version(minimum):
+        return None
+
+    if actual_version >= Version(MIN_TORCH_NPU_FUTURE_STREAM_FIX_FAMILY):
+        return None
+
+    if minimum is None:
+        return None
+
+    requirements = ", ".join(
+        f"{family}>={minimum}"
+        for family, minimum in KNOWN_GDN_STREAM_FIX_MINIMUMS.items()
+    )
+    return (
+        "torch_npu must come from an Ascend PyTorch release that contains the "
+        "GDN aclnn_extension stream fix. Packages from releases before "
+        "v26.1.0-beta.1, such as v26.0.0-pytorch2.x, are rejected. "
+        f"Expected one of: {requirements}, or "
+        f"torch_npu>={MIN_TORCH_NPU_FUTURE_STREAM_FIX_FAMILY} from "
+        f"{TORCH_NPU_GDN_STREAM_FIX_RELEASE_URL}; got {actual}."
+    )
 
 
 def _ok(message: str) -> None:
@@ -77,18 +214,6 @@ def _import_module(failures: list[str], module_name: str):
     return module
 
 
-def _find_module(failures: list[str], module_name: str) -> None:
-    try:
-        spec = importlib.util.find_spec(module_name)
-    except Exception as exc:
-        _fail(failures, f"{module_name}: {exc}")
-        return
-    if spec is None:
-        _fail(failures, f"{module_name}: not found")
-        return
-    _ok(f"{module_name}: {spec.origin or 'namespace package'}")
-
-
 def _distribution_version(name: str) -> str:
     try:
         return metadata.version(name)
@@ -113,45 +238,6 @@ def _version_obj(value: str) -> Optional[Version]:
         return Version(value.split("+", 1)[0])
     except InvalidVersion:
         return None
-
-
-def _version_key(value: str) -> Optional[Tuple[int, int, int]]:
-    parts = re.findall(r"\d+", value.split("+", 1)[0])
-    if not parts:
-        return None
-    nums = [int(part) for part in parts[:3]]
-    while len(nums) < 3:
-        nums.append(0)
-    return tuple(nums)
-
-
-def _check_torch_npu_gdn_fix(failures: list[str], actual: str) -> None:
-    actual_version = _version_obj(actual)
-    if actual_version is None:
-        _fail(failures, f"torch_npu has unsupported version string: {actual}")
-        return
-
-    minimum = TORCH_NPU_GDN_FIX_MINIMUMS.get(actual_version.base_version)
-    if minimum and actual_version >= Version(minimum):
-        return
-
-    if actual_version >= Version(MIN_TORCH_NPU_FUTURE_FIX_FAMILY):
-        return
-
-    if minimum is None:
-        return
-
-    requirements = ", ".join(
-        f"{family}>={minimum}" for family, minimum in TORCH_NPU_GDN_FIX_MINIMUMS.items()
-    )
-    _fail(
-        failures,
-        "torch_npu must come from an Ascend PyTorch release that contains the "
-        "GDN aclnn_extension stream fix. Packages from releases before "
-        "v26.1.0-beta.1, such as v26.0.0-pytorch2.x, are rejected. "
-        f"Expected one of: {requirements}, or torch_npu>={MIN_TORCH_NPU_FUTURE_FIX_FAMILY} "
-        f"from {TORCH_NPU_GDN_FIX_RELEASE_URL}; got {actual}.",
-    )
 
 
 def _check_triton_ascend_a5_compat(failures: list[str], actual: str) -> None:
@@ -419,7 +505,10 @@ def main() -> int:
     parser.add_argument(
         "--skip-torchnpugen",
         action="store_true",
-        help="Skip torchnpugen checks. Intended only for internal maintenance builds.",
+        help=(
+            "Skip torchnpugen import checks for internal maintenance builds. "
+            "The PyTorch C++ extension capability check still runs."
+        ),
     )
     args = parser.parse_args()
 
@@ -487,13 +576,27 @@ def main() -> int:
     if torch_npu is not None:
         torch_npu_version = getattr(torch_npu, "__version__", "<unknown>")
         _ok(f"torch_npu version: {torch_npu_version}")
-        _check_torch_npu_gdn_fix(failures, torch_npu_version)
+        if args.legacy_extension:
+            stream_fix_error = torch_npu_gdn_stream_fix_error(torch_npu_version)
+            if stream_fix_error:
+                _fail(failures, stream_fix_error)
+            else:
+                _ok(
+                    "torch_npu legacy GDN stream safety: "
+                    f"{torch_npu_version}"
+                )
 
-    if args.legacy_extension and not args.skip_torchnpugen:
-        for module_name in TORCHNPUGEN_MODULES:
-            _find_module(failures, module_name)
-    elif args.skip_torchnpugen:
-        _warn("skipping torchnpugen checks")
+    if args.legacy_extension:
+        if args.skip_torchnpugen:
+            _warn("skipping torchnpugen import checks")
+        for probe in probe_legacy_build_capabilities(
+            include_torchnpugen=not args.skip_torchnpugen,
+            pytorch_version=getattr(torch, "__version__", None),
+        ):
+            if probe.available:
+                _ok(f"{probe.requirement}: {probe.detail}")
+            else:
+                _fail(failures, f"{probe.requirement}: {probe.detail}")
 
     if check_runtime:
         triton = _import_module(failures, "triton")
