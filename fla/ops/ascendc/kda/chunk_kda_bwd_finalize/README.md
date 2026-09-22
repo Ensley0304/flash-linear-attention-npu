@@ -52,24 +52,3 @@ Tiling key 1/2 对应定长/变长，3/4 为对应的归一化反向版本。
 
 构建时设置 `FLA_NPU_SOC=ascend950 FLA_NPU_OPS=chunk_kda_bwd`，
 会包含 V1/V2 及优化链路依赖。
-
-## A5 内存检测
-
-Ascend950 编译配置包含 `-fno-jump-tables`，用于规避 CANN 9.1.0 /
-msSanitizer 26.1.0 动态插桩执行 Finalize 跳转表时复现的 507015。
-该选项不改变 tiling、workspace 或流水线；需要源码行号时另加 `-g` 构建诊断版本。
-
-以下验证基于交付版本 `b19bf2a0`，不是 PR 新 head 的全量验收。
-2026-09-21 的交付矩阵回归中，新旧 release 的 200 条输出逐张量位级一致；
-12 个代表用例的整条 V2 链路设备 kernel 耗时总和变化为 −0.44%～+0.45%。
-这组数字不包含 CPU 调用开销，也不代表所有 shape 的性能保证。
-
-同一交付矩阵的前 50 条内存复测：ATK 50/50 Pass，memcheck 原始 ERROR=0，
-key 1/2/3/4 均有实际执行记录，无 507015 或检测记录丢失。原始日志同时包含
-6204 条共享 GM 写入所有权 WARNING，均位于 Cube 的 Fixpipe→GM 写回位置；
-该结果不是零告警验收。附加单例 racecheck 的两条潜在 L1 RAW 保留用于进一步核查。
-
-检测结果须同时保留 ATK 表格和 sanitizer 原始日志。Cube 与 Vector 原位更新共享
-workspace 时可能产生跨核所有权 WARNING；ATK Pass 不能替代零告警结论。
-核内 racecheck 的潜在 L1 RAW 报告还需结合跨核 ready/return 依赖分析，
-不能仅凭确定性通过就忽略，也不应未经核对就向性能流水线添加屏障。
