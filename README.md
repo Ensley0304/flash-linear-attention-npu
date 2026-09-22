@@ -55,7 +55,7 @@ source $INSTALL_PATH/ascend-toolkit/set_env.sh
 
 #### 【推荐】源码一键编译并生成 wheel
 
-在已完成 CANN、PyTorch、torch-npu、torchnpugen、triton-ascend 环境准备后，推荐直接在仓库根目录生成单 wheel。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`。本仓不会自动安装 `torch`、`torch_npu`、`torchnpugen` 或 `triton-ascend`，因为这些包必须和 CANN、Python、`torch_npu` 可用版本匹配；在新的 conda 环境中请先安装匹配依赖，再执行预检：
+默认 wheel 会编译并打包 stable ABI launcher，需要准备 CANN、PyTorch 和根目录 `requirements.txt` 中的 Python 依赖。设置 `FLA_NPU_BUILD_STABLE_ABI=0` 可构建纯 ctypes wheel；未启用 legacy extension 时，该路径不强制导入 `torch`、`torch_npu`、`torchnpugen` 或 `torch.utils.cpp_extension`。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`。在新的 conda 环境中先执行预检：
 
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
@@ -68,6 +68,16 @@ python scripts/check_npu_env.py
 ```sh
 python scripts/check_npu_env.py --build-only
 ```
+
+`--build-only` 覆盖基础 wheel 构建依赖；默认 stable launcher 仍需导入 PyTorch 来定位链接库，并尝试使用 `torch.utils.cpp_extension` 获取备用头文件路径。这不需要 legacy 的 torchnpugen 能力探测或 GDN stream 版本策略。
+
+显式构建 legacy PyTorch C++ extension 时，还需要准备匹配的 torch-npu、torchnpugen 和 triton-ascend，并执行：
+
+```sh
+python scripts/check_npu_env.py --build-only --legacy-extension
+```
+
+legacy 预检会真实导入构建使用的五个 `torchnpugen` 子模块以及 `BuildExtension`、`CppExtension`，并将构建能力与 GDN `aclnn_extension` stream 版本策略分别报告。模块可导入不代表已包含 stream 修复：例如 `2.7.1.post5.dev20260618` 可以通过能力探测，但仍不满足现有 stream 版本策略，legacy 构建仍会失败。
 
 预检覆盖编译链上的 `cmake`、`gcc`/`g++`、`setuptools` 版本要求，`make` / `patch` / `bisheng` 存在性检查，以及 `wheel` / `packaging` / `psutil`（`--no-build-isolation` 构建时需本机已装）的导入检查。其余组件未纳入预检，缺失时会在 `pip wheel` 阶段才报错。各组件的最低版本要求与详细说明见[开发者指南](docs/开发者指南.md) 场景 2 的工具链依赖表。
 
