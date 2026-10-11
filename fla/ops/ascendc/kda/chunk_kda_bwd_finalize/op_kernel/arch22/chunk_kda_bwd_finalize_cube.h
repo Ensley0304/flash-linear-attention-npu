@@ -30,6 +30,11 @@ public:
         pipe_->InitBuffer(l0BBuf_, 2 * L0_AB_SLOT_BYTES);
         pipe_->InitBuffer(l0CBuf_, 2 * L0_C_SLOT_BYTES);
         for (uint32_t slot = 0; slot < 2; ++slot) {
+            akkFree_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot]);
+            keReady_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
+            keFree_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[slot]);
             inputReady_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
             l1Free_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_[slot]);
@@ -71,6 +76,7 @@ public:
         const int64_t akkOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * CHUNK_SIZE;
         const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
         CopyToL1(l1[L1_AKK].ReinterpretCast<bfloat16_t>(), akk_[akkOffset], CHUNK_SIZE, CHUNK_SIZE, rows, rows);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(inputReady_[owner]);
     }
@@ -158,6 +164,63 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
     }
 
+    __aicore__ inline void LoadKe(uint32_t owner, uint32_t core)
+    {
+        AscendC::GlobalTensor<bfloat16_t> ke;
+        ke.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
+            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + WS_KE));
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+        CopyToL1(l1[L1_KE].ReinterpretCast<bfloat16_t>(), ke, CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, HEAD_DIM);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+    }
+
+    template <bool CAPTURE = false>
+    __aicore__ inline void Stage2(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
+                                  uint32_t core, GM_ADDR capture = nullptr)
+    {
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        auto dw = l1[L1_DW].ReinterpretCast<bfloat16_t>();
+        AscendC::GlobalTensor<float> output, snapshot;
+        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES));
+        if constexpr (CAPTURE) {
+            snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES));
+        }
+        // dKgb_raw = akk^T @ dW; it does not depend on the kE transfer.
+        WaitDw(owner);
+        LoadOperands<true, false>(l1[L1_AKK].ReinterpretCast<bfloat16_t>(), dw, CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, 0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
+        auto dkgb = Multiply(CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, 0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+        LoadOperands<false, true>(dw, l1[L1_KE].ReinterpretCast<bfloat16_t>(), CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, 1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+        auto zw = Multiply(CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, 1);
+        auto vectorFix = AscendC::FixpipeParamsV220(HEAD_DIM, CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, false);
+        vectorFix.quantPre = QuantMode_t::NoQuant;
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[0]);
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[WS_DKGB_RAW / sizeof(float)], dkgb, vectorFix);
+        if constexpr (CAPTURE) {
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot[CAPTURE_DKGB_RAW / sizeof(float)], dkgb,
+                                                                   vectorFix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[0]);
+        auto matrixFix = AscendC::FixpipeParamsV220(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, false);
+        matrixFix.quantPre = QuantMode_t::NoQuant;
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[1]);
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[WS_ZW / sizeof(float)], zw, matrixFix);
+        if constexpr (CAPTURE) {
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot[CAPTURE_ZW / sizeof(float)], zw, matrixFix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
+    }
+
+    __aicore__ inline void ReleaseAkk(uint32_t owner)
+    {
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
+    }
+
     __aicore__ inline void WaitDw(uint32_t owner)
     {
         AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
@@ -167,6 +230,11 @@ public:
     {
         for (uint32_t slot = 0; slot < 2; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(keReady_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(keFree_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(inputReady_[slot]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(l1Free_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
@@ -267,7 +335,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::CO1> l0CBuf_;
     AscendC::GlobalTensor<bfloat16_t> v_, akk_, vNew_, h_, dh_, dvScan_;
     GM_ADDR workspace_ = nullptr;
-    AscendC::TEventID inputReady_[2], l1Free_[2];
+    AscendC::TEventID inputReady_[2], l1Free_[2], akkFree_[2], keReady_[2], keFree_[2];
     AscendC::TEventID operandReady_[2], operandFree_[2], resultReady_[2], resultFree_[2], dwReady_[2];
 };
 

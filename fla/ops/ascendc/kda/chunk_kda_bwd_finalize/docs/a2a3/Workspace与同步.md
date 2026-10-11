@@ -1,6 +1,6 @@
 # A2/A3 Finalize Workspace 与同步
 
-首版使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。以下是落码方案，尚未经过设备编译、精度或性能验证。
+完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前实现和验证限于 Stage 0～2，其余阶段仍为规划。
 
 ## 任务映射
 
@@ -125,7 +125,9 @@ AIC（每个工作项）：
 
 L0 的两个 slot 各使用一组本地事件；free 事件进入循环前初始化，退出时回收。dW/Tza 直传事件按两 head 分开并在消费后复用。事件实际 ID 统一申请，不与队列/库内部事件重叠；所有事件 set/wait 配对。PipeBarrier 不能替代上述跨流水、跨核依赖。
 
-Stage 0/1 已实现的本地事件：AIC 为 L1 ready/free、L0A/B ready/free、L0C ready/free、dW ready 各两份，共 14 个 event（每种 HardEvent 两个 ID）；AIV 为输入 ready/free、输出 ready/free 各两份，共 8 个 event。Stage 1 结束消费两个输出 free 后，额外经 `V_MTE3` 确认已消费，MTE3 才能重新置 free；禁止跨 pipe 无确认地连续两次置同一 flag。驻留数据仍按完整 work 生命周期保留，不将 Stage 0 输入搬运完成视作后续 Stage 的释放许可。
+Stage 0～2 已实现的本地事件：AIC 原有 14 个 event，新增每 head 的 kE ready/free 和 akk free，共 20 个；其中 MTE2→MTE1 占 4 个 ID、MTE1→MTE2 占 6 个，其余类型各 2 个。AIV 输入/输出 ready/free 各两份，共 8 个。Stage 1 结束消费两个输出 free 后，经 `V_MTE3` 确认再重新置 free，禁止无确认地重复置同一 flag。
+
+三阶段开发入口使用保留 flag 9/10 作为 VECTOR_RELEASE/VECTOR_ACK。kE 搬入 L1 后，由 AIC 的 MTE2 释放 GM kE 槽并通知下一次 WORK_OPEN，使下一 work 的 Stage 1 与当前 Stage 2 重叠；akk 的末次 L1 读取独立发出 free，最终 Fixpipe 在 End 中排空。此调度不表示 Stage 0/2 的 GM 输出已可供 Stage 3 读取，不能替代上表的 FIX→S02_READY。接入后续 Stage 时须恢复完整 UB/workspace 生命周期，或增加双代存储。
 
 Stage 0 五个输入区末次 L1→L0 读取后即可预取下一 work（每 owner 深度为 1），akk/dW 与 workspace 生命周期不变。下一 work 的 input-ready 在补搬 akk 后发布；结束前排空最后一代 free。Stage 7 首带前仅释放当前 work 驻留区，qPos/bkPos 改用 [384,512)，避开下一 work 预取区；后续带只更新三个居中操作数。下一带 LOCAL_READY 到来前，AIC 已完成上一带 Stage 10，并收到 BAND_DONE，读写不会交叉。
 

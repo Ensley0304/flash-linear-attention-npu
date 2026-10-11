@@ -26,9 +26,10 @@ constexpr bool CAPTURE = KDA_FINALIZE_STAGE01_CAPTURE != 0;
 
 using namespace KDA::Arch22;
 
-// These two flags belong only to this development harness, not to Stage 2.
-constexpr uint16_t CAPTURE_READY = 9;
-constexpr uint16_t CAPTURE_DONE = 10;
+// Stage 0-2 harness: kE copied to L1 releases the next Stage 1; End() drains stores.
+// Later stages must retain exp2_gk/rH or defer this release until their last UB read.
+constexpr uint16_t VECTOR_RELEASE = 9;
+constexpr uint16_t VECTOR_ACK = 10;
 
 __aicore__ inline ChunkInfo ResolveChunk(const Stage01TilingData &tiling, const __gm__ ChunkInfo *chunks,
                                          int64_t chunkIndex)
@@ -69,7 +70,9 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             const int64_t firstHead = (work / tiling.chunks) * HEADS_PER_WORK;
             // Fixed-length metadata stays in registers; variable lengths use the packed table.
             const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(WORK_OPEN);
+            if (LAST_STAGE < 2 || work == core) {
+                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE1>(WORK_OPEN);
+            }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
                     cube.LoadStage0Inputs(tiling, chunk, chunkIndex, firstHead + owner, owner, work == core);
@@ -78,8 +81,26 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
                     cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture);
-                    // Stage 2 is absent: explicitly retire its dW ready event.
-                    cube.WaitDw(owner);
+                    if constexpr (LAST_STAGE < 2) {
+                        cube.WaitDw(owner);
+                        cube.ReleaseAkk(owner);
+                    }
+                    if constexpr (LAST_STAGE >= 2) {
+                        if (owner + 1 == HEADS_PER_WORK || firstHead + owner + 1 == tiling.heads) {
+                            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KE_READY);
+                            for (uint32_t keOwner = 0; keOwner < HEADS_PER_WORK; ++keOwner) {
+                                if (firstHead + keOwner < tiling.heads) {
+                                    cube.LoadKe(keOwner, core);
+                                }
+                            }
+                            // kE is now protected in L1. Vector can prepare the next work
+                            // while Cube consumes the current one; akk has its own free event.
+                            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(VECTOR_RELEASE);
+                            if (work + tiling.usedCoreNum < workCount) {
+                                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(WORK_OPEN);
+                            }
+                        }
+                    }
                     // These five inputs end their L1 lifetime in Stage 0.
                     // Keep akk and dW untouched for their later consumers.
                     const int64_t nextWork = work + tiling.usedCoreNum;
@@ -93,9 +114,20 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                     }
                 }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(CAPTURE_READY);
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KE_READY);
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(CAPTURE_DONE);
+            if constexpr (LAST_STAGE < 2) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KE_READY);
+            }
+            if constexpr (LAST_STAGE >= 2) {
+                for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                    if (firstHead + owner < tiling.heads) {
+                        cube.Stage2<CAPTURE>(tiling, chunkIndex, firstHead + owner, owner, core, capture);
+                    }
+                }
+            }
+            if constexpr (LAST_STAGE < 2) {
+                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE1>(VECTOR_RELEASE);
+            }
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_ACK);
         }
         cube.End();
     }
@@ -106,7 +138,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
         auto ub = ubBuf.Get<uint8_t>();
         auto record = ub[85 * 1024].ReinterpretCast<int64_t>();
         ChunkKdaBwdFinalizeVector vector;
-        if constexpr (LAST_STAGE == 1) {
+        if constexpr (LAST_STAGE >= 1) {
             vector.Init(k, gk, h, dh, workspace, ub, &pipe);
         }
         AscendC::GlobalTensor<int64_t> traceGm;
@@ -117,7 +149,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             const int64_t chunkIndex = work % tiling.chunks;
             const int64_t head = (work / tiling.chunks) * HEADS_PER_WORK + owner;
             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(WORK_OPEN);
-            if constexpr (LAST_STAGE == 1) {
+            if constexpr (LAST_STAGE >= 1) {
                 if (head < tiling.heads) {
                     const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                     vector.Stage1<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture);
@@ -125,7 +157,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             }
             // The absent owner in an odd-head work also closes the collective.
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(KE_READY);
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(CAPTURE_READY);
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_RELEASE);
             if constexpr (CAPTURE) {
                 record.SetValue(0, work);
                 record.SetValue(1, core);
@@ -137,7 +169,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                 record.SetValue(7, chunks[chunkIndex].validRows);
                 record.SetValue(8, head < tiling.heads ? 1 : 0);
                 record.SetValue(9, LAST_STAGE);
-                record.SetValue(10, 7); // WORK_OPEN waited, KE_READY sent, CAPTURE_READY waited.
+                record.SetValue(10, 7); // WORK_OPEN waited, KE_READY sent, VECTOR_RELEASE waited.
                 record.SetValue(11, AscendC::GetBlockNum());
                 record.SetValue(12, AscendC::GetSubBlockNum());
                 record.SetValue(13, AscendC::GetBlockIdx());
@@ -147,13 +179,13 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                 AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(traceReady);
                 AscendC::DataCopy(traceGm[(work * HEADS_PER_WORK + owner) * 16], record, 16);
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(CAPTURE_DONE);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(traceFree);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(traceFree);
         }
         pipe.ReleaseEventID<AscendC::HardEvent::S_MTE3>(traceReady);
         pipe.ReleaseEventID<AscendC::HardEvent::MTE3_S>(traceFree);
-        if constexpr (LAST_STAGE == 1) {
+        if constexpr (LAST_STAGE >= 1) {
             vector.End();
         }
     }
@@ -164,7 +196,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
            const at::Tensor &vNew, const at::Tensor &h, const at::Tensor &dh, const at::Tensor &dvScan,
            at::IntArrayRef cuSeqlens, int64_t coreLimit, int64_t lastStage)
 {
-    TORCH_CHECK(lastStage == 0 || lastStage == 1, "last_stage must be 0 or 1");
+    TORCH_CHECK(lastStage >= 0 && lastStage <= 2, "last_stage must be 0, 1 or 2");
     TORCH_CHECK(k.device().type() == c10::DeviceType::PrivateUse1, "expected NPU inputs");
     c10::DeviceGuard guard(k.device());
     TORCH_CHECK(k.dim() == 3 || k.dim() == 4, "expected [B,H,T,128] or [H,T,128]");
@@ -172,7 +204,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
     const int64_t batch = variable ? 1 : k.size(0);
     const int64_t heads = k.size(k.dim() - 3);
     const int64_t tokens = k.size(k.dim() - 2);
-    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0/1 requires K=V=128");
+    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-2 requires K=V=128");
     for (const auto *tensor : {&k, &v, &vNew, &h, &dh, &dvScan, &akk}) {
         TORCH_CHECK(tensor->device() == k.device() && tensor->is_contiguous() && tensor->scalar_type() == at::kBFloat16,
                     "expected contiguous BF16 inputs on one device");
@@ -221,8 +253,14 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
                 (GM_ADDR)trace.data_ptr(), tiling);
-        } else {
+        } else if (lastStage == 1) {
             Stage01Kernel<1><<<tiling.usedCoreNum, nullptr, stream>>>(
+                (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
+                (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
+                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
+                (GM_ADDR)trace.data_ptr(), tiling);
+        } else {
+            Stage01Kernel<2><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),

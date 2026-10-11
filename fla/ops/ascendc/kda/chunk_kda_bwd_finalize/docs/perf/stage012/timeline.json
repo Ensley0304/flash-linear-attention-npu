@@ -1,0 +1,22 @@
+{
+  "r0": {
+    "mmad_count": 24,
+    "first_work_last_mmad_end_us": 11.382221974432468,
+    "core0.cubecore0_dma_count": 28,
+    "core0.veccore0_dma_count": 24,
+    "core0.veccore0_second_work_first_input_us": 11.924444198608398,
+    "core0.veccore1_dma_count": 24,
+    "core0.veccore1_second_work_first_input_us": 11.924444198608398,
+    "second_vector_work_overlaps_first_cube_work": false
+  },
+  "r7": {
+    "mmad_count": 24,
+    "first_work_last_mmad_end_us": 12.778333462774754,
+    "core0.cubecore0_dma_count": 28,
+    "core0.veccore0_dma_count": 24,
+    "core0.veccore0_second_work_first_input_us": 10.165555953979492,
+    "core0.veccore1_dma_count": 24,
+    "core0.veccore1_second_work_first_input_us": 10.165555953979492,
+    "second_vector_work_overlaps_first_cube_work": true
+  }
+}

@@ -99,3 +99,15 @@ Stage 0 每 head 最后一次 L1 读取后，提前装载下一 work 的五个�
 取消开发入口跨核握手的诊断候选虽达到 MTE2 92.6%，但耗时高于保留握手的版本，因此回退。数据、候选、复现和产物身份见 [跨 work 性能记录](perf/stage01_cross_work/README.md)。
 
 格式化后重新构建最终性能库，再通过 4 次 workspace smoke；总计 74 次精度检查。该库变长复测 1636.16 us、MTE2 90.6%。msprof 导出后退出 137，已保留异常日志并独立核验完整 30 条 task 数据，详见性能记录；不将此工具异常归为 kernel 精度或执行失败。
+
+## Stage 2：双缓冲与三阶段流水
+
+新增 `dKgb_raw=akkᵀ@dW`、`zW=dW@kEᵀ`，均为 BF16×BF16、FP32 累加/输出。dW 从 L0C 转 BF16 NZ 后直接在 L1 消费；两个 head 的 kE 独立管理 ready/free，复用原有两套 L0A/B/C。L1/UB/生产 workspace 分配不变，capture 扩至 224 KiB。
+
+三阶段入口在 kE 搬入 L1 后释放 GM 槽，允许下一 work 的 Stage 1 与当前 Stage 2 重叠。akk 独立 free 事件防止过早覆盖，退出时排空 Fixpipe。该提前推进仅针对当前开发入口：后续 Stage 仍消费 exp2_gk/rH/akk，扩展时必须重新落实其生命周期，不能直接沿用提前释放点。
+
+首轮定位到 BF16 舍入边界：dW 与 CPU 相差一个 BF16 间隔，导致 dKgb_raw 最大绝对差 3.24e-4；以设备实际 BF16 操作数复算，Stage 2 局部误差约 1e-8。保留原有八个中间量的容差；新增 Stage 2 同时使用严格局部 GEMM 检查和独立 CPU 全路径的 BF16 误差传播预算，规则见[测试入口](../../../../../../examples/fast_kernel_launch_example/tests/kda_finalize_stage01/README.md)。预算校准能够拒绝全零、漏掉一半结果和错误 head。
+
+格式化后的 capture 库通过 92 次设备检查：Stage 0/1/2 单核 tails 各 22 次、Stage 2 多核 flat gate tails 22 次，以及累计/flat gate 的完整 8K 定长和变长各 1 次。全部 head/chunk/元素、十个中间量、workspace 最后一代、保护区与 trace 均检查；没有抽样。flat gate 使 kE 所有行保持显著，避免仅检查指数衰减后的近零值。Host tiling 的正常与异常分支检查通过。
+
+性能库另通过累计/flat gate 的 8K 定长/变长各核最后代 workspace 校验，共 4 次，总计 96 次。最终定长 1632.68 μs、MTE2 90.6%，变长 1686.16 μs、MTE2 90.7%，均超过目标；相对同样执行六次 MMAD/head 的首版三阶段耗时降低约 20%。最终变长独立重采正常退出，首轮导出后的 137 异常也完整保留。候选、原始计数、库身份及时间线见[三阶段性能记录](perf/stage012/README.md)。

@@ -2,7 +2,7 @@
 
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
 
-本轮实现范围：Stage 0/1 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
+本轮实现范围：Stage 0～2 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
 
 硬件预算：L1 512 KiB，L0A/L0B 各 64 KiB，L0C 128 KiB，每个 AIV 的 UB 192 KiB。
 
@@ -23,7 +23,7 @@ dW：FP32 L0C 经 Fixpipe（F322BF16）转 BF16 NZ 驻留 L1，每 head 16 KiB�
 
 Stage 0 预取：两个 head 的输入先分别搬入既有 L1 lane；每 lane 独立 `MTE2_MTE1/MTE1_MTE2`，h0 就绪后即可计算，同时 MTE2 继续搬 h1。L0A/B 和 L0C 各保留两槽，将操作数搬运、MMAD 发射和结果写回分开排队：预载 dk_state_raw/dv_b，发射两次 MMAD，再在空闲槽预载 dW/zV；`M_FIX` 只在相应 Fixpipe 前等待。输入/结果槽分别按 `MTE1_M/M_MTE1`、`M_FIX/FIX_M` 保护；dW 独立驻留区不参与输入预取覆写。尾 head 不预取、不消费其 input-ready，结束时仅排空初始 free。
 
-每 head 最后一次 Stage 0 L1→L0 读取后，按 `MTE1_MTE2` 释放 h/dh/v_new/dv_scan/v 的 112 KiB 区，立即预取本核下一 work 的同一 owner 输入；下一 work 只补搬 akk，再发布 input-ready。当前 akk/dW 及 workspace 不提前覆盖，跨核握手不变。首 work 全量装载，末 work 不预取。后续 Stage 7 须采用 [L1 分区](a2a3/L1内存.md) 中避开预取区的布局。
+每 head 最后一次 Stage 0 L1→L0 读取后，按 `MTE1_MTE2` 释放 h/dh/v_new/dv_scan/v 的 112 KiB 区，立即预取本核下一 work 的同一 owner 输入；下一 work 只补搬 akk，再发布 input-ready。akk/dW 按各自消费事件保护；三阶段入口的提前推进见 Stage 2。首 work 全量装载，末 work 不预取。后续 Stage 7 须采用 [L1 分区](a2a3/L1内存.md) 中避开预取区的布局。
 
 ## Stage 1：Vector
 
@@ -46,6 +46,10 @@ zW       = dW @ kEᵀ
 ```
 
 等待 dW 写入完成后，两次矩阵乘复用同一份 L1 数据；末次 L1→L0 搬运完成后释放。
+
+首版均为 BF16×BF16、FP32 累加并写 GM。两个 head 的 kE 各占一份 L1，独立管理 ready/free；L0A/L0B/L0C 均用双缓冲。dKgb_raw 不等待 kE，仅 zW 消费前等待。保留 Stage 0 的跨 work 输入预取；以 Stage 0～2 全量精度和 msprof 实测验收。
+
+三阶段开发入口中，kE 搬入 L1 后即可释放 GM 槽，让下一 work 的 Stage 1 与当前 Stage 2 重叠；akk 单独等待末次 L1 读取后再覆盖。接入 Stage 3～11 时，必须延后 Vector 提前推进，或双份保存后续仍需消费的 exp2_gk/rH；akk 的释放点改为 Stage 6 末次读取。
 
 ## Stage 3：Vector
 

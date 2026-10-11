@@ -1,0 +1,72 @@
+{
+  "parent_commit": "7b2f6a9026c89164c70b7b8de92e4614b75ddd9b",
+  "baseline": "r0: initial Stage 0-2 implementation, same six GEMMs/head",
+  "device": "Ascend910B3 / device 1 / 20 AIC + 40 AIV",
+  "cann": "CANN 9.1",
+  "reference_pr": "https://gitcode.com/cann/cannbot-skills/pull/1069",
+  "reference_head": "4950cbd7c45e0d44cb8ec52598edf53cdc7f16ca",
+  "warmup": 20,
+  "samples": 10,
+  "B": 1,
+  "H": 96,
+  "T": 8192,
+  "K": 128,
+  "V": 128,
+  "varlen_lengths": [
+    0,
+    1,
+    31,
+    64,
+    65,
+    4096,
+    3935,
+    0
+  ],
+  "source_sha256": {
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "8c75dee75fe08e62b1aa88a429c40fc61e6873c8fbddfefb681965a8b8ce05a7",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "8ccdf21dc7eaee8a4d9cc2434ecbca0e4090f0f0eaa988d6f0915b9353d0c1b5",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "c325ae7913e481cc7999a12ca36ad2d7b831784a7c6c60de9a38c232449289c2",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "0f55cb2b4075cee213b4b20c48781a2283aa1e54df93c73afe411ac6630dbf9a",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "e44c30a2d4fb8de006bbcdab6d7366c49627c6806c336c1b3d56eb601d134003",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "9028274821c2c3ef946ace6c0a32ec7745c493fa9e2f98543e6b415294559bce"
+  },
+  "source_lf_sha256": {
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "843a011942a48bdb63b864a25b5f770b83ecf032ff7ba7f85317580e32a1fee1",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "6f053b71c9a921226831688375b517feb7f1800a1e33b24c73b7d7b6622e2a16",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "7b1ae336c32ade9958df028363323fe146c5c5f96bce472e99dc3e17a7e2e175",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "76a780402620410ab6097cd050ac751fb5f2670e7be48738af57fc9124b86fda",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "591378247d0ba8e8b510fc7ec5c80c7717c1fa70bdf7c7f83ec7aee555b199fd",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "070ec18064dca2ff680a29a77f9ba5d0112ef2e89b1253061ade63799155de18"
+  },
+  "library_sha256": {
+    "r0-perf.so": "301f343cd78bda8bf06d2de75d4ca537f96186d7f71f377ec4036f51dcb09d0b",
+    "r7-perf.so": "c5ffd8206547d93a01c55d9143657c4b0052a163837091d28b2c5b8841c7c567",
+    "final-capture.so": "a24890fdecb03654b67670fdde9727de8ead7d40759671799326e1cb2386ef61",
+    "final-perf.so": "68bee48ced1c8b77ada31b8aa24be1ca51db27d795524c5ffbe6b505f3c89a3f"
+  },
+  "profiler_exit": {
+    "r2-fixed": 0,
+    "final-varlen-confirm": 0,
+    "r7-fixed": 0,
+    "r0-fixed": 0,
+    "r7-varlen": 0,
+    "r1-fixed": 0,
+    "r3-varlen": 0,
+    "r2-varlen": 0,
+    "r3-fixed": 0,
+    "r0-small": 0,
+    "r6-fixed": 0,
+    "r6-varlen": 0,
+    "final-varlen": 137,
+    "r0-varlen": 137,
+    "final-small": 0,
+    "r5-varlen": 0,
+    "r4-varlen": 0,
+    "r4-fixed": 0,
+    "r1-varlen": 137,
+    "final-fixed": 0,
+    "r5-fixed": 137
+  }
+}
