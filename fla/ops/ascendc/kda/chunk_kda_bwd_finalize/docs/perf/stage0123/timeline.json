@@ -1,0 +1,149 @@
+{
+  "r0b": {
+    "source": "simulator-r0b/OPPROF_20261011232118_EZQPBQAAITVWFXFB/simulator/trace.json",
+    "mmad_count": 36,
+    "lanes": {
+      "core0.cubecore0": {
+        "instructions": {
+          "MOV_SPR_XN": 1,
+          "MOV_OUT_TO_L1_MULTI_ND2NZ": 42,
+          "MMAD": 36
+        }
+      },
+      "core0.veccore0": {
+        "instructions": {
+          "MOVEMASK": 720,
+          "MOVEV": 73,
+          "BAR": 115,
+          "MOV_OUT_TO_UB": 84,
+          "VCONV": 72,
+          "VMUL": 78,
+          "VCADD": 48,
+          "VADD": 24,
+          "VMULS": 6,
+          "VEXP": 6,
+          "MOV_UB_TO_OUT": 30,
+          "SET_CROSS_CORE": 6,
+          "MOV_SPR_XN": 3,
+          "MOV_SRC_TO_DST_ALIGN": 3,
+          "VBRCB": 3,
+          "VSUB": 12
+        },
+        "stage3_vector_next_mmad_overlap_us": 0,
+        "first_stage3_interval_us": [
+          10.8372220993042,
+          12.956667006015778
+        ],
+        "next_cube_work_interval_us": [
+          13.65333366394043,
+          17.572222508490086
+        ],
+        "stage3_overlap_next_work_mmad_us": 0
+      },
+      "core0.veccore1": {
+        "instructions": {
+          "MOVEMASK": 720,
+          "MOVEV": 73,
+          "BAR": 115,
+          "MOV_OUT_TO_UB": 84,
+          "VCONV": 72,
+          "VMUL": 78,
+          "VCADD": 48,
+          "VADD": 24,
+          "VMULS": 6,
+          "VEXP": 6,
+          "MOV_UB_TO_OUT": 30,
+          "SET_CROSS_CORE": 6,
+          "MOV_SPR_XN": 3,
+          "MOV_SRC_TO_DST_ALIGN": 3,
+          "VBRCB": 3,
+          "VSUB": 12
+        },
+        "stage3_vector_next_mmad_overlap_us": 0,
+        "first_stage3_interval_us": [
+          10.641666412353516,
+          12.936666548252106
+        ],
+        "next_cube_work_interval_us": [
+          13.65333366394043,
+          17.572222508490086
+        ],
+        "stage3_overlap_next_work_mmad_us": 0
+      }
+    }
+  },
+  "r6": {
+    "source": "simulator-r6/OPPROF_20261011234041_UIWRKXYDKDLHMHEY/simulator/trace.json",
+    "mmad_count": 36,
+    "lanes": {
+      "core0.cubecore0": {
+        "instructions": {
+          "MOV_SPR_XN": 1,
+          "MOV_OUT_TO_L1_MULTI_ND2NZ": 42,
+          "MMAD": 36,
+          "SET_CROSS_CORE": 5
+        }
+      },
+      "core0.veccore0": {
+        "instructions": {
+          "MOVEMASK": 546,
+          "MOVEV": 70,
+          "BAR": 82,
+          "MOV_OUT_TO_UB": 60,
+          "VCONV": 54,
+          "VMUL": 48,
+          "VCADD": 36,
+          "VADD": 18,
+          "VMULS": 6,
+          "VEXP": 6,
+          "MOV_UB_TO_OUT": 18,
+          "SET_CROSS_CORE": 6,
+          "MOV_SPR_XN": 3,
+          "MOV_SRC_TO_DST_ALIGN": 3,
+          "VBRCB": 3,
+          "VSUB": 6
+        },
+        "stage3_vector_next_mmad_overlap_us": 0.235555961728096,
+        "first_stage3_interval_us": [
+          14.84333324432373,
+          18.38166582584381
+        ],
+        "next_cube_work_interval_us": [
+          13.278888702392578,
+          20.085554875433445
+        ],
+        "stage3_overlap_next_work_mmad_us": 0.23666667193174362
+      },
+      "core0.veccore1": {
+        "instructions": {
+          "MOVEMASK": 546,
+          "MOVEV": 70,
+          "BAR": 82,
+          "MOV_OUT_TO_UB": 60,
+          "VCONV": 54,
+          "VMUL": 48,
+          "VCADD": 36,
+          "VADD": 18,
+          "VMULS": 6,
+          "VEXP": 6,
+          "MOV_UB_TO_OUT": 18,
+          "SET_CROSS_CORE": 6,
+          "MOV_SPR_XN": 3,
+          "MOV_SRC_TO_DST_ALIGN": 3,
+          "VBRCB": 3,
+          "VSUB": 6
+        },
+        "stage3_vector_next_mmad_overlap_us": 0.3083337992429733,
+        "first_stage3_interval_us": [
+          15.806666374206543,
+          19.234999805688858
+        ],
+        "next_cube_work_interval_us": [
+          13.278888702392578,
+          20.085554875433445
+        ],
+        "stage3_overlap_next_work_mmad_us": 0.3194444477558136
+      }
+    }
+  }
+}

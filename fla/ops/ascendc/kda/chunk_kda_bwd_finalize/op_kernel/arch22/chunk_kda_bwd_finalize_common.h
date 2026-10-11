@@ -32,11 +32,15 @@ constexpr uint32_t L0_C_SLOT_BYTES = 64 * 1024;
 constexpr uint32_t UB_BYTES = 192 * 1024;
 constexpr uint32_t UB_K = 16 * 1024;
 constexpr uint32_t UB_EXP2_GK = 32 * 1024;
+constexpr uint32_t UB_BETA = 80 * 1024;
+constexpr uint32_t UB_DB_V = 80 * 1024 + 256;
 constexpr uint32_t UB_RH = 81 * 1024 + 256;
 constexpr uint32_t UB_GK_LAST = 81 * 1024 + 768;
 constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 
+// Two generations are used only by the Stage 0-3 development scheduler.
+constexpr uint32_t WS_BANK_BYTES = 256 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 512 * 1024;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
 constexpr uint32_t WS_DK_STATE_RAW = 0;
@@ -45,6 +49,7 @@ constexpr uint32_t WS_ZV = 64 * 1024;
 constexpr uint32_t WS_DKGB_RAW = 80 * 1024;
 constexpr uint32_t WS_ZW = 112 * 1024;
 constexpr uint32_t WS_KE = 144 * 1024;
+constexpr uint32_t WS_ZB = 160 * 1024;
 
 constexpr uint16_t KE_READY = 0;
 constexpr uint16_t WORK_OPEN = 8;
@@ -81,6 +86,8 @@ constexpr uint32_t CAPTURE_GK_LAST = 144 * 1024 + 512;
 
 constexpr uint32_t CAPTURE_DKGB_RAW = 160 * 1024;
 constexpr uint32_t CAPTURE_ZW = 192 * 1024;
+constexpr uint32_t CAPTURE_ZB = 208 * 1024;
+constexpr uint32_t CAPTURE_DB_V = 216 * 1024;
 
 static_assert(sizeof(ChunkInfo) == 32);
 static_assert(sizeof(Stage01TilingData) == 40);
@@ -93,6 +100,9 @@ static_assert(UB_RH + HEAD_DIM * 4 == UB_GK_LAST);
 static_assert(WS_DKGB_RAW + CHUNK_SIZE * HEAD_DIM * 4 == WS_ZW);
 static_assert(WS_ZW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_KE);
 static_assert(CAPTURE_ZW + CHUNK_SIZE * CHUNK_SIZE * 4 <= CAPTURE_BYTES);
+static_assert(2 * WS_BANK_BYTES == WS_HEAD_BYTES);
+static_assert(WS_ZB + CHUNK_SIZE * CHUNK_SIZE * 2 <= WS_BANK_BYTES);
+static_assert(CAPTURE_DB_V + CHUNK_SIZE * 4 <= CAPTURE_BYTES);
 static_assert(WS_KE + CHUNK_SIZE * HEAD_DIM * 2 <= WS_HEAD_BYTES);
 static_assert(CAPTURE_GK_LAST + HEAD_DIM * 4 <= CAPTURE_BYTES);
 

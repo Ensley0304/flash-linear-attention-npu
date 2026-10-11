@@ -1,0 +1,38 @@
+{
+  "base_commit": "b1df40bc705c3ea9ac287b786ad5009e8e9377e8",
+  "platform": "Ascend910B3 / A2",
+  "device": 1,
+  "aic": 20,
+  "aiv": 40,
+  "cann": "9.1.0",
+  "torch": "2.7.1+cpu",
+  "torch_npu": "2.7.1.post5",
+  "auto_sync": false,
+  "source_lf_sha256": {
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "5e001ee50181b7921392d538fe447db787a741f7e2e68cfae3c8da0e17472ef9",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "04318bee47d6416d027f63f0a71926995fcefce2960effab7301e4e5469439a9",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "71aa15152f024023b5b7ec6feab5fe6b77aac67f198f450cfeac313bbba97763",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "71ba9646a5c952c5130cd9b50b28bb434923263fcb5c97efa2c4564d15da8a49",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "c4f38ffab9dd9f87f826e9a71735fe853b0d3e7437095351c8ad567ca0d810c0",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "2acd027c94b5756f70259cb88e5e3282feccd68e6350b7cc12261e7d53fb361c",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53"
+  },
+  "library_sha256": {
+    "r0b-capture.so": "c9458dfcb7cc5416165e421338ea0d97af8736fc876f113671a0064339e35e33",
+    "r0b-perf.so": "caca3b0b7cb6f59b44839fb0293e027e81f00b0e59a4751b94056a9db0b68f1c",
+    "r5-capture.so": "c53ccf00c9e1646172269f0251918833bec329887b43aed7588bea5fc32c0bc3",
+    "r5-perf.so": "1635a50e873fabddb450b62982a5a7517ea40406087aa977aa5e0303ff36db67",
+    "r6-capture.so": "33cdb1a44e27dc5e94411756dd8c775c7ead26fc74711d3bef06b2563d595ded",
+    "r6-perf.so": "f37b72c0d783f426884c5f9d55dadecffab25be59cd38e9303d6b701efd5c40e",
+    "final-capture.so": "33cdb1a44e27dc5e94411756dd8c775c7ead26fc74711d3bef06b2563d595ded",
+    "final-perf.so": "f37b72c0d783f426884c5f9d55dadecffab25be59cd38e9303d6b701efd5c40e"
+  },
+  "capture_bytes_per_head_chunk": 229376,
+  "workspace_bytes_per_aic": 1048576,
+  "stage3_bank_bytes": 262144,
+  "scope": "private Stage 0-3 harness; not full Finalize or A3 validation",
+  "final_msprof_exitcodes": {
+    "final-profile-fixed.exitcode": "0",
+    "final-profile-varlen.exitcode": "0"
+  }
+}

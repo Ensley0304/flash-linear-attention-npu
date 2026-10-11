@@ -37,7 +37,7 @@
 | Stage | 工作槽安排 |
 | --- | --- |
 | 1 | 32 行 tile；W0/W1、W2/W3：两份 h/dh BF16 输入；W4/W5：FP32 h；W6/W7：FP32 dh；W8/W9：乘积；W10：归约临时。rH 完成后 W0～W3 改存 gk ping/pong，W4～W7 改存 FP32 k/kE，W8/W9 改存 BF16 kE 输出 ping/pong。W11/W12 空闲。 |
-| 3 | 先处理 zV/zW/Zb，再复用槽处理 dv_b/v。Zb、dv 转 BF16 后写出；db_v 留在常驻区。两部分不同时保留大矩阵。 |
+| 3 | 32 行 tile。zV/zW 两对输入占 W0～W3；随后两对 dv_b/v 输入复用 W0～W5。W6/W7 存 FP32 临时值，W8/W9 存乘积，W10/W11 存缩放结果，W12 存 beta 广播和归约临时。尚未使用的 q 区 [0,16) 存两个 BF16 输出槽，[64,80) 暂存下三角 mask；beta/db_v 留在常驻区。 |
 | 5 | W0：dk_state_raw→dk_state；W1：dKgb_raw→exp2_gk×dKgb_raw；W2：dq_raw→dq_base；W3：gk→衰减因子；W4/W5：q/k FP32；W6/W7：dk_base/dg_base；W8～W12：乘积、归约及搬运临时。 |
 | 7 | 先分 tile 生成两个 strict_lower 高低位及对角线；再逐个生成 kNeg、qPos、bkPos。W0/W1：q/k FP32；W2/W3：正/负居中指数；W4：当前操作数；W5：重建值/残差；W6：BF16 高低位；W7～W12：mask、转换及临时。 |
 | 9 | W0：dq_local_raw→dq_local；W1：dq_base→dq_pre；W2：dg_base→dg；W3/W4：q/k FP32；W5：乘积；W6：dq BF16；W7～W12：L2Norm 归约及临时。 |

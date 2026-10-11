@@ -1,0 +1,23 @@
+{
+  "device_calls": 118,
+  "checks": {
+    "test-r6.log": 44,
+    "final-stage0.log": 22,
+    "final-stage1.log": 22,
+    "final-stage2.log": 22,
+    "final-model-cumulative.log": 2,
+    "final-model-flat.log": 2,
+    "test-r6-perf.log": 2,
+    "final-perf-cumulative.log": 2
+  },
+  "host_tiling": "PASS",
+  "clang_format": "PASS",
+  "sampling": false,
+  "layouts": [
+    "BNSD",
+    "NTD"
+  ],
+  "beta_dtype": "FP32",
+  "dv_dtype": "BF16",
+  "scope": "Stage 0-3 only"
+}

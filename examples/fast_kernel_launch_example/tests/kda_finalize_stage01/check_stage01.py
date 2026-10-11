@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private Stage 0-2 checks; not an end-to-end Finalize accuracy claim."""
+"""Private Stage 0-3 checks; not an end-to-end Finalize accuracy claim."""
 import argparse
 import os
 import signal
@@ -113,11 +113,24 @@ def decode(record, name, workspace=False):
     return record[offset:offset + size].clone().view(dtype).reshape(shape)
 
 
+def workspace_works(heads, chunks, cores, stage):
+    works = ((heads + 1) // 2) * chunks
+    for core in range(cores):
+        last = core + ((works - 1 - core) // cores) * cores
+        yield core, last
+        if stage >= 3 and last - cores >= core:
+            yield core, last - cores
+
+
 def check_case(args, batch, heads, tokens, lengths=None):
     inputs, cu, chunks = make_case(batch, heads, tokens, lengths, gate_mode=args.gate_mode)
     expected = None if args.workspace_only else [
         [reference(inputs, chunks, head, c, lengths is not None) for c in range(len(chunks))]
         for head in range(heads)]
+    beta = torch.rand(inputs[0].shape[:-1], generator=torch.Generator().manual_seed(137)) * 2
+    beta.flatten()[:min(4, beta.numel())] = torch.tensor([0.0, 1.0, 2.0, 0.99966466])[:min(4, beta.numel())]
+    device_beta = beta.to(f"npu:{args.device}")
+    dv_out = torch.full_like(inputs[0], float("nan"), device=f"npu:{args.device}")
     device_inputs = [x.to(f"npu:{args.device}") for x in inputs]
     torch.npu.synchronize()
     for iteration in range(args.repeat):
@@ -125,27 +138,28 @@ def check_case(args, batch, heads, tokens, lengths=None):
         signal.alarm(60)
         try:
             capture, trace, workspace = torch.ops.ascend_ops.kda_finalize_stage01(
-                *device_inputs, cu, args.cores, args.stage)
+                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out)
             torch.npu.synchronize()
         finally:
             signal.alarm(0)
         capture, trace, workspace = capture.cpu(), trace.cpu(), workspace.cpu()
+        if args.stage >= 3:
+            check_stage3(inputs, beta, chunks, lengths is not None, capture, workspace, dv_out.cpu(), args.workspace_only, expected)
         if args.workspace_only:
             assert capture.numel() == 1, "workspace-only requires a capture-disabled build"
             used_cores = workspace.numel() // (1024 * 1024)
             works = ((heads + 1) // 2) * len(chunks)
-            for core in range(used_cores):
-                work = core + ((works - 1 - core) // used_cores) * used_cores
+            for core, work in workspace_works(heads, len(chunks), used_cores, args.stage):
                 c = work % len(chunks)
                 for owner in range(2):
                     head = (work // len(chunks)) * 2 + owner
                     if head >= heads:
                         continue
                     wanted = reference(inputs, chunks, head, c, lengths is not None)
-                    base = (2 * core + owner) * 512 * 1024
-                    record = workspace[base:base + 512 * 1024]
+                    base = (2 * core + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3)
+                    record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
                     for name in (("dk_state_raw", "dv_b", "zV") +
-                                 (("dKgb_raw", "zW") if args.stage == 2 else ())):
+                                 (("dKgb_raw", "zW") if args.stage >= 2 else ())):
                         actual = decode(record, name, workspace=True)
                         assert torch.isfinite(actual).all(), name
                         if name in ("dKgb_raw", "zW"):
@@ -160,7 +174,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
             print(f"PASS workspace stage={args.stage} B={batch} H={heads} T={tokens} "
                   f"varlen={lengths is not None} gate={args.gate_mode} cores={used_cores} repeat={iteration + 1}", flush=True)
             continue
-        names = list(OFFSETS)[:(4, 8, 10)[args.stage]]
+        names = list(OFFSETS)[:(4, 8, 10, 10)[args.stage]]
         # Batch comparisons keep the full 8K check practical without sampling or
         # changing the per-element tolerance / independent CPU reference.
         for name in names:
@@ -189,7 +203,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                 torch.testing.assert_close(
                     actual.float(), wanted.float(), rtol=rtol, atol=atol,
                     msg=lambda msg: f"{name}, indices=(head,chunk,...): {msg}")
-        if args.stage == 2:
+        if args.stage >= 2:
             # Batch by head: compare every element without thousands of tiny assertions.
             for head in range(heads):
                 a = torch.zeros((len(chunks), 64, 64), dtype=torch.float64)
@@ -210,7 +224,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     torch.testing.assert_close(actual, local_ref.float(), rtol=3e-4, atol=2e-6,
                                                msg=lambda msg: f"Stage 2 local GEMM: {msg}")
         assert (capture[:, :, 145 * 1024:160 * 1024] == 0xA5).all(), "capture guard overwritten"
-        guard_start = (208 if args.stage == 2 else 160) * 1024
+        guard_start = 216 * 1024 + 256 if args.stage >= 3 else (208 if args.stage >= 2 else 160) * 1024
         assert (capture[:, :, guard_start:] == 0xA5).all(), "capture guard overwritten"
         works = ((heads + 1) // 2) * len(chunks)
         assert trace.shape == (works * 2, 16)
@@ -229,36 +243,113 @@ def check_case(args, batch, heads, tokens, lengths=None):
                 assert record[11] in (used_cores, 2 * used_cores), record
                 assert record[12:15] == [
                     2, 2 * (work % used_cores) + owner,
-                    (2 * (work % used_cores) + owner) * 512 * 1024,
+                    (2 * (work % used_cores) + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3),
                 ], record
         # Read the actual reusable slots, not just the extra capture writes.
-        for core in range(used_cores):
-            work = core + ((works - 1 - core) // used_cores) * used_cores
+        for core, work in workspace_works(heads, len(chunks), used_cores, args.stage):
             c = work % len(chunks)
             for owner in range(2):
                 head = (work // len(chunks)) * 2 + owner
                 if head >= heads:
                     continue
-                base = (2 * core + owner) * 512 * 1024
-                record = workspace[base:base + 512 * 1024]
+                base = (2 * core + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3)
+                record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
                 for name in (("dk_state_raw", "dv_b", "zV") +
-                                 (("dKgb_raw", "zW") if args.stage == 2 else ())):
+                                 (("dKgb_raw", "zW") if args.stage >= 2 else ())):
                     torch.testing.assert_close(decode(record, name, workspace=True), decode(capture[head, c], name),
                                                rtol=0, atol=0)
                 if args.stage >= 1:
                     actual_ke = record[144 * 1024:160 * 1024].clone().view(torch.bfloat16).reshape(64, 128)
                     torch.testing.assert_close(actual_ke, decode(capture[head, c], "kE"), rtol=0, atol=0)
-                assert (record[(128 if args.stage == 2 else 80) * 1024:144 * 1024] == 0x5A).all(), "workspace guard overwritten"
-                assert (record[160 * 1024:] == 0x5A).all(), "workspace guard overwritten"
+                assert (record[(128 if args.stage >= 2 else 80) * 1024:144 * 1024] == 0x5A).all(), "workspace guard overwritten"
+                assert (record[(168 if args.stage >= 3 else 160) * 1024:] == 0x5A).all(), "workspace guard overwritten"
         if args.cores == 1 and works > 1:
             assert trace[-1, 5] > 1, "workspace reuse was not exercised"
         print(f"PASS stage={args.stage} B={batch} H={heads} T={tokens} "
               f"varlen={lengths is not None} gate={args.gate_mode} cores={used_cores} repeat={iteration + 1}", flush=True)
 
 
+
+def check_stage3(inputs, beta, chunks, variable, capture, workspace, dv, workspace_only, expected=None):
+    """Check all dv outputs; capture builds additionally check every Zb and db_v.
+
+    The full-path Zb bound propagates the established Stage 2 intermediate budget.
+    A second local check isolates Stage 3 using the actual captured FP32 operands.
+    """
+    heads = inputs[0].shape[-3]
+    assert torch.isfinite(dv).all(), "dv not fully written"
+    for head in range(heads):
+        refs, actual_dv, actual_db, local_db, actual_zb, local_zb, budgets = [], [], [], [], [], [], []
+        dv_refs, db_refs = [], []
+        for c, (sequence, _, start, rows) in enumerate(chunks):
+            b = torch.zeros(64, dtype=torch.float64)
+            b[:rows] = (beta[head] if variable else beta[sequence, head])[start:start + rows].double()
+            v = torch.zeros((64, 128), dtype=torch.float64)
+            v[:rows] = (inputs[1][head] if variable else inputs[1][sequence, head])[start:start + rows].double()
+            if expected is not None:
+                ref = expected[head][c]
+            else:
+                # Full-output dv only needs this GEMM. Other workspace quantities
+                # are checked separately for both retained generations below.
+                a = torch.zeros((64, 64), dtype=torch.float64)
+                scan = torch.zeros((64, 128), dtype=torch.float64)
+                src_a = inputs[3][head] if variable else inputs[3][sequence, head]
+                src_scan = inputs[7][head] if variable else inputs[7][sequence, head]
+                a[:rows, :rows] = src_a[start:start + rows, :rows].double()
+                scan[:rows] = src_scan[start:start + rows].double()
+                ref = {"dv_b": (a.T @ scan).float()}
+            dv_refs.append((ref['dv_b'].double() * b[:, None])[:rows].float().bfloat16().float())
+            actual_dv.append((dv[head] if variable else dv[sequence, head])[start:start + rows].float())
+            if workspace_only:
+                continue
+            record = capture[head, c]
+            zv, zw, dvb = (decode(record, name).double() for name in ('zV', 'zW', 'dv_b'))
+            zb = record[208 * 1024:216 * 1024].clone().view(torch.bfloat16).reshape(64, 64).float()
+            db = record[216 * 1024:216 * 1024 + 256].clone().view(torch.float32)
+            actual_zb.append(zb)
+            actual_db.append(db)
+            local_zb.append(torch.tril((zv - zw) * b[None, :], -1).float().bfloat16().float())
+            local_db.append((v * dvb).sum(-1).float())
+            full_zb = torch.tril((ref['zV'].double() - ref['zW'].double()) * b[None, :], -1).float().bfloat16().float()
+            refs.append(full_zb)
+            budgets.append(torch.tril((ref['zW_budget'] + 2e-6 + 3e-4 * ref['zV'].abs()) * b[None, :], -1).float())
+            db_refs.append((v * ref['dv_b'].double()).sum(-1).float())
+            assert torch.count_nonzero(torch.triu(zb)) == 0, 'Zb must be strictly lower'
+            assert torch.count_nonzero(zb[rows:]) == 0 and torch.count_nonzero(zb[:, rows:]) == 0, 'Zb tail'
+            assert torch.count_nonzero(db[rows:]) == 0, 'db_v tail'
+        torch.testing.assert_close(torch.cat(actual_dv), torch.cat(dv_refs), rtol=8e-3, atol=2e-5, msg='Stage 3 dv')
+        if not workspace_only:
+            got, wanted, budget = torch.stack(actual_zb), torch.stack(refs), torch.stack(budgets)
+            assert torch.isfinite(got).all() and ((got - wanted).abs() <= budget + 2e-5 + 8e-3 * wanted.abs()).all(), 'Stage 3 full Zb'
+            torch.testing.assert_close(got, torch.stack(local_zb), rtol=8e-3, atol=2e-5, msg='Stage 3 local Zb')
+            torch.testing.assert_close(torch.stack(actual_db), torch.stack(local_db), rtol=3e-4, atol=2e-6, msg='Stage 3 local db_v')
+            torch.testing.assert_close(torch.stack(actual_db), torch.stack(db_refs), rtol=3e-4, atol=2e-6, msg='Stage 3 full db_v')
+    cores = workspace.numel() // (1024 * 1024)
+    works = ((heads + 1) // 2) * len(chunks)
+    for core, work in workspace_works(heads, len(chunks), cores, 3):
+        c = work % len(chunks)
+        for owner in range(2):
+            head = (work // len(chunks)) * 2 + owner
+            if head >= heads:
+                continue
+            base = (2 * core + owner) * 512 * 1024 + ((work // cores) & 1) * 256 * 1024 + 160 * 1024
+            actual = workspace[base:base + 8192].clone().view(torch.bfloat16).reshape(64, 64)
+            if not workspace_only:
+                wanted = capture[head, c, 208 * 1024:216 * 1024].clone().view(torch.bfloat16).reshape(64, 64)
+                torch.testing.assert_close(actual, wanted, rtol=0, atol=0)
+            else:
+                sequence, _, start, rows = chunks[c]
+                b = torch.zeros(64)
+                b[:rows] = (beta[head] if variable else beta[sequence, head])[start:start + rows]
+                ref = reference(inputs, chunks, head, c, variable)
+                wanted = torch.tril((ref['zV'] - ref['zW']) * b[None, :], -1).bfloat16().float()
+                budget = torch.tril((ref['zW_budget'] + 2e-6 + 3e-4 * ref['zV'].abs()) * b[None, :], -1)
+                assert torch.isfinite(actual).all() and ((actual.float() - wanted).abs() <= budget + 2e-5 + 8e-3 * wanted.abs()).all(), 'workspace Zb'
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3), default=0)
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=2)

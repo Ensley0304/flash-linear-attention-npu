@@ -111,3 +111,15 @@ Stage 0 每 head 最后一次 L1 读取后，提前装载下一 work 的五个�
 格式化后的 capture 库通过 92 次设备检查：Stage 0/1/2 单核 tails 各 22 次、Stage 2 多核 flat gate tails 22 次，以及累计/flat gate 的完整 8K 定长和变长各 1 次。全部 head/chunk/元素、十个中间量、workspace 最后一代、保护区与 trace 均检查；没有抽样。flat gate 使 kE 所有行保持显著，避免仅检查指数衰减后的近零值。Host tiling 的正常与异常分支检查通过。
 
 性能库另通过累计/flat gate 的 8K 定长/变长各核最后代 workspace 校验，共 4 次，总计 96 次。最终定长 1632.68 μs、MTE2 90.6%，变长 1686.16 μs、MTE2 90.7%，均超过目标；相对同样执行六次 MMAD/head 的首版三阶段耗时降低约 20%。最终变长独立重采正常退出，首轮导出后的 137 异常也完整保留。候选、原始计数、库身份及时间线见[三阶段性能记录](perf/stage012/README.md)。
+
+## Stage 3：四阶段流水
+
+新增 `Zb=tril((zV-zW)*beta[None,:],-1)`、`dv=beta[:,None]*dv_b`、`db_v=sum(v*dv_b,-1)`。FP32 beta/db_v 驻留 UB，Zb/dv 转 BF16；私有入口当前使用 FP32 beta 和 BNSD/NTD dv 输出。
+
+32 行输入/输出双缓冲；每 head 原有 512 KiB GM 分成两代槽，上一 Stage 3 与当前 Cube 重叠。保留 FIX ready、按槽消费确认及输入布局切换保护；去掉重复事件往返和整轮 Scalar 等待。早期版本的跨槽覆盖竞态已修复，未纳入性能基线。
+
+最终格式化源码通过 118 次设备检查：Stage 0/1/2 单核 tails 各 22 次，Stage 3 单核累计 gate tails 和多核 flat gate tails 各 22 次，完整 8K 两种布局、两种 gate 的 capture 检查 4 次，性能库相同四组检查 4 次。全部 dv 和 capture 中十二个量逐元素验证，无抽样；另检查两个 GM 槽最后有效代、保护区和 trace。Host tiling 与 clang-format 检查通过。
+
+既定 Stage 0～2 容差不变。Stage 3 同时通过局部和独立全路径检查；门槛校准拒绝 beta 错轴、缺少下三角、错误 head、全零/减半和 db_v 多乘 beta。采数版只等待 trace 自身复用，避免整轮采数同步掩盖计算竞态。
+
+最终硬件数据、库身份及完整三 lane 时间线见[四阶段性能记录](perf/stage0123/README.md)。这仍是 Stage 0～3 开发入口；完整七输出、ATK 双标杆和 A3 上板验证尚未完成。

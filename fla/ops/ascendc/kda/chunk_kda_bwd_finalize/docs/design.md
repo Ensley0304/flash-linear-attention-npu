@@ -36,7 +36,7 @@ gk_last = gk[valid_rows - 1, :]
 
 kE 在 FP32 中计算后，以 RNE 转为单份 BF16，经 UB→GM→L1 供 Stage 2 使用。
 
-Stage 1 双缓冲采用 32 行 tile（后续 Stage 的 16 行 tile 不变）：W0/W1 与 W2/W3 分别存一份 h/dh BF16 输入，先预取两块；Cast 末次读取后释放输入槽，预取第 i+2 块与第 i 块归约并行。W4/W5、W6/W7、W8/W9 分别为 FP32 h、dh、乘积，W10 为归约临时。rH 完成后 W0～W3 改存两份原始 gk，W4～W7 改存 FP32 k/kE，W8/W9 改存两个 BF16 kE 输出。输入按 `MTE2_V/V_MTE2`、输出按 `V_MTE3/MTE3_V` 各两组事件保护；只在消费或同槽复用时等待，Stage 结束排空输出。k/exp2_gk 仅清零无效尾行，无效 gate 不进入 Exp，kE 尾行仍写零。工作区最高到 UB[176 KiB)，总预留仍为 192 KiB。
+Stage 1 双缓冲采用 32 行 tile（Stage 5 之后的 16 行 tile 不变）：W0/W1 与 W2/W3 分别存一份 h/dh BF16 输入，先预取两块；Cast 末次读取后释放输入槽，预取第 i+2 块与第 i 块归约并行。W4/W5、W6/W7、W8/W9 分别为 FP32 h、dh、乘积，W10 为归约临时。rH 完成后 W0～W3 改存两份原始 gk，W4～W7 改存 FP32 k/kE，W8/W9 改存两个 BF16 kE 输出。输入按 `MTE2_V/V_MTE2`、输出按 `V_MTE3/MTE3_V` 各两组事件保护；只在消费或同槽复用时等待，Stage 结束排空输出。k/exp2_gk 仅清零无效尾行，无效 gate 不进入 Exp，kE 尾行仍写零。工作区最高到 UB[176 KiB)，总预留仍为 192 KiB。
 
 ## Stage 2：Cube
 
@@ -61,6 +61,10 @@ db_v = Σv(v ⊙ dv_b)
 ```
 
 Zb 在 FP32 中计算后，以 RNE 转为单份 BF16，经 UB→GM→L1 供 Stage 4 使用。
+
+A2 实现按 32 行处理，输入、输出均双缓冲；先计算 Zb，再复用输入区计算 dv/db_v。dv 转 BF16 写回，FP32 beta/db_v 留在 UB；切换输入布局前等待两个旧槽都读完。
+
+Stage 0～3 开发入口使用两代 GM 槽，使上一 work 的 Stage 3 与当前 Cube 重叠；Fixpipe 完成后才能读取，消费确认后才能复用。接入 Stage 4/5 时须重新落实 akk、exp2_gk/rH 和 db_v 的跨阶段生命周期。
 
 ## Stage 4：Cube
 

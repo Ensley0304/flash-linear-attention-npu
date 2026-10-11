@@ -1,6 +1,8 @@
 # A2/A3 Finalize Workspace 与同步
 
-完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前实现和验证限于 Stage 0～2，其余阶段仍为规划。
+完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前实现限于 Stage 0～3，其余阶段仍为规划。
+
+四阶段开发入口将每 head 的 512 KiB 分为两个 256 KiB 槽，按 `floor(w/P)%2` 交替使用，槽内沿用下表 Stage 0～3 的偏移。AIC 在 FIX 上发布 `S02_READY[bank]`，AIV 读取并完成 Stage 3 后确认 `ACK[bank]`；下一次复用同槽前必须等确认。此双槽安排不改变总分配，但不直接适用于下表完整 Stage 0～11 的地址范围。
 
 ## 任务映射
 

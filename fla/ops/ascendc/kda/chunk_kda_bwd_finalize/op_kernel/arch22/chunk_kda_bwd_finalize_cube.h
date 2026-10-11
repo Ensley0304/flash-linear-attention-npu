@@ -84,9 +84,11 @@ public:
     // Four GEMMs, two independent operand/result slots. Wait only at consumption.
     template <bool CAPTURE = false>
     __aicore__ inline void Stage0(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
-                                  int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr)
+                                  int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
+                                  uint32_t bank = 0)
     {
-        const uint64_t slotOffset = static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES;
+        const uint64_t slotOffset =
+            static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES;
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
         auto akkL1 = l1[L1_AKK].ReinterpretCast<bfloat16_t>();
         auto dwL1 = l1[L1_DW].ReinterpretCast<bfloat16_t>();
@@ -164,11 +166,12 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
     }
 
-    __aicore__ inline void LoadKe(uint32_t owner, uint32_t core)
+    __aicore__ inline void LoadKe(uint32_t owner, uint32_t core, uint32_t bank = 0)
     {
         AscendC::GlobalTensor<bfloat16_t> ke;
-        ke.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + WS_KE));
+        ke.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(workspace_ +
+                                                                 static_cast<uint64_t>(core) * WS_CORE_BYTES +
+                                                                 owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES + WS_KE));
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
         CopyToL1(l1[L1_KE].ReinterpretCast<bfloat16_t>(), ke, CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, HEAD_DIM);
@@ -177,13 +180,13 @@ public:
 
     template <bool CAPTURE = false>
     __aicore__ inline void Stage2(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
-                                  uint32_t core, GM_ADDR capture = nullptr)
+                                  uint32_t core, GM_ADDR capture = nullptr, uint32_t bank = 0)
     {
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
         auto dw = l1[L1_DW].ReinterpretCast<bfloat16_t>();
         AscendC::GlobalTensor<float> output, snapshot;
         output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES));
+            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES));
         if constexpr (CAPTURE) {
             snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
                 capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES));
