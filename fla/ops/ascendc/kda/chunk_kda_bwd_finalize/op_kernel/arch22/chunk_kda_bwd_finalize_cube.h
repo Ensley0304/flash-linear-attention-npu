@@ -1,0 +1,248 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * Licensed under the BSD 3-Clause License.
+ */
+#ifndef CHUNK_KDA_BWD_FINALIZE_ARCH22_CUBE_H
+#define CHUNK_KDA_BWD_FINALIZE_ARCH22_CUBE_H
+
+#include "kernel_operator.h"
+#include "chunk_kda_bwd_finalize_common.h"
+
+namespace KDA::Arch22 {
+
+constexpr AscendC::FixpipeConfig FIX_NZ = {AscendC::CO2Layout::NZ, false};
+
+class ChunkKdaBwdFinalizeCube {
+public:
+    __aicore__ inline void Init(GM_ADDR v, GM_ADDR akk, GM_ADDR vNew, GM_ADDR h, GM_ADDR dh, GM_ADDR dvScan,
+                                GM_ADDR workspace, AscendC::TPipe *pipe)
+    {
+        v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
+        akk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(akk));
+        vNew_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(vNew));
+        h_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(h));
+        dh_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dh));
+        dvScan_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dvScan));
+        workspace_ = workspace;
+        pipe_ = pipe;
+        pipe_->InitBuffer(l1Buf_, L1_BYTES);
+        pipe_->InitBuffer(l0ABuf_, 2 * L0_AB_SLOT_BYTES);
+        pipe_->InitBuffer(l0BBuf_, 2 * L0_AB_SLOT_BYTES);
+        pipe_->InitBuffer(l0CBuf_, 2 * L0_C_SLOT_BYTES);
+        inputReady_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
+        l1Free_ = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            operandReady_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE1_M>();
+            operandFree_[slot] = pipe_->AllocEventID<AscendC::HardEvent::M_MTE1>();
+            resultReady_[slot] = pipe_->AllocEventID<AscendC::HardEvent::M_FIX>();
+            resultFree_[slot] = pipe_->AllocEventID<AscendC::HardEvent::FIX_M>();
+            dwReady_[slot] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>();
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
+        }
+    }
+
+    // One head, four GEMMs. Keep the formulas next to their loads and stores.
+    template <bool CAPTURE = false>
+    __aicore__ inline void Stage0(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+                                  int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr)
+    {
+        const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
+        const int64_t tokenOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * HEAD_DIM;
+        const int64_t akkOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * CHUNK_SIZE;
+        const int64_t stateOffset = (chunkIndex * tiling.heads + head) * HEAD_DIM * HEAD_DIM;
+        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        const uint64_t slotOffset = static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES;
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        auto akkL1 = l1[L1_AKK].ReinterpretCast<bfloat16_t>();
+        auto dwL1 = l1[L1_DW].ReinterpretCast<bfloat16_t>();
+        auto hL1 = l1[L1_H].ReinterpretCast<bfloat16_t>();
+        auto dhL1 = l1[L1_DH].ReinterpretCast<bfloat16_t>();
+        auto vNewL1 = l1[L1_V_NEW].ReinterpretCast<bfloat16_t>();
+        auto dvScanL1 = l1[L1_DV_SCAN].ReinterpretCast<bfloat16_t>();
+        auto vL1 = l1[L1_V].ReinterpretCast<bfloat16_t>();
+
+        // NZ strides always describe the padded physical matrix, including tails.
+        CopyToL1(akkL1, akk_[akkOffset], CHUNK_SIZE, CHUNK_SIZE, rows, rows);
+        CopyToL1(hL1, h_[stateOffset], HEAD_DIM, HEAD_DIM, HEAD_DIM, HEAD_DIM);
+        CopyToL1(dhL1, dh_[stateOffset], HEAD_DIM, HEAD_DIM, HEAD_DIM, HEAD_DIM);
+        CopyToL1(vNewL1, vNew_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
+        CopyToL1(dvScanL1, dvScan_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
+        CopyToL1(vL1, v_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(inputReady_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(inputReady_);
+
+        AscendC::GlobalTensor<float> output;
+        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + slotOffset));
+        AscendC::GlobalTensor<float> snapshot;
+        AscendC::GlobalTensor<bfloat16_t> snapshotBf16;
+        if constexpr (CAPTURE) {
+            const uint64_t offset = static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES;
+            snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(capture + offset));
+            snapshotBf16.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(capture + offset));
+        }
+        auto vectorFix = AscendC::FixpipeParamsV220(HEAD_DIM, CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, false);
+        vectorFix.quantPre = QuantMode_t::NoQuant;
+
+        // dk_state_raw[64,128] = v_new[64,128] @ dh[128,128]^T.
+        auto dkState = Multiply<false, true>(vNewL1, dhL1, CHUNK_SIZE, HEAD_DIM, HEAD_DIM, 0);
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[WS_DK_STATE_RAW / sizeof(float)], dkState,
+                                                               vectorFix);
+        if constexpr (CAPTURE) {
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot[CAPTURE_DK_STATE_RAW / sizeof(float)],
+                                                                   dkState, vectorFix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[0]);
+
+        // dv_b[64,128] = akk[64,64]^T @ dv_scan[64,128].
+        auto dvB = Multiply<true, false>(akkL1, dvScanL1, CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, 1);
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[WS_DV_B / sizeof(float)], dvB, vectorFix);
+        if constexpr (CAPTURE) {
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot[CAPTURE_DV_B / sizeof(float)], dvB,
+                                                                   vectorFix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
+
+        // dW[64,128] = dv_scan[64,128] @ h[128,128]^T.
+        // The only production destination is BF16 NZ L1, retained for Stage 2.
+        auto dw = Multiply<false, true>(dvScanL1, hL1, CHUNK_SIZE, HEAD_DIM, HEAD_DIM, 0);
+        auto dwFix = AscendC::FixpipeParamsV220(HEAD_DIM, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, false);
+        dwFix.quantPre = QuantMode_t::F322BF16;
+        AscendC::Fixpipe<bfloat16_t, float, FIX_NZ>(dwL1, dw, dwFix);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
+        if constexpr (CAPTURE) {
+            auto dumpFix = vectorFix;
+            dumpFix.quantPre = QuantMode_t::F322BF16;
+            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(snapshotBf16[CAPTURE_DW / sizeof(bfloat16_t)],
+                                                                        dw, dumpFix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[0]);
+
+        // zV[64,64] = dv_scan[64,128] @ v[64,128]^T.
+        auto zv = Multiply<false, true>(dvScanL1, vL1, CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, 1);
+        auto matrixFix = AscendC::FixpipeParamsV220(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, false);
+        matrixFix.quantPre = QuantMode_t::NoQuant;
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[WS_ZV / sizeof(float)], zv, matrixFix);
+        if constexpr (CAPTURE) {
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot[CAPTURE_ZV / sizeof(float)], zv, matrixFix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
+    }
+
+    __aicore__ inline void WaitDw(uint32_t owner)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
+    }
+
+    __aicore__ inline void ReleaseInputs()
+    {
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_);
+    }
+
+    __aicore__ inline void End()
+    {
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_M>(operandReady_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::M_FIX>(resultReady_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::FIX_MTE1>(dwReady_[slot]);
+        }
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(inputReady_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(l1Free_);
+    }
+
+private:
+    // Shared mechanics only: the Stage method owns the formula and result path.
+    __aicore__ inline void CopyToL1(AscendC::LocalTensor<bfloat16_t> dst, AscendC::GlobalTensor<bfloat16_t> src,
+                                    uint32_t rows, uint32_t columns, uint32_t validRows, uint32_t validColumns)
+    {
+        if (validRows != rows || validColumns != columns) {
+            AscendC::InitConstValue(dst, AscendC::InitConstValueParams<bfloat16_t>(
+                                             1, static_cast<uint16_t>(rows * columns * sizeof(bfloat16_t) / 32), 0,
+                                             static_cast<bfloat16_t>(0)));
+            AscendC::PipeBarrier<PIPE_MTE2>();
+        }
+        AscendC::Nd2NzParams copy{};
+        copy.ndNum = 1;
+        copy.nValue = validRows;
+        copy.dValue = validColumns;
+        copy.srcDValue = columns;
+        copy.dstNzC0Stride = rows;
+        copy.dstNzNStride = 1;
+        AscendC::DataCopy(dst, src, copy);
+    }
+
+    template <bool TRANSPOSE_A, bool TRANSPOSE_B>
+    __aicore__ inline AscendC::LocalTensor<float> Multiply(AscendC::LocalTensor<bfloat16_t> a,
+                                                           AscendC::LocalTensor<bfloat16_t> b, uint32_t m, uint32_t n,
+                                                           uint32_t k, uint32_t slot)
+    {
+        auto l0A = l0ABuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
+        auto l0B = l0BBuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
+        auto l0C = l0CBuf_.Get<float>()[slot * L0_C_SLOT_BYTES / sizeof(float)];
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+        AscendC::LoadData2DParams load{};
+        load.dstGap = 0;
+        if constexpr (TRANSPOSE_A) {
+            // Transposed ND -> NZ already has the required outer M1/K1 order.
+            load.repeatTimes = (m / 16) * (k / 16);
+            load.srcStride = 1;
+            load.ifTranspose = true;
+            AscendC::LoadData(l0A, a, load);
+        } else {
+            load.repeatTimes = k / 16;
+            load.srcStride = m / 16;
+            load.ifTranspose = false;
+            for (uint32_t row = 0; row < m / 16; ++row) {
+                AscendC::LoadData(l0A[row * (k / 16) * FRACTAL_ELEMENTS], a[row * FRACTAL_ELEMENTS], load);
+            }
+        }
+        if constexpr (TRANSPOSE_B) {
+            // ND [n,k] -> L1 NZ directly matches the transposed L0B order.
+            load.repeatTimes = (k / 16) * (n / 16);
+            load.srcStride = 1;
+            load.ifTranspose = false;
+            AscendC::LoadData(l0B, b, load);
+        } else {
+            load.repeatTimes = n / 16;
+            load.srcStride = k / 16;
+            load.ifTranspose = true;
+            for (uint32_t row = 0; row < k / 16; ++row) {
+                AscendC::LoadData(l0B[row * (n / 16) * FRACTAL_ELEMENTS], b[row * FRACTAL_ELEMENTS], load);
+            }
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(operandReady_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(operandReady_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
+        AscendC::MmadParams params{};
+        params.m = m;
+        params.n = n;
+        params.k = k;
+        params.cmatrixInitVal = true;
+        params.cmatrixSource = false;
+        params.unitFlag = 0;
+        AscendC::Mmad(l0C, l0A, l0B, params);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(resultReady_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[slot]);
+        return l0C;
+    }
+
+    AscendC::TPipe *pipe_ = nullptr;
+    AscendC::TBuf<AscendC::TPosition::A1> l1Buf_;
+    AscendC::TBuf<AscendC::TPosition::A2> l0ABuf_;
+    AscendC::TBuf<AscendC::TPosition::B2> l0BBuf_;
+    AscendC::TBuf<AscendC::TPosition::CO1> l0CBuf_;
+    AscendC::GlobalTensor<bfloat16_t> v_, akk_, vNew_, h_, dh_, dvScan_;
+    GM_ADDR workspace_ = nullptr;
+    AscendC::TEventID inputReady_, l1Free_;
+    AscendC::TEventID operandReady_[2], operandFree_[2], resultReady_[2], resultFree_[2], dwReady_[2];
+};
+
+} // namespace KDA::Arch22
+
+#endif // CHUNK_KDA_BWD_FINALIZE_ARCH22_CUBE_H
