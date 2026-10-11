@@ -1,0 +1,22 @@
+{
+  "zero": {
+    "rejected": 6,
+    "cases": 6
+  },
+  "half": {
+    "rejected": 6,
+    "cases": 6
+  },
+  "wrong_transpose": {
+    "rejected": 6,
+    "cases": 6
+  },
+  "wrong_head": {
+    "rejected": 6,
+    "cases": 6
+  },
+  "wrong_generation": {
+    "rejected": 6,
+    "cases": 6
+  }
+}

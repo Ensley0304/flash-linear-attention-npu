@@ -64,7 +64,7 @@ Zb 在 FP32 中计算后，以 RNE 转为单份 BF16，经 UB→GM→L1 供 Stag
 
 A2 实现按 32 行处理，输入、输出均双缓冲；先计算 Zb，再复用输入区计算 dv/db_v。dv 转 BF16 写回，FP32 beta/db_v 留在 UB；切换输入布局前等待两个旧槽都读完。
 
-Stage 0～3 开发入口使用两代 GM 槽，使上一 work 的 Stage 3 与当前 Cube 重叠；Fixpipe 完成后才能读取，消费确认后才能复用。接入 Stage 4/5 时须重新落实 akk、exp2_gk/rH 和 db_v 的跨阶段生命周期。
+开发入口使用两代 GM 槽，使上一 work 的 Stage 3 与当前 Cube 重叠；Fixpipe 完成后才能读取，消费确认后才能复用。Stage 4 使用两代 akk；后续 Stage 5/6 仍须延长 exp2_gk/rH、db_v 和 akk 的生命周期。
 
 ## Stage 4：Cube
 
@@ -73,6 +73,8 @@ Tza = Zb @ akkᵀ
 ```
 
 Tza：FP32 L0C 经 Fixpipe（F322BF16）转 BF16 NZ 驻留 L1，每 head 8 KiB。
+
+Stage 0～4 开发调度：等待上一代 Stage 3 的 ACK，双 head 预取 Zb 后计算 Tza。akk 使用 L1 两代槽，读完 Stage 4 才允许覆盖；Tza 也保留两槽，L1 总量仍为 384 KiB。后续接入 Stage 6 时，把 akk/Tza 释放点延至其末次读取。
 
 ## Stage 5：Vector
 

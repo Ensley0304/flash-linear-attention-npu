@@ -1,0 +1,33 @@
+{
+  "base_commit": "983a2f5f48200b90531012f5d2ba0db5aff2f87a",
+  "branch": "kda-finalize-a2",
+  "date": "2026-10-12 Asia/Shanghai",
+  "server": "a2-server",
+  "root": "/data/Ensley0304/kda-finalize-a2-stage01-20261011/optimization",
+  "CANN": "9.1 / cann_9.1.0_910b_0605",
+  "torch": "2.7.1+cpu",
+  "torch_npu": "2.7.1.post5",
+  "source_sha256_lf": {
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "71aa15152f024023b5b7ec6feab5fe6b77aac67f198f450cfeac313bbba97763",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "a056c99b3344e6e8b4a68f24edf724c106b18b2311270b3136ce6dc878b3b763",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "8e8fecb12c39bde81a21b36a40a29f468c54de29cb010f387f3637406ba10662",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "f7be59f986b38ee44d3f6668d9ae72ed31de04df26f3999376b980700a1b6610",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "85bddd6504b52df4deb498632f57d376ddfd7ae553da084e6614c8841504b142",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "5847ca535eef24ee4df3e540fe673c61e789e83cfd5d924b38b6a8ee318891ca",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "d2f03887e63ff5799436e09e3279d04e057551ca74ddb89494718cf9bb11e31c"
+  },
+  "library_sha256": {
+    "stage4/final-perf.so": "822b8cfebe587c818ab7598813ca643038dce062045bf1f1dad5180782de53d3",
+    "stage4/final-capture.so": "ef47bd5605cbae8d6fc984436c4f8ebe7b8948b8ae3b2e54232c22bc00806c72",
+    "stage4/r0-capture.so": "ef47bd5605cbae8d6fc984436c4f8ebe7b8948b8ae3b2e54232c22bc00806c72",
+    "stage4/r0-perf.so": "822b8cfebe587c818ab7598813ca643038dce062045bf1f1dad5180782de53d3"
+  },
+  "msprof_exitcodes": {
+    "final-profile-fixed.exitcode": "0",
+    "r0-profile-varlen.exitcode": "0",
+    "final-profile-varlen.exitcode": "0",
+    "r0-profile-fixed.exitcode": "0"
+  },
+  "simulator_exitcode": "0"
+}

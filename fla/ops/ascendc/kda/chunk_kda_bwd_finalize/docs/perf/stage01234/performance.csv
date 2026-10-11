@@ -1,0 +1,5 @@
+run,rows,samples,csv,Task Duration(us),aic_mac_ratio,aic_scalar_ratio,aic_mte1_ratio,aic_mte2_ratio,mte2_range,aic_fixpipe_ratio,aiv_vec_ratio,aiv_scalar_ratio,aiv_mte2_ratio,aiv_mte3_ratio
+final-profile-fixed,30,10,stage4/final-profile-fixed/PROF_000001_20261012002948016_02630448QDGOPHFO/mindstudio_profiler_output/op_summary_20261012002955.csv,2036.1105,0.2365,0.508,0.28,0.912,"[0.912, 0.914]",0.514,0.588,0.8254999999999999,0.678,0.156
+final-profile-varlen,30,10,stage4/final-profile-varlen/PROF_000001_20261012003005723_02632258DHGDDFDJ/mindstudio_profiler_output/op_summary_20261012003013.csv,2102.432,0.234,0.51,0.278,0.914,"[0.914, 0.915]",0.506,0.582,0.8205,0.701,0.153
+r0-profile-fixed,30,10,stage4/r0-profile-fixed/PROF_000001_20261012001615063_02557297FQNFDDHR/mindstudio_profiler_output/op_summary_20261012001623.csv,2020.83,0.2385,0.524,0.2835,0.915,"[0.914, 0.916]",0.52,0.596,0.833,0.734,0.167
+r0-profile-varlen,30,10,stage4/r0-profile-varlen/PROF_000001_20261012001634134_02559405FNRDEBLD/mindstudio_profiler_output/op_summary_20261012001642.csv,2080.542,0.236,0.528,0.281,0.916,"[0.916, 0.917]",0.5195000000000001,0.589,0.829,0.753,0.167

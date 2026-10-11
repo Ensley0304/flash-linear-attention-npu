@@ -123,3 +123,13 @@ Stage 0 每 head 最后一次 L1 读取后，提前装载下一 work 的五个�
 既定 Stage 0～2 容差不变。Stage 3 同时通过局部和独立全路径检查；门槛校准拒绝 beta 错轴、缺少下三角、错误 head、全零/减半和 db_v 多乘 beta。采数版只等待 trace 自身复用，避免整轮采数同步掩盖计算竞态。
 
 最终硬件数据、库身份及完整三 lane 时间线见[四阶段性能记录](perf/stage0123/README.md)。这仍是 Stage 0～3 开发入口；完整七输出、ATK 双标杆和 A3 上板验证尚未完成。
+
+## Stage 4：五阶段流水
+
+新增 `Tza=Zb@akk.T`，BF16×BF16、FP32 累加，直接转 BF16 NZ 驻留 L1。两代 akk/Tza 使用每 head 原有预留区，L1 仍为 384 KiB；Zb 双 head 预取，L0A/B/C 沿用双槽。Stage 2 不再提前释放本代 akk，Stage 4 最后读取后才允许覆盖。
+
+精度版检查 Tza 的独立 CPU 全路径和实际 Zb 局部标杆，并通过仅在采数版执行的 `Tza_L1@akk.T` 核对真实 L1 数据。Stage 0～3 容差不变，新增误差预算通过错误转置、串 head、串代、全零和减半校准。性能版不执行该验证乘法，也不额外导出 Tza。
+
+140 次设备检查通过，覆盖 Stage 0～3 回归、Stage 4 单核/多核尾块、两种 gate 的完整 8K 定长/变长及性能库实际 GM 中间量。Host tiling 和 clang-format 通过。最终 Stage 0～4 耗时为定长 2036.11 μs、变长 2102.43 μs，最大流水线 AIC MTE2 分别为 91.2%/91.4%；最后 10 次均超过 90%，msprof 均正常退出。
+
+测试清单、msprof 和完整三 lane 时间线见[五阶段性能记录](perf/stage01234/README.md)。复现入口为 `--stage 4`。这仍是部分 Stage 的开发验证，不能代替完整七输出、ATK 双标杆及 A3 验收；后续 Stage 5/6 须继续延长驻留数据生命周期。

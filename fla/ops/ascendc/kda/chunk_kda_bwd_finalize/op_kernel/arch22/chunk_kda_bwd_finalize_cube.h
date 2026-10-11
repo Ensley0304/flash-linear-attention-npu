@@ -30,6 +30,8 @@ public:
         pipe_->InitBuffer(l0BBuf_, 2 * L0_AB_SLOT_BYTES);
         pipe_->InitBuffer(l0CBuf_, 2 * L0_C_SLOT_BYTES);
         for (uint32_t slot = 0; slot < 2; ++slot) {
+            akkFree_[slot + 2] = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot + 2]);
             akkFree_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot]);
             keReady_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
@@ -67,7 +69,7 @@ public:
     }
 
     __aicore__ inline void LoadStage0Inputs(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
-                                            int64_t head, uint32_t owner, bool loadState = true)
+                                            int64_t head, uint32_t owner, bool loadState = true, uint32_t akkBank = 0)
     {
         if (loadState) {
             PreloadState(tiling, chunk, chunkIndex, head, owner);
@@ -76,8 +78,9 @@ public:
         const int64_t akkOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * CHUNK_SIZE;
         const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
-        CopyToL1(l1[L1_AKK].ReinterpretCast<bfloat16_t>(), akk_[akkOffset], CHUNK_SIZE, CHUNK_SIZE, rows, rows);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner + 2 * akkBank]);
+        CopyToL1(l1[L1_AKK + akkBank * L1_AKK_BANK_STRIDE].ReinterpretCast<bfloat16_t>(), akk_[akkOffset], CHUNK_SIZE,
+                 CHUNK_SIZE, rows, rows);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(inputReady_[owner]);
     }
 
@@ -85,12 +88,12 @@ public:
     template <bool CAPTURE = false>
     __aicore__ inline void Stage0(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
-                                  uint32_t bank = 0)
+                                  uint32_t bank = 0, uint32_t akkBank = 0)
     {
         const uint64_t slotOffset =
             static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES;
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
-        auto akkL1 = l1[L1_AKK].ReinterpretCast<bfloat16_t>();
+        auto akkL1 = l1[L1_AKK + akkBank * L1_AKK_BANK_STRIDE].ReinterpretCast<bfloat16_t>();
         auto dwL1 = l1[L1_DW].ReinterpretCast<bfloat16_t>();
         auto hL1 = l1[L1_H].ReinterpretCast<bfloat16_t>();
         auto dhL1 = l1[L1_DH].ReinterpretCast<bfloat16_t>();
@@ -180,8 +183,9 @@ public:
 
     template <bool CAPTURE = false>
     __aicore__ inline void Stage2(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
-                                  uint32_t core, GM_ADDR capture = nullptr, uint32_t bank = 0)
+                                  uint32_t core, GM_ADDR capture = nullptr, uint32_t bank = 0, bool retainAkk = false)
     {
+        const uint32_t akkBank = retainAkk ? bank : 0;
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
         auto dw = l1[L1_DW].ReinterpretCast<bfloat16_t>();
         AscendC::GlobalTensor<float> output, snapshot;
@@ -193,8 +197,11 @@ public:
         }
         // dKgb_raw = akk^T @ dW; it does not depend on the kE transfer.
         WaitDw(owner);
-        LoadOperands<true, false>(l1[L1_AKK].ReinterpretCast<bfloat16_t>(), dw, CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, 0);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
+        LoadOperands<true, false>(l1[L1_AKK + akkBank * L1_AKK_BANK_STRIDE].ReinterpretCast<bfloat16_t>(), dw,
+                                  CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, 0);
+        if (!retainAkk) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
+        }
         auto dkgb = Multiply(CHUNK_SIZE, HEAD_DIM, CHUNK_SIZE, 0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
         LoadOperands<false, true>(dw, l1[L1_KE].ReinterpretCast<bfloat16_t>(), CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, 1);
@@ -219,6 +226,64 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
     }
 
+    // Stage 2 has released kE's transfer events; reuse them for the Zb input.
+    __aicore__ inline void LoadZb(uint32_t owner, uint32_t core, uint32_t bank)
+    {
+        AscendC::GlobalTensor<bfloat16_t> zb;
+        zb.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(workspace_ +
+                                                                 static_cast<uint64_t>(core) * WS_CORE_BYTES +
+                                                                 owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES + WS_ZB));
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+        CopyToL1(l1[L1_ZB].ReinterpretCast<bfloat16_t>(), zb, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+    }
+
+    template <bool CAPTURE = false>
+    __aicore__ inline void Stage4(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
+                                  uint32_t bank, GM_ADDR capture = nullptr)
+    {
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+        // Tza = Zb @ akk^T. Two work generations retain separate akk and Tza.
+        LoadOperands<false, true>(l1[L1_ZB].ReinterpretCast<bfloat16_t>(),
+                                  l1[L1_AKK + bank * L1_AKK_BANK_STRIDE].ReinterpretCast<bfloat16_t>(), CHUNK_SIZE,
+                                  CHUNK_SIZE, CHUNK_SIZE, owner);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+        auto tza = Multiply(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, owner);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
+        auto fix = AscendC::FixpipeParamsV220(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, false);
+        fix.quantPre = QuantMode_t::F322BF16;
+        AscendC::Fixpipe<bfloat16_t, float, FIX_NZ>(
+            l1[L1_TZA + bank * L1_TZA_BANK_STRIDE].ReinterpretCast<bfloat16_t>(), tza, fix);
+        if constexpr (CAPTURE) {
+            AscendC::GlobalTensor<bfloat16_t> snapshot;
+            snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
+                capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES + CAPTURE_TZA));
+            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(snapshot, tza, fix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
+        if constexpr (CAPTURE) {
+            // Test-only consumer proves the actual NZ L1 write, not just its GM mirror.
+            // This extra GEMM and export are absent from performance builds.
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
+            LoadOperands<false, true>(l1[L1_TZA + bank * L1_TZA_BANK_STRIDE].ReinterpretCast<bfloat16_t>(),
+                                      l1[L1_AKK + bank * L1_AKK_BANK_STRIDE].ReinterpretCast<bfloat16_t>(), CHUNK_SIZE,
+                                      CHUNK_SIZE, CHUNK_SIZE, owner);
+            auto check = Multiply(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, owner);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
+            AscendC::GlobalTensor<float> snapshot;
+            snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES +
+                CAPTURE_TZA_CHECK));
+            fix.quantPre = QuantMode_t::NoQuant;
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot, check, fix);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner + 2 * bank]);
+    }
+
     __aicore__ inline void ReleaseAkk(uint32_t owner)
     {
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner]);
@@ -236,6 +301,8 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[slot]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(keReady_[slot]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(keFree_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot + 2]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot + 2]);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(akkFree_[slot]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(inputReady_[slot]);
@@ -338,7 +405,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::CO1> l0CBuf_;
     AscendC::GlobalTensor<bfloat16_t> v_, akk_, vNew_, h_, dh_, dvScan_;
     GM_ADDR workspace_ = nullptr;
-    AscendC::TEventID inputReady_[2], l1Free_[2], akkFree_[2], keReady_[2], keFree_[2];
+    AscendC::TEventID inputReady_[2], l1Free_[2], akkFree_[4], keReady_[2], keFree_[2];
     AscendC::TEventID operandReady_[2], operandFree_[2], resultReady_[2], resultFree_[2], dwReady_[2];
 };
 

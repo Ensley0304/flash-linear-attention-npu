@@ -21,6 +21,10 @@ constexpr uint32_t L1_BYTES = HEADS_PER_WORK * L1_HEAD_BYTES;
 constexpr uint32_t L1_AKK = 0;
 constexpr uint32_t L1_DW = 8 * 1024;
 constexpr uint32_t L1_KE = 24 * 1024;
+constexpr uint32_t L1_ZB = 40 * 1024;
+constexpr uint32_t L1_TZA = 48 * 1024;
+constexpr uint32_t L1_AKK_BANK_STRIDE = 56 * 1024;
+constexpr uint32_t L1_TZA_BANK_STRIDE = 128 * 1024;
 constexpr uint32_t L1_H = 64 * 1024;
 constexpr uint32_t L1_DH = 96 * 1024;
 constexpr uint32_t L1_V_NEW = 128 * 1024;
@@ -39,7 +43,7 @@ constexpr uint32_t UB_GK_LAST = 81 * 1024 + 768;
 constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 
-// Two generations are used only by the Stage 0-3 development scheduler.
+// Two generations are used only by the Stage 0-4 development scheduler.
 constexpr uint32_t WS_BANK_BYTES = 256 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 512 * 1024;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
@@ -74,7 +78,7 @@ struct Stage01TilingData {
 
 // Optional test snapshots, separate from the reusable production workspace.
 // Each (head, chunk) owns a complete record, including padding and tail rows.
-constexpr uint32_t CAPTURE_BYTES = 224 * 1024;
+constexpr uint32_t CAPTURE_BYTES = 256 * 1024;
 constexpr uint32_t CAPTURE_DK_STATE_RAW = 0;
 constexpr uint32_t CAPTURE_DV_B = 32 * 1024;
 constexpr uint32_t CAPTURE_ZV = 64 * 1024;
@@ -88,6 +92,8 @@ constexpr uint32_t CAPTURE_DKGB_RAW = 160 * 1024;
 constexpr uint32_t CAPTURE_ZW = 192 * 1024;
 constexpr uint32_t CAPTURE_ZB = 208 * 1024;
 constexpr uint32_t CAPTURE_DB_V = 216 * 1024;
+constexpr uint32_t CAPTURE_TZA = 224 * 1024;
+constexpr uint32_t CAPTURE_TZA_CHECK = 232 * 1024;
 
 static_assert(sizeof(ChunkInfo) == 32);
 static_assert(sizeof(Stage01TilingData) == 40);

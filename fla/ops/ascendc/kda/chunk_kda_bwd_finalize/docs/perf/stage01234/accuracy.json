@@ -1,0 +1,21 @@
+{
+  "scope": "Private Stage 0-4, not complete Finalize/ATK/A3 acceptance",
+  "device": "A2 Ascend910B3 device 1",
+  "checks": {
+    "r0-test.log": 22,
+    "r0-tails-flat.log": 22,
+    "r0-stage0.log": 22,
+    "r0-stage1.log": 22,
+    "r0-stage2.log": 22,
+    "r0-stage3.log": 22,
+    "r0-model-cumulative.log": 2,
+    "r0-model-flat.log": 2,
+    "r0-perf-cumulative.log": 2,
+    "r0-perf-flat.log": 2
+  },
+  "total": 140,
+  "stage4_l1_consumer": "Capture-only Tza_L1 @ akk.T checked with rtol=3e-4, atol=2e-6; absent from performance binary",
+  "performance_validation": "All dv outputs and both retained GM generations; Tza not exported in capture-disabled binary",
+  "host_tiling": "PASS",
+  "native_format": "clang-format 18 repository style"
+}

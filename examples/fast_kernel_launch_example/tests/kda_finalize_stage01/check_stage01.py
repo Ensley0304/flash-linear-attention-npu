@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private Stage 0-3 checks; not an end-to-end Finalize accuracy claim."""
+"""Private Stage 0-4 checks; not an end-to-end Finalize accuracy claim."""
 import argparse
 import os
 import signal
@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch_npu  # noqa: F401
 
-CAPTURE_BYTES = 224 * 1024
+CAPTURE_BYTES = 256 * 1024
 OFFSETS = {
     "dk_state_raw": (0, torch.float32, (64, 128)),
     "dv_b": (32 * 1024, torch.float32, (64, 128)),
@@ -145,6 +145,8 @@ def check_case(args, batch, heads, tokens, lengths=None):
         capture, trace, workspace = capture.cpu(), trace.cpu(), workspace.cpu()
         if args.stage >= 3:
             check_stage3(inputs, beta, chunks, lengths is not None, capture, workspace, dv_out.cpu(), args.workspace_only, expected)
+        if args.stage >= 4 and not args.workspace_only:
+            check_stage4(inputs, beta, chunks, lengths is not None, capture, expected)
         if args.workspace_only:
             assert capture.numel() == 1, "workspace-only requires a capture-disabled build"
             used_cores = workspace.numel() // (1024 * 1024)
@@ -174,7 +176,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
             print(f"PASS workspace stage={args.stage} B={batch} H={heads} T={tokens} "
                   f"varlen={lengths is not None} gate={args.gate_mode} cores={used_cores} repeat={iteration + 1}", flush=True)
             continue
-        names = list(OFFSETS)[:(4, 8, 10, 10)[args.stage]]
+        names = list(OFFSETS)[:(4, 8, 10, 10, 10)[args.stage]]
         # Batch comparisons keep the full 8K check practical without sampling or
         # changing the per-element tolerance / independent CPU reference.
         for name in names:
@@ -225,7 +227,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                                                msg=lambda msg: f"Stage 2 local GEMM: {msg}")
         assert (capture[:, :, 145 * 1024:160 * 1024] == 0xA5).all(), "capture guard overwritten"
         guard_start = 216 * 1024 + 256 if args.stage >= 3 else (208 if args.stage >= 2 else 160) * 1024
-        assert (capture[:, :, guard_start:] == 0xA5).all(), "capture guard overwritten"
+        assert (capture[:, :, guard_start:224 * 1024 if args.stage >= 4 else CAPTURE_BYTES] == 0xA5).all(), "capture guard overwritten"
         works = ((heads + 1) // 2) * len(chunks)
         assert trace.shape == (works * 2, 16)
         used_cores = int(trace[0, 6])
@@ -347,9 +349,41 @@ def check_stage3(inputs, beta, chunks, variable, capture, workspace, dv, workspa
                 assert torch.isfinite(actual).all() and ((actual.float() - wanted).abs() <= budget + 2e-5 + 8e-3 * wanted.abs()).all(), 'workspace Zb'
 
 
+def check_stage4(inputs, beta, chunks, variable, capture, expected):
+    """Isolate the Stage 4 GEMM and independently propagate the full-path budget."""
+    for head in range(inputs[0].shape[-3]):
+        actual, local, full, budgets, l1_checks, l1_refs = [], [], [], [], [], []
+        for c, (sequence, _, start, rows) in enumerate(chunks):
+            a = torch.zeros((64, 64), dtype=torch.float64)
+            src = inputs[3][head] if variable else inputs[3][sequence, head]
+            a[:rows, :rows] = src[start:start + rows, :rows].double()
+            b = torch.zeros(64, dtype=torch.float64)
+            b[:rows] = (beta[head] if variable else beta[sequence, head])[start:start + rows].double()
+            record = capture[head, c]
+            zb = record[208 * 1024:216 * 1024].clone().view(torch.bfloat16).reshape(64, 64).double()
+            got = record[224 * 1024:232 * 1024].clone().view(torch.bfloat16).reshape(64, 64).float()
+            ref = expected[head][c]
+            zb_ref = torch.tril((ref['zV'].double() - ref['zW'].double()) * b[None, :], -1).float().bfloat16().double()
+            zb_budget = torch.tril((ref['zW_budget'].double() + 2e-6 + 3e-4 * ref['zV'].double().abs()) * b[None, :], -1)
+            zb_budget += 2e-5 + 8e-3 * zb_ref.abs()
+            l1_checks.append(record[232 * 1024:248 * 1024].clone().view(torch.float32).reshape(64, 64))
+            l1_refs.append((got.double() @ a.T).float())
+            actual.append(got)
+            local.append((zb @ a.T).float().bfloat16().float())
+            full.append((zb_ref @ a.T).float().bfloat16().float())
+            budgets.append((zb_budget @ a.abs().T).float())
+            assert torch.count_nonzero(got[rows:]) == 0 and torch.count_nonzero(got[:, rows:]) == 0, 'Tza tail'
+        got, wanted = torch.stack(actual), torch.stack(full)
+        torch.testing.assert_close(torch.stack(l1_checks), torch.stack(l1_refs), rtol=3e-4, atol=2e-6, msg='Stage 4 NZ L1 consumer')
+        assert torch.isfinite(got).all(), 'Tza nonfinite'
+        torch.testing.assert_close(got, torch.stack(local), rtol=8e-3, atol=2e-5, msg='Stage 4 local Tza')
+        assert ((got - wanted).abs() <= torch.stack(budgets) + 2e-5 + 8e-3 * wanted.abs()).all(), 'Stage 4 full Tza'
+    assert (capture[:, :, 248 * 1024:] == 0xA5).all(), 'Tza capture guard'
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4), default=0)
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=2)

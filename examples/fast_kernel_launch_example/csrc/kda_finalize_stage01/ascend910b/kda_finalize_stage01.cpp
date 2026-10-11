@@ -26,7 +26,7 @@ constexpr bool CAPTURE = KDA_FINALIZE_STAGE01_CAPTURE != 0;
 
 using namespace KDA::Arch22;
 
-// Stage 0-3 harness: two GM generations overlap Stage 3 with the next Cube work.
+// Stage 0-4 harness: two GM generations overlap Stage 3 with the next Cube work.
 // Later stages must retain exp2_gk/rH or defer this release until their last UB read.
 constexpr uint16_t VECTOR_RELEASE = 9;
 constexpr uint16_t VECTOR_ACK = 10;
@@ -77,12 +77,14 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
-                    cube.LoadStage0Inputs(tiling, chunk, chunkIndex, firstHead + owner, owner, work == core);
+                    cube.LoadStage0Inputs(tiling, chunk, chunkIndex, firstHead + owner, owner, work == core,
+                                          LAST_STAGE >= 4 ? bank : 0);
                 }
             }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
-                    cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture, bank);
+                    cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture, bank,
+                                         LAST_STAGE >= 4 ? bank : 0);
                     if constexpr (LAST_STAGE < 2) {
                         cube.WaitDw(owner);
                         cube.ReleaseAkk(owner);
@@ -122,7 +124,8 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             if constexpr (LAST_STAGE >= 2) {
                 for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                     if (firstHead + owner < tiling.heads) {
-                        cube.Stage2<CAPTURE>(tiling, chunkIndex, firstHead + owner, owner, core, capture, bank);
+                        cube.Stage2<CAPTURE>(tiling, chunkIndex, firstHead + owner, owner, core, capture, bank,
+                                             LAST_STAGE >= 4);
                     }
                 }
             }
@@ -134,9 +137,41 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                 // Two GM generations: retire the previous consumer before reusing its bank.
                 if (work != core) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_ACK + (bank ^ 1));
+                    if constexpr (LAST_STAGE >= 4) {
+                        const int64_t readyWork = work - tiling.usedCoreNum;
+                        const int64_t readyHead = (readyWork / tiling.chunks) * HEADS_PER_WORK;
+                        const uint32_t readyBank = (readyWork / tiling.usedCoreNum) & 1;
+                        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                            if (readyHead + owner < tiling.heads) {
+                                cube.LoadZb(owner, core, readyBank);
+                            }
+                        }
+                        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                            if (readyHead + owner < tiling.heads) {
+                                cube.Stage4<CAPTURE>(tiling, readyWork % tiling.chunks, readyHead + owner, owner,
+                                                     readyBank, capture);
+                            }
+                        }
+                    }
                 }
                 if (work + tiling.usedCoreNum >= workCount) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_ACK + bank);
+                    if constexpr (LAST_STAGE >= 4) {
+                        const int64_t readyWork = work;
+                        const int64_t readyHead = (readyWork / tiling.chunks) * HEADS_PER_WORK;
+                        const uint32_t readyBank = (readyWork / tiling.usedCoreNum) & 1;
+                        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                            if (readyHead + owner < tiling.heads) {
+                                cube.LoadZb(owner, core, readyBank);
+                            }
+                        }
+                        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                            if (readyHead + owner < tiling.heads) {
+                                cube.Stage4<CAPTURE>(tiling, readyWork % tiling.chunks, readyHead + owner, owner,
+                                                     readyBank, capture);
+                            }
+                        }
+                    }
                 }
             } else {
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_ACK);
@@ -256,7 +291,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
            at::IntArrayRef cuSeqlens, int64_t coreLimit, int64_t lastStage, const c10::optional<at::Tensor> &beta,
            const c10::optional<at::Tensor> &dv)
 {
-    TORCH_CHECK(lastStage >= 0 && lastStage <= 3, "last_stage must be 0, 1, 2 or 3");
+    TORCH_CHECK(lastStage >= 0 && lastStage <= 4, "last_stage must be 0, 1, 2, 3 or 4");
     TORCH_CHECK(k.device().type() == c10::DeviceType::PrivateUse1, "expected NPU inputs");
     c10::DeviceGuard guard(k.device());
     TORCH_CHECK(k.dim() == 3 || k.dim() == 4, "expected [B,H,T,128] or [H,T,128]");
@@ -264,7 +299,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
     const int64_t batch = variable ? 1 : k.size(0);
     const int64_t heads = k.size(k.dim() - 3);
     const int64_t tokens = k.size(k.dim() - 2);
-    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-3 requires K=V=128");
+    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-4 requires K=V=128");
     for (const auto *tensor : {&k, &v, &vNew, &h, &dh, &dvScan, &akk}) {
         TORCH_CHECK(tensor->device() == k.device() && tensor->is_contiguous() && tensor->scalar_type() == at::kBFloat16,
                     "expected contiguous BF16 inputs on one device");
@@ -339,8 +374,15 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
                 (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
                 (GM_ADDR)trace.data_ptr(), tiling);
-        } else {
+        } else if (lastStage == 3) {
             Stage01Kernel<3><<<tiling.usedCoreNum, nullptr, stream>>>(
+                (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
+                (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
+                (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
+                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
+                (GM_ADDR)trace.data_ptr(), tiling);
+        } else {
+            Stage01Kernel<4><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
