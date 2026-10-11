@@ -115,5 +115,75 @@ class GdnBoundaryTests(BoundaryChecks, unittest.TestCase):
     kind = "gdn"
 
 
+class KdaArch22BackwardTests(unittest.TestCase):
+    def test_split_backward_matches_recurrence_with_boundary_loss(self):
+        """独立逐词元参考验证 A2/A3 拆分反向，包含非零首末状态和共享参数梯度。"""
+        torch.set_num_threads(1)
+        x = {n: t.float() for n, t in chunk_kda_cp.make_inputs(128, 3, 29).items()}
+        x["A_log"] = torch.tensor([-0.2, 0.1, 0.3])
+        x["dt_bias"] = torch.linspace(-0.1, 0.1, 384).reshape(3, 128)
+        shape = (1, 3, 2, 64, 128)
+        gen = torch.Generator().manual_seed(31)
+        h = torch.randn(1, 2, 3, 128, 128, generator=gen) * 0.05
+        dh = torch.randn(h.shape, generator=gen) * 0.1
+        scale = 128 ** -0.5
+        leaves = {n: t.clone().requires_grad_(True) for n, t in x.items() if n != "do"}
+        raw = leaves["g"] + leaves["dt_bias"][None, :, None, :]
+        gate = -5 * torch.sigmoid(leaves["A_log"].exp()[None, :, None, None] * raw)
+        loss = torch.zeros(())
+        for block in range(2):
+            state = h[:, block]
+            for t in range(block * 64, (block + 1) * 64):
+                state = state * gate[:, :, t].exp().unsqueeze(-1)
+                key = leaves["k"][:, :, t]
+                delta = (leaves["v"][:, :, t] - (key.unsqueeze(-1) * state).sum(-2))
+                delta = delta * leaves["beta"][:, :, t, None]
+                state = state + key.unsqueeze(-1) * delta.unsqueeze(-2)
+                out = (leaves["q"][:, :, t, :, None] * state).sum(-2) * scale
+                loss = loss + (out * x["do"][:, :, t]).sum()
+            loss = loss + (state * dh[:, block]).sum()
+        loss.backward()
+
+        # 构造前向保存量；测试标杆仍是上面的独立递推，不对本段求导。
+        gc = gate.detach().reshape(shape).cumsum(-2) / torch.log(torch.tensor(2.0))
+        qc, kc, vc = (x[n].reshape(shape) for n in ("q", "k", "v"))
+        beta = x["beta"].reshape(1, 3, 2, 64, 1)
+        weights = torch.exp2(gc.unsqueeze(-2) - gc.unsqueeze(-3))
+        kk = (kc.unsqueeze(-2) * kc.unsqueeze(-3) * weights).sum(-1)
+        inverse = torch.linalg.inv(torch.eye(64) + torch.tril(beta * kk, diagonal=-1))
+        aqk = torch.tril((qc.unsqueeze(-2) * kc.unsqueeze(-3) * weights).sum(-1)) * scale
+        hc = h.permute(0, 2, 1, 3, 4)
+        vn = inverse @ (beta * vc - (beta * kc * torch.exp2(gc)) @ hc)
+        saved = (gc.reshape_as(x["g"]), aqk.reshape(1, 3, 128, 64),
+                 inverse.reshape(1, 3, 128, 64))
+        d_aqk, dv0, dq_raw = chunk_kda_cp.backward_prepare_a2_a3(
+            saved[1], vn.reshape_as(x["v"]), x["do"], h, scale)
+        kg = kc * torch.exp2(gc[..., -1:, :] - gc)
+        du = dv0.reshape(shape) + kg @ dh.permute(0, 2, 1, 3, 4)
+
+        def intra(q, k, g, b, daq, dak, dq, dk, db, dg, **kwargs):
+            # 以完整成对门控表达式求导，独立检查收尾阶段传给块内核的梯度。
+            q, k, g, b = [t.detach().clone().requires_grad_() for t in (q, k, g, b)]
+            qr, kr, gr = [t.reshape(shape) for t in (q, k, g)]
+            e = torch.exp2(gr.unsqueeze(-2) - gr.unsqueeze(-3))
+            qk = (qr.unsqueeze(-2) * kr.unsqueeze(-3) * e).sum(-1)
+            kk = (kr.unsqueeze(-2) * kr.unsqueeze(-3) * e).sum(-1)
+            objective = (qk * daq.reshape_as(qk)).sum()
+            objective += (b.reshape(1, 3, 2, 64, 1) * kk * dak.reshape_as(kk)).sum()
+            delta = torch.autograd.grad(objective, (q, k, b, g))
+            return (dq + delta[0], dk + delta[1], db + delta[2],
+                    dg + delta[3] / torch.log(torch.tensor(2.0)))
+
+        fake = types.ModuleType("fla_npu.ops.ascendc")
+        fake.chunk_kda_bwd_intra = intra
+        with patch.dict(sys.modules, {"fla_npu.ops.ascendc": fake}):
+            actual = chunk_kda_cp.backward_finalize_a2_a3(
+                x, saved, h, vn.reshape_as(x["v"]), dh, du.reshape_as(x["v"]),
+                d_aqk, dq_raw, scale)
+        for name, value in zip(("q", "k", "v", "beta", "g", "A_log", "dt_bias"), actual):
+            with self.subTest(gradient=name):
+                torch.testing.assert_close(value, leaves[name].grad, rtol=2e-4, atol=2e-5)
+
+
 if __name__ == "__main__":
     unittest.main()
