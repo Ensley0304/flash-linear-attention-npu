@@ -21,6 +21,8 @@ zV           = dv_scan @ vᵀ
 
 dW：FP32 L0C 经 Fixpipe（F322BF16）转 BF16 NZ 驻留 L1，每 head 16 KiB。
 
+Stage 0 预取：两个 head 的输入先分别搬入既有 L1 lane；每 lane 独立 `MTE2_MTE1/MTE1_MTE2`，h0 就绪后即可计算，同时 MTE2 继续搬 h1。L0A/B 和 L0C 各保留两槽，将操作数搬运、MMAD 发射和结果写回分开排队：预载 dk_state_raw/dv_b，发射两次 MMAD，再在空闲槽预载 dW/zV；`M_FIX` 只在相应 Fixpipe 前等待。输入/结果槽分别按 `MTE1_M/M_MTE1`、`M_FIX/FIX_M` 保护；dW 独立驻留区不参与输入预取覆写。尾 head 不预取、不消费其 input-ready，结束时仅排空初始 free。无跨 work 提前覆盖驻留量。
+
 ## Stage 1：Vector
 
 ```text
@@ -31,6 +33,8 @@ gk_last = gk[valid_rows - 1, :]
 ```
 
 kE 在 FP32 中计算后，以 RNE 转为单份 BF16，经 UB→GM→L1 供 Stage 2 使用。
+
+Stage 1 双缓冲采用 32 行 tile（后续 Stage 的 16 行 tile 不变）：W0/W1 与 W2/W3 分别存一份 h/dh BF16 输入，先预取两块；Cast 末次读取后释放输入槽，预取第 i+2 块与第 i 块归约并行。W4/W5、W6/W7、W8/W9 分别为 FP32 h、dh、乘积，W10 为归约临时。rH 完成后 W0～W3 改存两份原始 gk，W4～W7 改存 FP32 k/kE，W8/W9 改存两个 BF16 kE 输出。输入按 `MTE2_V/V_MTE2`、输出按 `V_MTE3/MTE3_V` 各两组事件保护；只在消费或同槽复用时等待，Stage 结束排空输出。k/exp2_gk 仅清零无效尾行，无效 gate 不进入 Exp，kE 尾行仍写零。工作区最高到 UB[176 KiB)，总预留仍为 192 KiB。
 
 ## Stage 2：Cube
 

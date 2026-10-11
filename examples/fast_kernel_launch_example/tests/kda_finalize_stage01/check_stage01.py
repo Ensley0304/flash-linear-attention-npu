@@ -96,8 +96,9 @@ def decode(record, name):
 
 def check_case(args, batch, heads, tokens, lengths=None):
     inputs, cu, chunks = make_case(batch, heads, tokens, lengths)
-    expected = [[reference(inputs, chunks, head, c, lengths is not None)
-                 for c in range(len(chunks))] for head in range(heads)]
+    expected = None if args.workspace_only else [
+        [reference(inputs, chunks, head, c, lengths is not None) for c in range(len(chunks))]
+        for head in range(heads)]
     device_inputs = [x.to(f"npu:{args.device}") for x in inputs]
     torch.npu.synchronize()
     for iteration in range(args.repeat):
@@ -110,23 +111,55 @@ def check_case(args, batch, heads, tokens, lengths=None):
         finally:
             signal.alarm(0)
         capture, trace, workspace = capture.cpu(), trace.cpu(), workspace.cpu()
+        if args.workspace_only:
+            assert capture.numel() == 1, "workspace-only requires a capture-disabled build"
+            used_cores = workspace.numel() // (1024 * 1024)
+            works = ((heads + 1) // 2) * len(chunks)
+            for core in range(used_cores):
+                work = core + ((works - 1 - core) // used_cores) * used_cores
+                c = work % len(chunks)
+                for owner in range(2):
+                    head = (work // len(chunks)) * 2 + owner
+                    if head >= heads:
+                        continue
+                    wanted = reference(inputs, chunks, head, c, lengths is not None)
+                    base = (2 * core + owner) * 512 * 1024
+                    record = workspace[base:base + 512 * 1024]
+                    for name in ("dk_state_raw", "dv_b", "zV"):
+                        actual = decode(record, name)
+                        assert torch.isfinite(actual).all(), name
+                        torch.testing.assert_close(actual, wanted[name], rtol=3e-4, atol=2e-6)
+                    if args.stage == 1:
+                        actual = record[144 * 1024:160 * 1024].clone().view(torch.bfloat16).reshape(64, 128)
+                        assert torch.isfinite(actual).all(), "kE"
+                        torch.testing.assert_close(actual.float(), wanted["kE"].float(), rtol=8e-3, atol=2e-5)
+            print(f"PASS workspace stage={args.stage} B={batch} H={heads} T={tokens} "
+                  f"varlen={lengths is not None} cores={used_cores} repeat={iteration + 1}", flush=True)
+            continue
         names = list(OFFSETS)[:4] if args.stage == 0 else list(OFFSETS)
-        for head in range(heads):
-            for c, (_, _, _, rows) in enumerate(chunks):
-                for name in names:
-                    actual = decode(capture[head, c], name)
-                    wanted = expected[head][c][name]
-                    assert torch.isfinite(actual).all(), (name, head, c)
-                    if name in ("dW", "kE"):
-                        rtol, atol = 8e-3, 2e-5
-                    elif name in ("exp2_gk", "gk_last"):
-                        rtol, atol = 3e-5, 1e-7
-                    else:
-                        rtol, atol = 3e-4, 2e-6
-                    torch.testing.assert_close(
-                        actual.float(), wanted.float(), rtol=rtol, atol=atol,
-                        msg=lambda msg: f"{name}, head={head}, chunk={c}, rows={rows}: {msg}")
-                assert (capture[head, c, 145 * 1024:] == 0xA5).all(), "capture guard overwritten"
+        # Batch comparisons keep the full 8K check practical without sampling or
+        # changing the per-element tolerance / independent CPU reference.
+        for name in names:
+            offset, dtype, shape = OFFSETS[name]
+            elements = 1
+            for size in shape:
+                elements *= size
+            size = elements * torch.empty((), dtype=dtype).element_size()
+            actual = capture[:, :, offset:offset + size].contiguous().view(dtype).reshape(
+                heads, len(chunks), *shape)
+            wanted = torch.stack([torch.stack([expected[head][c][name] for c in range(len(chunks))])
+                                  for head in range(heads)])
+            assert torch.isfinite(actual).all(), name
+            if name in ("dW", "kE"):
+                rtol, atol = 8e-3, 2e-5
+            elif name in ("exp2_gk", "gk_last"):
+                rtol, atol = 3e-5, 1e-7
+            else:
+                rtol, atol = 3e-4, 2e-6
+            torch.testing.assert_close(
+                actual.float(), wanted.float(), rtol=rtol, atol=atol,
+                msg=lambda msg: f"{name}, indices=(head,chunk,...): {msg}")
+        assert (capture[:, :, 145 * 1024:] == 0xA5).all(), "capture guard overwritten"
         works = ((heads + 1) // 2) * len(chunks)
         assert trace.shape == (works * 2, 16)
         used_cores = int(trace[0, 6])
@@ -176,7 +209,8 @@ def main():
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=2)
-    parser.add_argument("--suite", choices=("smoke", "tails"), default="smoke")
+    parser.add_argument("--suite", choices=("smoke", "tails", "model"), default="smoke")
+    parser.add_argument("--workspace-only", action="store_true")
     parser.add_argument("--library", type=Path, required=True)
     args = parser.parse_args()
     torch.set_num_threads(4)
@@ -187,6 +221,8 @@ def main():
     if args.suite == "tails":
         cases = [(1, 3, t, None) for t in (1, 16, 31, 32, 33, 63, 64, 129)]
         cases += [(2, 3, 65, None), (1, 96, 65, None), (1, 3, 289, [0, 1, 31, 32, 33, 63, 64, 65, 0])]
+    elif args.suite == "model":
+        cases = [(1, 96, 8192, None), (1, 96, 8192, [0, 1, 31, 64, 65, 4096, 3935, 0])]
     for case in cases:
         check_case(args, *case)
 

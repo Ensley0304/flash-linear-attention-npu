@@ -1,0 +1,23 @@
+{
+  "base_commit": "ecb0768b41580f670b2e1c8fa2e34fd39d2792a4",
+  "reference_pr": "https://gitcode.com/cann/cannbot-skills/pull/1069",
+  "reference_head": "4950cbd7c45e0d44cb8ec52598edf53cdc7f16ca",
+  "server": "a2-server",
+  "soc": "910B3",
+  "device": 1,
+  "CANN": "9.1",
+  "warmup": 20,
+  "samples": 10,
+  "source_sha256": {
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "51b8371aacac477ed63c8d0c188f23b93c4e45cbd3abf3bfc4548a0c439ec588",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "0f55cb2b4075cee213b4b20c48781a2283aa1e54df93c73afe411ac6630dbf9a",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "72cf3a627d552fa03c7f331054e3e2a99c8b407f3e2a323207f1900a1a79c040",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/CMakeLists.txt": "6d0de8bcff404c29068914d5a7e7ca114bdc821a4f64fdce1481ab0541a057e0",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "ec2d660c457b9a840bfa97520932250ff4a21ca5ec96fb0b5e5de36d40a59a7a",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "d2c02b2fa3b43f2151bbf7cd8db65309b97a7a04cf42d8723285b408af36b734"
+  },
+  "library_sha256": {
+    "verified-capture.so": "166f9a95f44b317920b346b5a1da3a19b1767d563b759742a61aeba03f189a10",
+    "verified-perf.so": "f59970ef53ac858e116297cbdd76cdcc78112fc116577418328bebab2da8c257"
+  }
+}

@@ -16,7 +16,13 @@
 #include "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h"
 #include "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h"
 
+#ifndef KDA_FINALIZE_STAGE01_CAPTURE
+#define KDA_FINALIZE_STAGE01_CAPTURE 1
+#endif
+
 namespace ascend_ops::KdaFinalizeStage01 {
+
+constexpr bool CAPTURE = KDA_FINALIZE_STAGE01_CAPTURE != 0;
 
 using namespace KDA::Arch22;
 
@@ -49,12 +55,16 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(WORK_OPEN);
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
-                    cube.Stage0<true>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture);
+                    cube.LoadStage0Inputs(tiling, chunk, chunkIndex, firstHead + owner, owner);
+                }
+            }
+            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                if (firstHead + owner < tiling.heads) {
+                    cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture);
                     // Stage 2 is absent: explicitly retire its dW ready event.
                     cube.WaitDw(owner);
                 }
             }
-            cube.ReleaseInputs();
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(CAPTURE_READY);
             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KE_READY);
             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(CAPTURE_DONE);
@@ -83,31 +93,33 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                 if (head < tiling.heads) {
                     const ChunkInfo chunk = {chunks[chunkIndex].sequence, chunks[chunkIndex].localChunk,
                                              chunks[chunkIndex].tokenStart, chunks[chunkIndex].validRows};
-                    vector.Stage1<true>(tiling, chunk, chunkIndex, head, owner, core, capture);
+                    vector.Stage1<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture);
                 }
             }
             // The absent owner in an odd-head work also closes the collective.
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(KE_READY);
             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(CAPTURE_READY);
-            record.SetValue(0, work);
-            record.SetValue(1, core);
-            record.SetValue(2, owner);
-            record.SetValue(3, head);
-            record.SetValue(4, chunkIndex);
-            record.SetValue(5, work / tiling.usedCoreNum + 1);
-            record.SetValue(6, tiling.usedCoreNum);
-            record.SetValue(7, chunks[chunkIndex].validRows);
-            record.SetValue(8, head < tiling.heads ? 1 : 0);
-            record.SetValue(9, LAST_STAGE);
-            record.SetValue(10, 7); // WORK_OPEN waited, KE_READY sent, CAPTURE_READY waited.
-            record.SetValue(11, AscendC::GetBlockNum());
-            record.SetValue(12, AscendC::GetSubBlockNum());
-            record.SetValue(13, AscendC::GetBlockIdx());
-            record.SetValue(14, static_cast<int64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES);
-            record.SetValue(15, 0);
-            AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(traceReady);
-            AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(traceReady);
-            AscendC::DataCopy(traceGm[(work * HEADS_PER_WORK + owner) * 16], record, 16);
+            if constexpr (CAPTURE) {
+                record.SetValue(0, work);
+                record.SetValue(1, core);
+                record.SetValue(2, owner);
+                record.SetValue(3, head);
+                record.SetValue(4, chunkIndex);
+                record.SetValue(5, work / tiling.usedCoreNum + 1);
+                record.SetValue(6, tiling.usedCoreNum);
+                record.SetValue(7, chunks[chunkIndex].validRows);
+                record.SetValue(8, head < tiling.heads ? 1 : 0);
+                record.SetValue(9, LAST_STAGE);
+                record.SetValue(10, 7); // WORK_OPEN waited, KE_READY sent, CAPTURE_READY waited.
+                record.SetValue(11, AscendC::GetBlockNum());
+                record.SetValue(12, AscendC::GetSubBlockNum());
+                record.SetValue(13, AscendC::GetBlockIdx());
+                record.SetValue(14, static_cast<int64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES);
+                record.SetValue(15, 0);
+                AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(traceReady);
+                AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(traceReady);
+                AscendC::DataCopy(traceGm[(work * HEADS_PER_WORK + owner) * 16], record, 16);
+            }
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(CAPTURE_DONE);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(traceFree);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(traceFree);
@@ -166,9 +178,14 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
         metadata.insert(metadata.end(), {chunk.sequence, chunk.localChunk, chunk.tokenStart, chunk.validRows});
     }
     auto chunkMetadata = at::tensor(metadata, k.options().dtype(at::kLong));
-    auto workspace = at::full({static_cast<int64_t>(plan.workspaceBytes)}, 0x5A, k.options().dtype(at::kByte));
-    auto capture = at::full({heads, tiling.chunks, CAPTURE_BYTES}, 0xA5, k.options().dtype(at::kByte));
-    auto trace = at::full({static_cast<int64_t>(plan.traceBytes / 128), 16}, -1, k.options().dtype(at::kLong));
+    auto workspace = CAPTURE ?
+                         at::full({static_cast<int64_t>(plan.workspaceBytes)}, 0x5A, k.options().dtype(at::kByte)) :
+                         at::empty({static_cast<int64_t>(plan.workspaceBytes)}, k.options().dtype(at::kByte));
+    auto capture = CAPTURE ? at::full({heads, tiling.chunks, CAPTURE_BYTES}, 0xA5, k.options().dtype(at::kByte)) :
+                             at::empty({1}, k.options().dtype(at::kByte));
+    auto trace = CAPTURE ?
+                     at::full({static_cast<int64_t>(plan.traceBytes / 128), 16}, -1, k.options().dtype(at::kLong)) :
+                     at::empty({1}, k.options().dtype(at::kLong));
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
     auto launch = [=]() -> int {
         if (lastStage == 0) {

@@ -1,0 +1,214 @@
+{
+  "baseline": {
+    "core0.cubecore0": {
+      "busy_us": {
+        "MTE1": 1.1744424402713776,
+        "MTE2": 3.260556221008301,
+        "MTE3": 0,
+        "VECTOR": 0,
+        "CUBE": 0.9277768731117249,
+        "FIXP": 2.9511115550994873
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0.28222253918647766,
+        "MTE1+CUBE": 0.31888699531555176,
+        "FIXP+CUBE": 0.6122213006019592
+      }
+    },
+    "core0.veccore0": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 3.514999106526375,
+        "MTE3": 0.7094444334506989,
+        "VECTOR": 2.964443393982947,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    },
+    "core0.veccore1": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.063331440091133,
+        "MTE3": 0.5822222232818604,
+        "VECTOR": 2.9644443476572633,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    }
+  },
+  "round1": {
+    "core0.cubecore0": {
+      "busy_us": {
+        "MTE1": 1.1711110174655914,
+        "MTE2": 4.016111493110657,
+        "MTE3": 0,
+        "VECTOR": 0,
+        "CUBE": 0.9277778267860413,
+        "FIXP": 2.348333790898323
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0.28222253918647766,
+        "MTE1+CUBE": 0.31888890266418457,
+        "FIXP+CUBE": 0.6122222542762756
+      }
+    },
+    "core0.veccore0": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.284444153308868,
+        "MTE3": 0.7327778339385986,
+        "VECTOR": 2.9111101729795337,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 2.042777224443853,
+        "MTE3+VECTOR": 0.44777833111584187,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    },
+    "core0.veccore1": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.373888522386551,
+        "MTE3": 0.700000062584877,
+        "VECTOR": 2.9105545431375504,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 2.0316660683602095,
+        "MTE3+VECTOR": 0.45999807491898537,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    }
+  },
+  "round2": {
+    "core0.cubecore0": {
+      "busy_us": {
+        "MTE1": 1.182777352631092,
+        "MTE2": 4.263889312744141,
+        "MTE3": 0,
+        "VECTOR": 0,
+        "CUBE": 0.9277778267860413,
+        "FIXP": 2.2666680216789246
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0.46388891339302063,
+        "MTE1+CUBE": 0.31888846307992935,
+        "FIXP+CUBE": 0.6122222542762756
+      }
+    },
+    "core0.veccore0": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.414999753236771,
+        "MTE3": 0.7277778387069702,
+        "VECTOR": 2.9050016812980175,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 2.21777780726552,
+        "MTE3+VECTOR": 0.4477784503251314,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    },
+    "core0.veccore1": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.5161100924015045,
+        "MTE3": 0.700000062584877,
+        "VECTOR": 2.922223599627614,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 2.2422236502170563,
+        "MTE3+VECTOR": 0.4600009359419346,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    }
+  },
+  "final": {
+    "core0.cubecore0": {
+      "busy_us": {
+        "MTE1": 1.171110063791275,
+        "MTE2": 4.320555210113525,
+        "MTE3": 0,
+        "VECTOR": 0,
+        "CUBE": 0.9277778267860413,
+        "FIXP": 2.287222668528557
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0.46388891339302063,
+        "MTE1+CUBE": 0.31888794898986816,
+        "FIXP+CUBE": 0.6122222542762756
+      }
+    },
+    "core0.veccore0": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.464999198913574,
+        "MTE3": 0.33222220838069916,
+        "VECTOR": 2.483333789743483,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 2.0144447339698672,
+        "MTE3+VECTOR": 0.16611109487712383,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    },
+    "core0.veccore1": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 4.413332641124725,
+        "MTE3": 0.43611110746860504,
+        "VECTOR": 2.4955560341477394,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 2.1611111778765917,
+        "MTE3+VECTOR": 0.06888867914676666,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    }
+  }
+}

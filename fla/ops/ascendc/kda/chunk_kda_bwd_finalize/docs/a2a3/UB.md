@@ -36,7 +36,7 @@
 
 | Stage | 工作槽安排 |
 | --- | --- |
-| 1 | W0 打包 h/dh BF16 tile；W1/W2 转 FP32，W3 乘积，W4～W12 归约及临时。rH 完成后复用工作槽计算 gk 指数和 kE，BF16 kE 写 GM。 |
+| 1 | 32 行 tile；W0/W1、W2/W3：两份 h/dh BF16 输入；W4/W5：FP32 h；W6/W7：FP32 dh；W8/W9：乘积；W10：归约临时。rH 完成后 W0～W3 改存 gk ping/pong，W4～W7 改存 FP32 k/kE，W8/W9 改存 BF16 kE 输出 ping/pong。W11/W12 空闲。 |
 | 3 | 先处理 zV/zW/Zb，再复用槽处理 dv_b/v。Zb、dv 转 BF16 后写出；db_v 留在常驻区。两部分不同时保留大矩阵。 |
 | 5 | W0：dk_state_raw→dk_state；W1：dKgb_raw→exp2_gk×dKgb_raw；W2：dq_raw→dq_base；W3：gk→衰减因子；W4/W5：q/k FP32；W6/W7：dk_base/dg_base；W8～W12：乘积、归约及搬运临时。 |
 | 7 | 先分 tile 生成两个 strict_lower 高低位及对角线；再逐个生成 kNeg、qPos、bkPos。W0/W1：q/k FP32；W2/W3：正/负居中指数；W4：当前操作数；W5：重建值/残差；W6：BF16 高低位；W7～W12：mask、转换及临时。 |
@@ -56,7 +56,7 @@ Stage 9 的 dg 按当前带写 GM，Stage 11 再读。Stage 11 在带内从后�
 - 单个工作槽复用前同时满足 Vector 最后读取、MTE2 写入及 MTE3 读取完成；仅发出写回指令不能覆盖。
 - q/k/rstd 等按实际 layout 搬入连续 UB；不足 16 行用 mask 和零填充。beta sigmoid 开启时使用保存的 FP32 beta_eff。
 - dG、dBeta 按接口固定 BSND/TND 写出，dq/dk/dv 按 outputLayout 写出；非对齐拷贝按有效长度使用 DataCopyPad，不越界补写。
-- 首版不重叠两个 Vector tile 的工作槽；先保留 Stage 0/1、4/6 与 5、10 与 9 的 Cube/Vector 重叠。后续预取需另算缓冲。
+- Stage 1 为两个 32 行输入 tile 和两个 kE 输出预留独立地址及 ready/free 事件；提前两块搬入，Cast/Muls 末次消费后释放输入，输出同槽复用前等待 MTE3。FP32 计算临时按 Vector 顺序复用。其余 Vector Stage 的双缓冲留待实现时独立核算。
 - 归约/扫描 API 的实际 scratch 必须落入表中剩余槽。若目标 CANN 要求更大 scratch，带宽仍保持 32 行，只缩小内层 Vector tile；不得超过 192 KiB。
 
 ## Stage 12：独立 kernel
