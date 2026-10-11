@@ -21,7 +21,9 @@ zV           = dv_scan @ vᵀ
 
 dW：FP32 L0C 经 Fixpipe（F322BF16）转 BF16 NZ 驻留 L1，每 head 16 KiB。
 
-Stage 0 预取：两个 head 的输入先分别搬入既有 L1 lane；每 lane 独立 `MTE2_MTE1/MTE1_MTE2`，h0 就绪后即可计算，同时 MTE2 继续搬 h1。L0A/B 和 L0C 各保留两槽，将操作数搬运、MMAD 发射和结果写回分开排队：预载 dk_state_raw/dv_b，发射两次 MMAD，再在空闲槽预载 dW/zV；`M_FIX` 只在相应 Fixpipe 前等待。输入/结果槽分别按 `MTE1_M/M_MTE1`、`M_FIX/FIX_M` 保护；dW 独立驻留区不参与输入预取覆写。尾 head 不预取、不消费其 input-ready，结束时仅排空初始 free。无跨 work 提前覆盖驻留量。
+Stage 0 预取：两个 head 的输入先分别搬入既有 L1 lane；每 lane 独立 `MTE2_MTE1/MTE1_MTE2`，h0 就绪后即可计算，同时 MTE2 继续搬 h1。L0A/B 和 L0C 各保留两槽，将操作数搬运、MMAD 发射和结果写回分开排队：预载 dk_state_raw/dv_b，发射两次 MMAD，再在空闲槽预载 dW/zV；`M_FIX` 只在相应 Fixpipe 前等待。输入/结果槽分别按 `MTE1_M/M_MTE1`、`M_FIX/FIX_M` 保护；dW 独立驻留区不参与输入预取覆写。尾 head 不预取、不消费其 input-ready，结束时仅排空初始 free。
+
+每 head 最后一次 Stage 0 L1→L0 读取后，按 `MTE1_MTE2` 释放 h/dh/v_new/dv_scan/v 的 112 KiB 区，立即预取本核下一 work 的同一 owner 输入；下一 work 只补搬 akk，再发布 input-ready。当前 akk/dW 及 workspace 不提前覆盖，跨核握手不变。首 work 全量装载，末 work 不预取。后续 Stage 7 须采用 [L1 分区](a2a3/L1内存.md) 中避开预取区的布局。
 
 ## Stage 1：Vector
 

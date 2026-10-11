@@ -1,0 +1,108 @@
+{
+  "baseline": {
+    "core0.cubecore0": {
+      "busy_us": {
+        "MTE1": 2.342222511768341,
+        "MTE2": 8.653333306312561,
+        "MTE3": 0,
+        "VECTOR": 0,
+        "CUBE": 1.8555556535720825,
+        "FIXP": 4.578333213925362
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0.9277778267860413,
+        "MTE1+CUBE": 0.6377773284912109,
+        "FIXP+CUBE": 1.2244445085525513
+      }
+    },
+    "core0.veccore0": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 8.934442639350891,
+        "MTE3": 0.7255555391311646,
+        "VECTOR": 4.978888393379748,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 4.175554481334984,
+        "MTE3+VECTOR": 0.2838890217244625,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    },
+    "core0.veccore1": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 8.776667833328247,
+        "MTE3": 0.7688888758420944,
+        "VECTOR": 4.984998360276222,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 4.270554069429636,
+        "MTE3+VECTOR": 0.2349997740238905,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    }
+  },
+  "optimized": {
+    "core0.cubecore0": {
+      "busy_us": {
+        "MTE1": 2.3483341708779335,
+        "MTE2": 7.816111087799072,
+        "MTE3": 0,
+        "VECTOR": 0,
+        "CUBE": 1.8649998903274536,
+        "FIXP": 4.467222094535828
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 0,
+        "MTE3+VECTOR": 0,
+        "MTE2+CUBE": 0.9283333420753479,
+        "MTE1+CUBE": 0.6594449579715729,
+        "FIXP+CUBE": 1.386666476726532
+      }
+    },
+    "core0.veccore0": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 7.143888741731644,
+        "MTE3": 0.7199999988079071,
+        "VECTOR": 4.967223591171205,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 3.74000221863389,
+        "MTE3+VECTOR": 0.2811109088361263,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    },
+    "core0.veccore1": {
+      "busy_us": {
+        "MTE1": 0,
+        "MTE2": 7.129445135593414,
+        "MTE3": 0.7266666442155838,
+        "VECTOR": 4.967224068008363,
+        "CUBE": 0,
+        "FIXP": 0
+      },
+      "overlap_us": {
+        "MTE2+VECTOR": 3.8411123119294643,
+        "MTE3+VECTOR": 0.2933332584798336,
+        "MTE2+CUBE": 0,
+        "MTE1+CUBE": 0,
+        "FIXP+CUBE": 0
+      }
+    }
+  }
+}

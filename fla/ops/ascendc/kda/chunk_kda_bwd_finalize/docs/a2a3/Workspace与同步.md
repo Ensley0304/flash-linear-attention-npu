@@ -89,7 +89,7 @@ Host 用 64 位整数计算大小并检查溢出；以上为算子自有 workspa
 ```text
 AIC（每个工作项）：
   set WORK_OPEN
-  Stage 0 × 两 head
+  Stage 0 × 两 head；每 head 输入末次读取后预取下一 work 同 owner 的五个输入
   wait KE_READY → Stage 2 × 两 head → set S02_READY
   wait ZB_READY → Stage 4/6 × 两 head → set DAKK_READY
   对每个逆序带：
@@ -127,7 +127,7 @@ L0 的两个 slot 各使用一组本地事件；free 事件进入循环前初始
 
 Stage 0/1 已实现的本地事件：AIC 为 L1 ready/free、L0A/B ready/free、L0C ready/free、dW ready 各两份，共 14 个 event（每种 HardEvent 两个 ID）；AIV 为输入 ready/free、输出 ready/free 各两份，共 8 个 event。Stage 1 结束消费两个输出 free 后，额外经 `V_MTE3` 确认已消费，MTE3 才能重新置 free；禁止跨 pipe 无确认地连续两次置同一 flag。驻留数据仍按完整 work 生命周期保留，不将 Stage 0 输入搬运完成视作后续 Stage 的释放许可。
 
-Stage 7 首带前释放 Stage 0～6 的 L1 布局；后续带只更新三个居中操作数。下一带 LOCAL_READY 到来前，AIC 已完成上一带 Stage 10，并收到 BAND_DONE，读写不会交叉。
+Stage 0 五个输入区末次 L1→L0 读取后即可预取下一 work（每 owner 深度为 1），akk/dW 与 workspace 生命周期不变。下一 work 的 input-ready 在补搬 akk 后发布；结束前排空最后一代 free。Stage 7 首带前仅释放当前 work 驻留区，qPos/bkPos 改用 [384,512)，避开下一 work 预取区；后续带只更新三个居中操作数。下一带 LOCAL_READY 到来前，AIC 已完成上一带 Stage 10，并收到 BAND_DONE，读写不会交叉。
 
 ## Stage 12 分工与验证
 

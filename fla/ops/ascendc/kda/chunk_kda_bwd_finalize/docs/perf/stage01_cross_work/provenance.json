@@ -1,0 +1,33 @@
+{
+  "baseline_commit": "9899448ae439ea4fe07a24e1fcbba07b9435e74b",
+  "reference_pr": "https://gitcode.com/cann/cannbot-skills/pull/1069",
+  "reference_head": "4950cbd7c45e0d44cb8ec52598edf53cdc7f16ca",
+  "device": "a2-server / Ascend910B3 / device 1 / 20 AIC + 40 AIV",
+  "cann": "/data/wys/Ascend/cann_9.1.0_910b_0605/cann",
+  "samples": 10,
+  "warmup": 20,
+  "sha256": {
+    "bound90/r2-perf.so": "d270019f77b6849bdfa237f0586db8e9b269f64c46ac2c8f7292ff89ec3b1d47",
+    "bound90/r2-capture.so": "08367004589e1e47d0d435453cde027a1b3d90dad0f7f1cd82a1565e7a3d10f0",
+    "bound90/formatted/kda_finalize_stage01.cpp": "288c2ddb28fea4c5764f1ee274e696da3d23db337522902460364d17bc8fb4d6",
+    "bound90/formatted/chunk_kda_bwd_finalize_cube.h": "05a6ef51e5275b8b60b6d5c177ab97f0c99f9caffcc5bc2d78f360f7c3401851",
+    "bound90/kda_finalize_stage01.cpp": "3aa601d5567f5f0d70014f642c85503e92f07f0b973927a0286c68bd526b790a",
+    "bound90/chunk_kda_bwd_finalize_cube.h": "a0cff8170c44ee6ca5939e5956142d1b213723524f5ccafc4577be119dbfe40c",
+    "verified-perf.so": "f59970ef53ac858e116297cbdd76cdcc78112fc116577418328bebab2da8c257",
+    "bound90/release-perf.so": "db9a2caf5019dc407011e534edb6e0e3f9ae8f07355ce7098fa8a1c5159f0d08"
+  },
+  "format_only_equivalent": {
+    "kda_finalize_stage01.cpp": true,
+    "chunk_kda_bwd_finalize_cube.h": true
+  },
+  "accuracy_calls": 74,
+  "status": {
+    "accuracy": "PASS",
+    "resume": "PASS",
+    "simulator-retry": "PASS",
+    "release": "BUILD_AND_ACCURACY_PASS; MSPROF_PROCESS_KILLED_AFTER_CSV_EXPORT",
+    "release_accuracy": "PASS"
+  },
+  "release_profile_note": "Application printed DONE after 20 warmup + 10 samples; all 30 target task rows were exported. Standalone export retry also exited 137; root cause unknown.",
+  "release_profile_target_rows": 30
+}

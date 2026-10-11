@@ -30,6 +30,24 @@ using namespace KDA::Arch22;
 constexpr uint16_t CAPTURE_READY = 9;
 constexpr uint16_t CAPTURE_DONE = 10;
 
+__aicore__ inline ChunkInfo ResolveChunk(const Stage01TilingData &tiling, const __gm__ ChunkInfo *chunks,
+                                         int64_t chunkIndex)
+{
+    ChunkInfo chunk;
+    if (tiling.isVariable) {
+        chunk = {chunks[chunkIndex].sequence, chunks[chunkIndex].localChunk, chunks[chunkIndex].tokenStart,
+                 chunks[chunkIndex].validRows};
+    } else {
+        const int64_t chunksPerSequence = (tiling.tokens + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        chunk.sequence = chunkIndex / chunksPerSequence;
+        chunk.localChunk = chunkIndex % chunksPerSequence;
+        chunk.tokenStart = chunk.localChunk * CHUNK_SIZE;
+        const int64_t remaining = tiling.tokens - chunk.tokenStart;
+        chunk.validRows = remaining < CHUNK_SIZE ? remaining : CHUNK_SIZE;
+    }
+    return chunk;
+}
+
 template <uint32_t LAST_STAGE>
 __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk, GM_ADDR vNew, GM_ADDR h,
                                          GM_ADDR dh, GM_ADDR dvScan, GM_ADDR metadata, GM_ADDR workspace,
@@ -49,13 +67,12 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
         for (int64_t work = core; work < workCount; work += tiling.usedCoreNum) {
             const int64_t chunkIndex = work % tiling.chunks;
             const int64_t firstHead = (work / tiling.chunks) * HEADS_PER_WORK;
-            // Four scalar metadata reads per work; all tensor data uses DMA.
-            const ChunkInfo chunk = {chunks[chunkIndex].sequence, chunks[chunkIndex].localChunk,
-                                     chunks[chunkIndex].tokenStart, chunks[chunkIndex].validRows};
+            // Fixed-length metadata stays in registers; variable lengths use the packed table.
+            const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(WORK_OPEN);
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
-                    cube.LoadStage0Inputs(tiling, chunk, chunkIndex, firstHead + owner, owner);
+                    cube.LoadStage0Inputs(tiling, chunk, chunkIndex, firstHead + owner, owner, work == core);
                 }
             }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
@@ -63,6 +80,17 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                     cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture);
                     // Stage 2 is absent: explicitly retire its dW ready event.
                     cube.WaitDw(owner);
+                    // These five inputs end their L1 lifetime in Stage 0.
+                    // Keep akk and dW untouched for their later consumers.
+                    const int64_t nextWork = work + tiling.usedCoreNum;
+                    if (nextWork < workCount) {
+                        const int64_t nextChunkIndex = nextWork % tiling.chunks;
+                        const int64_t nextHead = (nextWork / tiling.chunks) * HEADS_PER_WORK + owner;
+                        if (nextHead < tiling.heads) {
+                            const ChunkInfo nextChunk = ResolveChunk(tiling, chunks, nextChunkIndex);
+                            cube.PreloadState(tiling, nextChunk, nextChunkIndex, nextHead, owner);
+                        }
+                    }
                 }
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(CAPTURE_READY);
@@ -91,8 +119,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(WORK_OPEN);
             if constexpr (LAST_STAGE == 1) {
                 if (head < tiling.heads) {
-                    const ChunkInfo chunk = {chunks[chunkIndex].sequence, chunks[chunkIndex].localChunk,
-                                             chunks[chunkIndex].tokenStart, chunks[chunkIndex].validRows};
+                    const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                     vector.Stage1<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture);
                 }
             }

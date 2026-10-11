@@ -1,0 +1,24 @@
+{
+  "baseline": {
+    "next_work_first_input_issue_us": 10.292778015136719,
+    "current_work_last_cube_end_us": 10.011111058294773,
+    "dma_instructions": 24,
+    "mmad_instructions": 16,
+    "lanes": [
+      "core0.cubecore0",
+      "core0.veccore0",
+      "core0.veccore1"
+    ]
+  },
+  "optimized": {
+    "next_work_first_input_issue_us": 7.953888893127441,
+    "current_work_last_cube_end_us": 9.935555256903172,
+    "dma_instructions": 24,
+    "mmad_instructions": 16,
+    "lanes": [
+      "core0.cubecore0",
+      "core0.veccore0",
+      "core0.veccore1"
+    ]
+  }
+}

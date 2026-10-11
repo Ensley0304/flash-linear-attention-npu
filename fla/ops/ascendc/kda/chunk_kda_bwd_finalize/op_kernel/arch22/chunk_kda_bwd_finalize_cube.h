@@ -43,25 +43,35 @@ public:
         }
     }
 
-    // The caller preloads both independent head lanes before computing either.
-    __aicore__ inline void LoadStage0Inputs(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
-                                            int64_t head, uint32_t owner)
+    // Only Stage 0 consumes these inputs; akk/dW have separate lifetimes.
+    __aicore__ inline void PreloadState(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+                                        int64_t head, uint32_t owner)
     {
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
         const int64_t tokenOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * HEAD_DIM;
-        const int64_t akkOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * CHUNK_SIZE;
         const int64_t stateOffset = (chunkIndex * tiling.heads + head) * HEAD_DIM * HEAD_DIM;
         const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_[owner]);
-        // NZ strides describe the padded physical matrix, including tails.
-        CopyToL1(l1[L1_AKK].ReinterpretCast<bfloat16_t>(), akk_[akkOffset], CHUNK_SIZE, CHUNK_SIZE, rows, rows);
         CopyToL1(l1[L1_H].ReinterpretCast<bfloat16_t>(), h_[stateOffset], HEAD_DIM, HEAD_DIM, HEAD_DIM, HEAD_DIM);
         CopyToL1(l1[L1_DH].ReinterpretCast<bfloat16_t>(), dh_[stateOffset], HEAD_DIM, HEAD_DIM, HEAD_DIM, HEAD_DIM);
         CopyToL1(l1[L1_V_NEW].ReinterpretCast<bfloat16_t>(), vNew_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
         CopyToL1(l1[L1_DV_SCAN].ReinterpretCast<bfloat16_t>(), dvScan_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows,
                  HEAD_DIM);
         CopyToL1(l1[L1_V].ReinterpretCast<bfloat16_t>(), v_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
+    }
+
+    __aicore__ inline void LoadStage0Inputs(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+                                            int64_t head, uint32_t owner, bool loadState = true)
+    {
+        if (loadState) {
+            PreloadState(tiling, chunk, chunkIndex, head, owner);
+        }
+        const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
+        const int64_t akkOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * CHUNK_SIZE;
+        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        CopyToL1(l1[L1_AKK].ReinterpretCast<bfloat16_t>(), akk_[akkOffset], CHUNK_SIZE, CHUNK_SIZE, rows, rows);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(inputReady_[owner]);
     }
 
