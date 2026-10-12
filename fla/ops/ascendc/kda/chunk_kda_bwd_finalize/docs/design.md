@@ -2,7 +2,7 @@
 
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
 
-本轮实现范围：Stage 0～6 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
+本轮实现范围：Stage 0～7 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
 
 硬件预算：L1 512 KiB，L0A/L0B 各 64 KiB，L0C 128 KiB，每个 AIV 的 UB 192 KiB。
 
@@ -139,6 +139,8 @@ bkPos[t, :] = beta[t] × k[t, :] ⊙ 2^(gk[t, :] − center) (s ≤ t < valid_ro
 范围外直接写零，不计算指数。不得用已下溢的 exp2_gk 重建居中指数。
 
 上述 Cube 操作数采用 BF16 高位＋残差；Stage 8/10 按三项 `Ah@Bh + Ah@Bl + Al@Bh` 计算，FP32 累加。
+
+Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双缓冲；q/k/原始 gk 每 chunk 搬入一次，qPos/bkPos 共用同 tile 的正向指数。对角线、center、带内指数保留 UB，只有采数版导出。等待 Stage 6 的 `S6_READY[bank]`（FIX，flag 6/7），最终 band 写完才释放该代 workspace。Gather 索引初始化一次，驻留 UB 84.75 KiB；进入、退出均经 `V_MTE2` 保护 UB 复用。当前捕获两带结果，workspace 留 band 0 的 Cube 操作数；Stage 8/10 尚未接入，不提前搬入 L1，以免覆盖下一代 akk。
 
 ## Stage 8：Cube
 

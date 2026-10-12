@@ -1,6 +1,6 @@
-# KDA Finalize A2/A3：Stage 0～6 开发验证
+# KDA Finalize A2/A3：Stage 0～7 开发验证
 
-仅验证 Stage 0～6，不代表完整 Finalize 已支持 A2/A3。公开 A5 入口不变，开发入口保留原名。
+仅验证 Stage 0～7，不代表完整 Finalize 已支持 A2/A3。公开 A5 入口不变，开发入口保留原名。
 
 ## 构建和运行
 
@@ -45,7 +45,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -I. \
 - 逐项对照 FP64/FP32 CPU 标杆，检查 NaN/Inf、capture 哨兵及真实 workspace 最后一代数据。
 - trace 记录实际 work/core/owner/head/chunk、槽位使用次数、block 数、子核数、GM 偏移及握手进度；奇数 head 的空 owner 仍参与同步。
 
-开发入口返回 `(capture, trace, workspace)`。capture 每个 `(head,chunk)` 占 384 KiB，Stage 2 结果位于 160/192 KiB；真实 workspace 的对应偏移为 80/112 KiB。额外采数不用于性能评估。Stage 2 实际消费驻留 L1 的 dW，验证 L0C→L1 链路。
+开发入口返回 `(capture, trace, workspace)`。capture 每个 `(head,chunk)` 占 656 KiB，Stage 2 结果位于 160/192 KiB；真实 workspace 的对应偏移为 80/112 KiB。额外采数不用于性能评估。Stage 2 实际消费驻留 L1 的 dW，验证 L0C→L1 链路。
 
 Stage 0/1 的容差不变。Stage 2 同时检查两层：以设备捕获的 BF16 dW/kE 做 FP64 矩阵乘，使用 `rtol=3e-4, atol=2e-6`；再与独立 CPU 全路径结果比较，传播既定 BF16 门槛 `E(x)=2e-5+8e-3|x|`：
 
@@ -88,21 +88,29 @@ capture 中四个结果分别位于 256/288/320/352 KiB。所有 head/chunk/元�
 
 局部 FP64 GEMM 使用捕获的 BF16 Tza，门槛仍为 `rtol=3e-4, atol=2e-6`。独立 CPU 全路径将既定 Stage 4 Tza 误差预算左乘 `|akk|.T`，不放宽原阶段容差；另检查有限值、尾行/列为零、capture/workspace 一致性及保护区。`--workspace-only --stage 6` 直接检查性能库各核最后两代 dAkk_raw，并保留前序阶段检查。
 
+## Stage 7 入口与精度门禁
+
+`--stage 7` 要求末尾参数 `dAqk`：与 akk 同 shape/device 的连续 FP32 输入。两个严格下三角矩阵乘以 ±65536 后拆为 BF16 高位和残差；对角线保留原始 FP32。随后按 32 行带逆序，从原始 gk 计算居中指数，生成 kNeg/qPos/bkPos。无效行不进入 Exp，直接写零。
+
+capture 扩为每 head/chunk 656 KiB：384/400 KiB 保存两个 strict-lower 高低位，416 KiB 保存对角线；两带从 424 KiB 起各占 116 KiB，依次保存三个操作数、32 行指数和 center。严格下三角拆分与实际 Stage 6 输入逐位一致；居中操作数对照 FP64 公式，检查高低位重建误差、残差幅度、有限值及零填充。新增 `--gate-mode extreme` 覆盖每 token 自然对数 gate=-5。
+
+workspace 总量仍为每 AIC 1 MiB、每 head 两个 256 KiB 槽。Stage 7 消费 raw 后复用其地址，保留四个 Stage 5 base；性能库检查最后两代 band 0 的 Cube 操作数。对角线、center、带内指数保留 UB，仅采数版导出，性能库不增加验证写回。当前尚无 Stage 8/10 消费者，未增加 GM→L1 搬运；完整路径接入时必须在两带间插入消费者，不能先覆盖再消费。此处不代表完整 Finalize 精度验收。
+
 ## 双缓冲回归与性能
 
 `--suite model --repeat 1` 完整检查 B=1/H=96/T=8192 的定长及变长输入。变长长度为 `[0,1,31,64,65,4096,3935,0]`；全部中间结果对照 CPU 标杆，Stage 0/1 容差不变，Stage 2 使用上述两层门禁。
 
-性能版使用编译开关关闭 capture/trace、L1 验证乘法，并缩小对应返回占位张量。以下命令测 Stage 0～5 开发入口，不代表完整 Finalize 性能，在 `examples/fast_kernel_launch_example` 下运行：
+性能版使用编译开关关闭 capture/trace、L1 验证乘法，并缩小对应返回占位张量。以下命令测 Stage 0～7 开发入口，不代表完整 Finalize 性能，在 `examples/fast_kernel_launch_example` 下运行：
 
 ```bash
 KDA_FINALIZE_STAGE01_CAPTURE=0 python setup.py cmake_build
 msprof --output=./profile_stage01 --ai-core=on --aic-metrics=PipeUtilization \
   --task-time=on --ascendcl=on \
-  python tests/kda_finalize_stage01/bench_stage01.py --library build/_C.abi3.so --stage 6
+  python tests/kda_finalize_stage01/bench_stage01.py --library build/_C.abi3.so --stage 7
 ```
 
 默认定长 H=96/T=8192，每阶段预热 20 次、采样 10 次；加 `--varlen` 测同规模变长输入。只统计 `Stage01Kernel` 最后 10 次记录；初始化、Host wall time 和其它 kernel 不计入。精度版恢复时执行 `KDA_FINALIZE_STAGE01_CAPTURE=1 python setup.py cmake_build`。
 
-性能库也可用 `check_stage01.py --workspace-only --stage 6 --cores 0 --suite model --repeat 1 --library build/_C.abi3.so` 检查各核真实 workspace 最后两代结果，避免只验证带 capture 的同步路径。
+性能库也可用 `check_stage01.py --workspace-only --stage 7 --cores 0 --suite model --repeat 1 --library build/_C.abi3.so` 检查各核真实 workspace 最后两代结果，避免只验证带 capture 的同步路径。
 
-小 case 模拟器入口支持 `--heads 2 --tokens 192 --cores 1 --stage 6 --warmup 0 --repeat 1 --device 0`。三个 work 用于检查双槽回绕及跨 work 重叠。模拟器使用 CPU 初始化，不读取输出；需要完整的一个 AIC 和两个 AIV 时间线，不能以模拟器耗时替代硬件性能。
+小 case 模拟器入口支持 `--heads 2 --tokens 192 --cores 1 --stage 7 --warmup 0 --repeat 1 --device 0`。三个 work 用于检查双槽回绕及跨 work 重叠。模拟器使用 CPU 初始化，不读取输出；需要完整的一个 AIC 和两个 AIV 时间线，不能以模拟器耗时替代硬件性能。

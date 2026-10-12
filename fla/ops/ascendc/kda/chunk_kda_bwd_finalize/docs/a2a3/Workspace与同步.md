@@ -1,8 +1,12 @@
 # A2/A3 Finalize Workspace 与同步
 
-完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前实现限于 Stage 0～3，其余阶段仍为规划。
+完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前开发入口实现 Stage 0～7，其余阶段仍为规划。
 
 四阶段开发入口将每 head 的 512 KiB 分为两个 256 KiB 槽，按 `floor(w/P)%2` 交替使用，槽内沿用下表 Stage 0～3 的偏移。AIC 在 FIX 上发布 `S02_READY[bank]`，AIV 读取并完成 Stage 3 后确认 `ACK[bank]`；下一次复用同槽前必须等确认。此双槽安排不改变总分配，但不直接适用于下表完整 Stage 0～11 的地址范围。
+
+Stage 0～7 开发入口沿用两代 256 KiB 槽。Stage 5/6 消费完成后，Stage 7 复用槽内 `[64,80)`、`[80,96)` KiB 保存两个 strict-lower 高低位，`[96,128)`、`[128,160)`、`[224,256)` KiB 保存 kNeg/qPos/bkPos；原四个 base 保留。bkPos 只能在 dAkk_raw 全部消费后写入。对角线、center、带内指数保留 UB，仅采数版导出。两带顺序执行，测试 capture 保存每带，workspace 最终保留 band 0 的 Cube 操作数。
+
+新增 `S6_READY[bank]` 使用 flag 6/7，由 FIX 发布、两 AIV 等待；原 `S5_DONE[bank]` 延至 Stage 7 末带 MTE3 完成后发布。此开发调度与下文完整 Stage 0～11 的地址和 flag 表不同，接入 Stage 8/10 时需在带间增加消费握手，并解决下一代 akk 与完整 L1 布局的重叠。
 
 ## 任务映射
 

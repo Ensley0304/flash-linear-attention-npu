@@ -1,0 +1,27 @@
+[
+  {
+    "round": "r0",
+    "issue": "CreateVecIndex scalar stores raced with previous Vector scratch reuse",
+    "fix": "initialize indices once in persistent UB at 84.75 KiB"
+  },
+  {
+    "round": "r1",
+    "issue": "Stage 7 MTE2 overwrote Stage 5 output UB before MTE3 had finished",
+    "fix": "bridge drained MTE3_V through V_MTE2 before loading q/k/gk"
+  },
+  {
+    "round": "r2",
+    "issue": "next Stage 1 MTE2 reused Stage 7 scratch before the band loop ended",
+    "fix": "reissue both V_MTE2 input-free flags after all bands"
+  },
+  {
+    "round": "helper",
+    "issue": "profile.py shadowed stdlib profile during torch imports",
+    "fix": "renamed helper; terminated only owned validation children; excluded all contaminated captures under invalid-shadow"
+  },
+  {
+    "round": "equivalence-parallel",
+    "issue": "concurrent capture processes exhausted test-only NPU capture memory",
+    "fix": "run capture equivalence sequentially after full reference validation, empty allocator cache between cases; production workspace unchanged"
+  }
+]

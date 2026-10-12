@@ -1,0 +1,92 @@
+[
+  {
+    "magnitude": 1e-30,
+    "variant": "correct",
+    "accepted": true
+  },
+  {
+    "magnitude": 1e-30,
+    "variant": "missing-residual",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e-30,
+    "variant": "wrong-residual-sign",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e-30,
+    "variant": "swapped-planes",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e-30,
+    "variant": "wrong-scale",
+    "accepted": false
+  },
+  {
+    "magnitude": 1.0,
+    "variant": "correct",
+    "accepted": true
+  },
+  {
+    "magnitude": 1.0,
+    "variant": "missing-residual",
+    "accepted": false
+  },
+  {
+    "magnitude": 1.0,
+    "variant": "wrong-residual-sign",
+    "accepted": false
+  },
+  {
+    "magnitude": 1.0,
+    "variant": "swapped-planes",
+    "accepted": false
+  },
+  {
+    "magnitude": 1.0,
+    "variant": "wrong-scale",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e+30,
+    "variant": "correct",
+    "accepted": true
+  },
+  {
+    "magnitude": 1e+30,
+    "variant": "missing-residual",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e+30,
+    "variant": "wrong-residual-sign",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e+30,
+    "variant": "swapped-planes",
+    "accepted": false
+  },
+  {
+    "magnitude": 1e+30,
+    "variant": "wrong-scale",
+    "accepted": false
+  },
+  {
+    "variant": "sign",
+    "accepted": false,
+    "kind": "strict"
+  },
+  {
+    "variant": "transpose",
+    "accepted": false,
+    "kind": "strict"
+  },
+  {
+    "variant": "missing-residual",
+    "accepted": false,
+    "kind": "strict"
+  }
+]

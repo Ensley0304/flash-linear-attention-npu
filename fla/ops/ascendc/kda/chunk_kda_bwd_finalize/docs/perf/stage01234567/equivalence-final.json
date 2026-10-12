@@ -1,0 +1,11 @@
+{
+  "reference": "r3",
+  "candidate": "r5",
+  "model_cases": 4,
+  "compared": [
+    "dv",
+    "all_capture_bytes",
+    "trace"
+  ],
+  "bitwise_identical": true
+}

@@ -43,7 +43,7 @@ constexpr uint32_t UB_GK_LAST = 81 * 1024 + 768;
 constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 
-// Two generations are used only by the Stage 0-6 development scheduler.
+// Two generations are used only by the Stage 0-7 development scheduler.
 constexpr uint32_t WS_BANK_BYTES = 256 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 512 * 1024;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
@@ -61,6 +61,13 @@ constexpr uint32_t WS_DG_BASE = 168 * 1024;
 constexpr uint32_t WS_DB_BASE = 200 * 1024;
 constexpr uint32_t WS_RH = 208 * 1024;
 constexpr uint32_t WS_DAKK_RAW = 216 * 1024;
+
+// Stage 7 reuses dead raw slots after Stage 5 and Stage 6. Bases remain intact.
+constexpr uint32_t WS_DAQK_LOWER = 64 * 1024;
+constexpr uint32_t WS_DAKK_LOWER = 80 * 1024;
+constexpr uint32_t WS_KNEG = 96 * 1024;
+constexpr uint32_t WS_QPOS = 128 * 1024;
+constexpr uint32_t WS_BKPOS = 224 * 1024;
 
 constexpr uint16_t KE_READY = 0;
 constexpr uint16_t WORK_OPEN = 8;
@@ -85,7 +92,7 @@ struct Stage01TilingData {
 
 // Optional test snapshots, separate from the reusable production workspace.
 // Each (head, chunk) owns a complete record, including padding and tail rows.
-constexpr uint32_t CAPTURE_BYTES = 384 * 1024;
+constexpr uint32_t CAPTURE_BYTES = 656 * 1024;
 constexpr uint32_t CAPTURE_DK_STATE_RAW = 0;
 constexpr uint32_t CAPTURE_DV_B = 32 * 1024;
 constexpr uint32_t CAPTURE_ZV = 64 * 1024;
@@ -106,6 +113,14 @@ constexpr uint32_t CAPTURE_DK_BASE = 288 * 1024;
 constexpr uint32_t CAPTURE_DG_BASE = 320 * 1024;
 constexpr uint32_t CAPTURE_DB_BASE = 352 * 1024;
 constexpr uint32_t CAPTURE_DAKK_RAW = 360 * 1024;
+
+constexpr uint32_t CAPTURE_DAQK_LOWER = 384 * 1024;
+constexpr uint32_t CAPTURE_DAKK_LOWER = 400 * 1024;
+constexpr uint32_t CAPTURE_DAQK_DIAG = 416 * 1024;
+constexpr uint32_t CAPTURE_BANDS = 424 * 1024;
+constexpr uint32_t CAPTURE_BAND_BYTES = 116 * 1024;
+static_assert(CAPTURE_BANDS + 2 * CAPTURE_BAND_BYTES == CAPTURE_BYTES);
+static_assert(WS_BKPOS + 32 * 1024 == WS_BANK_BYTES);
 
 static_assert(WS_RH + HEAD_DIM * 4 <= WS_DAKK_RAW);
 static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_BANK_BYTES);

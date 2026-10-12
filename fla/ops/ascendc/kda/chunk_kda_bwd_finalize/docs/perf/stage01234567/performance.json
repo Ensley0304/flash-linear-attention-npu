@@ -1,0 +1,615 @@
+{
+  "shape": {
+    "B": 1,
+    "H": 96,
+    "T": 8192,
+    "K": 128,
+    "V": 128
+  },
+  "variable_lengths": [
+    0,
+    1,
+    31,
+    64,
+    65,
+    4096,
+    3935,
+    0
+  ],
+  "warmup": 20,
+  "samples": 10,
+  "metric": "PipeUtilization",
+  "records": [
+    {
+      "tag": "baseline6",
+      "kind": "fixed",
+      "stage": 6,
+      "raw_csv": "stage7/baseline6-profile-fixed/PROF_000001_20261012124512798_01024143DCMEQMIN/mindstudio_profiler_output/op_summary_20261012124529.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 3021.761,
+          "median": 3046.871,
+          "mean": 3042.8049,
+          "max": 3061.561
+        },
+        "aic_mac_ratio": {
+          "min": 0.172,
+          "median": 0.173,
+          "mean": 0.1732,
+          "max": 0.174
+        },
+        "aic_scalar_ratio": {
+          "min": 0.281,
+          "median": 0.282,
+          "mean": 0.28209999999999996,
+          "max": 0.283
+        },
+        "aic_mte1_ratio": {
+          "min": 0.199,
+          "median": 0.2,
+          "mean": 0.2001,
+          "max": 0.201
+        },
+        "aic_mte2_ratio": {
+          "min": 0.538,
+          "median": 0.5415000000000001,
+          "mean": 0.5417000000000001,
+          "max": 0.546
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.415,
+          "median": 0.4195,
+          "mean": 0.4208,
+          "max": 0.425
+        },
+        "aiv_vec_ratio": {
+          "min": 0.741,
+          "median": 0.747,
+          "mean": 0.7468,
+          "max": 0.75
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.7,
+          "median": 0.701,
+          "mean": 0.701,
+          "max": 0.702
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.608,
+          "median": 0.6145,
+          "mean": 0.6134999999999999,
+          "max": 0.621
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.224,
+          "median": 0.2275,
+          "mean": 0.22870000000000001,
+          "max": 0.232
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.747
+    },
+    {
+      "tag": "baseline6",
+      "kind": "varlen",
+      "stage": 6,
+      "raw_csv": "stage7/baseline6-profile-varlen/PROF_000001_20261012124541810_01038924LPRRKKKM/mindstudio_profiler_output/op_summary_20261012124553.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 3093.262,
+          "median": 3118.612,
+          "mean": 3113.958,
+          "max": 3122.342
+        },
+        "aic_mac_ratio": {
+          "min": 0.172,
+          "median": 0.173,
+          "mean": 0.1729,
+          "max": 0.174
+        },
+        "aic_scalar_ratio": {
+          "min": 0.281,
+          "median": 0.281,
+          "mean": 0.2814,
+          "max": 0.282
+        },
+        "aic_mte1_ratio": {
+          "min": 0.199,
+          "median": 0.2,
+          "mean": 0.19990000000000002,
+          "max": 0.201
+        },
+        "aic_mte2_ratio": {
+          "min": 0.544,
+          "median": 0.548,
+          "mean": 0.5471,
+          "max": 0.55
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.411,
+          "median": 0.4155,
+          "mean": 0.4153,
+          "max": 0.421
+        },
+        "aiv_vec_ratio": {
+          "min": 0.743,
+          "median": 0.746,
+          "mean": 0.7461,
+          "max": 0.75
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.697,
+          "median": 0.698,
+          "mean": 0.6986,
+          "max": 0.701
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.618,
+          "median": 0.6255,
+          "mean": 0.6252,
+          "max": 0.63
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.222,
+          "median": 0.226,
+          "mean": 0.226,
+          "max": 0.231
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.746
+    },
+    {
+      "tag": "r3",
+      "kind": "fixed",
+      "stage": 7,
+      "raw_csv": "stage7/r3-profile-fixed/PROF_000001_20261012124605771_01045415BJGDAHKG/mindstudio_profiler_output/op_summary_20261012124624.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 6551.57,
+          "median": 6580.1215,
+          "mean": 6579.4832,
+          "max": 6610.132
+        },
+        "aic_mac_ratio": {
+          "min": 0.08,
+          "median": 0.08,
+          "mean": 0.08,
+          "max": 0.08
+        },
+        "aic_scalar_ratio": {
+          "min": 0.178,
+          "median": 0.179,
+          "mean": 0.179,
+          "max": 0.18
+        },
+        "aic_mte1_ratio": {
+          "min": 0.092,
+          "median": 0.093,
+          "mean": 0.0929,
+          "max": 0.093
+        },
+        "aic_mte2_ratio": {
+          "min": 0.218,
+          "median": 0.221,
+          "mean": 0.2208,
+          "max": 0.223
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.194,
+          "median": 0.195,
+          "mean": 0.195,
+          "max": 0.196
+        },
+        "aiv_vec_ratio": {
+          "min": 0.746,
+          "median": 0.749,
+          "mean": 0.7491,
+          "max": 0.751
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.436,
+          "median": 0.438,
+          "mean": 0.4377,
+          "max": 0.439
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.315,
+          "median": 0.318,
+          "mean": 0.3177,
+          "max": 0.32
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.347,
+          "median": 0.349,
+          "mean": 0.34919999999999995,
+          "max": 0.35
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.749
+    },
+    {
+      "tag": "r3",
+      "kind": "varlen",
+      "stage": 7,
+      "raw_csv": "stage7/r3-profile-varlen/PROF_000001_20261012124638410_01059830QKMKILQQ/mindstudio_profiler_output/op_summary_20261012124646.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 6654.813,
+          "median": 6662.653,
+          "mean": 6662.3431,
+          "max": 6671.393
+        },
+        "aic_mac_ratio": {
+          "min": 0.081,
+          "median": 0.081,
+          "mean": 0.081,
+          "max": 0.081
+        },
+        "aic_scalar_ratio": {
+          "min": 0.184,
+          "median": 0.184,
+          "mean": 0.184,
+          "max": 0.184
+        },
+        "aic_mte1_ratio": {
+          "min": 0.093,
+          "median": 0.0935,
+          "mean": 0.0935,
+          "max": 0.094
+        },
+        "aic_mte2_ratio": {
+          "min": 0.226,
+          "median": 0.2285,
+          "mean": 0.2281,
+          "max": 0.229
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.197,
+          "median": 0.197,
+          "mean": 0.197,
+          "max": 0.197
+        },
+        "aiv_vec_ratio": {
+          "min": 0.75,
+          "median": 0.7515000000000001,
+          "mean": 0.7513,
+          "max": 0.752
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.435,
+          "median": 0.436,
+          "mean": 0.436,
+          "max": 0.437
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.319,
+          "median": 0.321,
+          "mean": 0.321,
+          "max": 0.323
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.349,
+          "median": 0.35,
+          "mean": 0.3503,
+          "max": 0.351
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.7515000000000001
+    },
+    {
+      "tag": "r4",
+      "kind": "fixed",
+      "stage": 7,
+      "raw_csv": "stage7/r4-profile-fixed/PROF_000001_20261012124659607_01065222JRLNDNHQ/mindstudio_profiler_output/op_summary_20261012124706.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 6386.048,
+          "median": 6403.308,
+          "mean": 6403.1939999999995,
+          "max": 6423.588
+        },
+        "aic_mac_ratio": {
+          "min": 0.082,
+          "median": 0.082,
+          "mean": 0.082,
+          "max": 0.082
+        },
+        "aic_scalar_ratio": {
+          "min": 0.183,
+          "median": 0.185,
+          "mean": 0.1848,
+          "max": 0.186
+        },
+        "aic_mte1_ratio": {
+          "min": 0.095,
+          "median": 0.095,
+          "mean": 0.095,
+          "max": 0.095
+        },
+        "aic_mte2_ratio": {
+          "min": 0.227,
+          "median": 0.232,
+          "mean": 0.2318,
+          "max": 0.234
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.2,
+          "median": 0.2,
+          "mean": 0.2003,
+          "max": 0.201
+        },
+        "aiv_vec_ratio": {
+          "min": 0.74,
+          "median": 0.742,
+          "mean": 0.7417,
+          "max": 0.743
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.435,
+          "median": 0.4385,
+          "mean": 0.4381,
+          "max": 0.44
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.327,
+          "median": 0.3305,
+          "mean": 0.33030000000000004,
+          "max": 0.332
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.361,
+          "median": 0.362,
+          "mean": 0.3618,
+          "max": 0.362
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.742
+    },
+    {
+      "tag": "r4",
+      "kind": "varlen",
+      "stage": 7,
+      "raw_csv": "stage7/r4-profile-varlen/PROF_000001_20261012124719528_01070959DHJEOLFJ/mindstudio_profiler_output/op_summary_20261012124728.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 6482.49,
+          "median": 6502.75,
+          "mean": 6501.7719,
+          "max": 6514.47
+        },
+        "aic_mac_ratio": {
+          "min": 0.083,
+          "median": 0.083,
+          "mean": 0.083,
+          "max": 0.083
+        },
+        "aic_scalar_ratio": {
+          "min": 0.188,
+          "median": 0.189,
+          "mean": 0.1889,
+          "max": 0.189
+        },
+        "aic_mte1_ratio": {
+          "min": 0.096,
+          "median": 0.096,
+          "mean": 0.096,
+          "max": 0.096
+        },
+        "aic_mte2_ratio": {
+          "min": 0.232,
+          "median": 0.233,
+          "mean": 0.2333,
+          "max": 0.235
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.202,
+          "median": 0.202,
+          "mean": 0.20240000000000002,
+          "max": 0.203
+        },
+        "aiv_vec_ratio": {
+          "min": 0.741,
+          "median": 0.7424999999999999,
+          "mean": 0.7426,
+          "max": 0.744
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.452,
+          "median": 0.453,
+          "mean": 0.4529,
+          "max": 0.454
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.328,
+          "median": 0.329,
+          "mean": 0.3295,
+          "max": 0.331
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.362,
+          "median": 0.362,
+          "mean": 0.3624,
+          "max": 0.363
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.7424999999999999
+    },
+    {
+      "tag": "r5",
+      "kind": "fixed",
+      "stage": 7,
+      "raw_csv": "stage7/r5-profile-fixed/PROF_000001_20261012124741878_01075119HCDCLDBI/mindstudio_profiler_output/op_summary_20261012124759.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 6396.787,
+          "median": 6414.6385,
+          "mean": 6412.2281,
+          "max": 6425.168
+        },
+        "aic_mac_ratio": {
+          "min": 0.082,
+          "median": 0.082,
+          "mean": 0.082,
+          "max": 0.082
+        },
+        "aic_scalar_ratio": {
+          "min": 0.183,
+          "median": 0.184,
+          "mean": 0.18409999999999999,
+          "max": 0.185
+        },
+        "aic_mte1_ratio": {
+          "min": 0.095,
+          "median": 0.095,
+          "mean": 0.095,
+          "max": 0.095
+        },
+        "aic_mte2_ratio": {
+          "min": 0.229,
+          "median": 0.231,
+          "mean": 0.23090000000000002,
+          "max": 0.232
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.198,
+          "median": 0.199,
+          "mean": 0.19890000000000002,
+          "max": 0.2
+        },
+        "aiv_vec_ratio": {
+          "min": 0.739,
+          "median": 0.74,
+          "mean": 0.7397,
+          "max": 0.741
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.428,
+          "median": 0.4285,
+          "mean": 0.42869999999999997,
+          "max": 0.43
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.331,
+          "median": 0.332,
+          "mean": 0.33190000000000003,
+          "max": 0.333
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.35,
+          "median": 0.351,
+          "mean": 0.35059999999999997,
+          "max": 0.351
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.74
+    },
+    {
+      "tag": "r5",
+      "kind": "varlen",
+      "stage": 7,
+      "raw_csv": "stage7/r5-profile-varlen/PROF_000001_20261012124814286_01080489AEDDANRF/mindstudio_profiler_output/op_summary_20261012124835.csv",
+      "target_rows": 30,
+      "sample_count": 10,
+      "collector_exitcode": 0,
+      "metrics": {
+        "Task Duration(us)": {
+          "min": 6520.991,
+          "median": 6534.861000000001,
+          "mean": 6534.3328,
+          "max": 6556.191
+        },
+        "aic_mac_ratio": {
+          "min": 0.083,
+          "median": 0.083,
+          "mean": 0.083,
+          "max": 0.083
+        },
+        "aic_scalar_ratio": {
+          "min": 0.187,
+          "median": 0.187,
+          "mean": 0.187,
+          "max": 0.187
+        },
+        "aic_mte1_ratio": {
+          "min": 0.095,
+          "median": 0.096,
+          "mean": 0.0959,
+          "max": 0.096
+        },
+        "aic_mte2_ratio": {
+          "min": 0.232,
+          "median": 0.234,
+          "mean": 0.2336,
+          "max": 0.235
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.198,
+          "median": 0.199,
+          "mean": 0.1988,
+          "max": 0.199
+        },
+        "aiv_vec_ratio": {
+          "min": 0.739,
+          "median": 0.74,
+          "mean": 0.7401,
+          "max": 0.741
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.43,
+          "median": 0.431,
+          "mean": 0.4308,
+          "max": 0.432
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.334,
+          "median": 0.336,
+          "mean": 0.3356,
+          "max": 0.337
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.35,
+          "median": 0.35,
+          "mean": 0.3503,
+          "max": 0.351
+        }
+      },
+      "max_pipeline": "aiv_vec_ratio",
+      "max_pipeline_ratio": 0.74
+    }
+  ],
+  "selected_tag": "r5",
+  "stage7_target_over_90_percent": false,
+  "device": 1,
+  "aic_cores": 20,
+  "scale": 0.08838834764831845,
+  "benchmark_gk": "uniform [-32,0], identical across variants",
+  "scope": "private Stage 0-7 harness; no Stage 8-12; Vector metadata exported only by capture build"
+}

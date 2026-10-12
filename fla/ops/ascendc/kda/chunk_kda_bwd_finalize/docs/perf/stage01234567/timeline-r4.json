@@ -1,0 +1,73 @@
+{
+  "source": "stage7/simulator-r4/OPPROF_20261012122916_DERNUXJOJDBFFMBU/simulator/trace.json",
+  "complete": true,
+  "lanes": {
+    "core0.cubecore0": {
+      "instruction_counts": {
+        "MOV_SPR_XN": 37,
+        "MOV_OUT_TO_L1_MULTI_ND2NZ": 48,
+        "MMAD": 48,
+        "BAR": 36,
+        "FIX_L0C_TO_DST": 48,
+        "SET_CROSS_CORE": 11
+      }
+    },
+    "core0.veccore0": {
+      "instruction_counts": {
+        "MOVEMASK": 2255,
+        "MOVEV": 148,
+        "BAR": 862,
+        "VADDS": 13,
+        "VMULS": 112,
+        "MOV_OUT_TO_UB": 171,
+        "VCONV": 420,
+        "VMUL": 285,
+        "VCADD": 60,
+        "VADD": 99,
+        "VEXP": 69,
+        "MOV_UB_TO_OUT": 270,
+        "SET_CROSS_CORE": 9,
+        "MOV_SPR_XN": 3,
+        "MOV_SRC_TO_DST_ALIGN": 3,
+        "VBRCB": 9,
+        "VSUB": 246,
+        "VGATHER": 12
+      },
+      "first_stage7_interval_us": [
+        24.656110763549805,
+        34.383888602256775
+      ],
+      "stage7_vector_mte2_overlap_us": 0.39833731576800346,
+      "stage7_vector_mte3_overlap_us": 3.633894808590412
+    },
+    "core0.veccore1": {
+      "instruction_counts": {
+        "MOVEMASK": 2255,
+        "MOVEV": 148,
+        "BAR": 863,
+        "VADDS": 13,
+        "VMULS": 112,
+        "MOV_OUT_TO_UB": 171,
+        "VCONV": 420,
+        "VMUL": 285,
+        "VCADD": 60,
+        "VADD": 99,
+        "VEXP": 69,
+        "MOV_UB_TO_OUT": 270,
+        "SET_CROSS_CORE": 9,
+        "MOV_SPR_XN": 3,
+        "MOV_SRC_TO_DST_ALIGN": 3,
+        "VBRCB": 9,
+        "VSUB": 246,
+        "VGATHER": 12
+      },
+      "first_stage7_interval_us": [
+        24.7549991607666,
+        34.7488879263401
+      ],
+      "stage7_vector_mte2_overlap_us": 0.39833350107073784,
+      "stage7_vector_mte3_overlap_us": 3.6338814571499825
+    }
+  },
+  "production_mmad_count": 48
+}

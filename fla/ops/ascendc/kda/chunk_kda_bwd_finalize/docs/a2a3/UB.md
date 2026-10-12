@@ -51,6 +51,10 @@ Stage 7 高低位由原始 FP32 操作数计算：
 
 Stage 9 的 dg 按当前带写 GM，Stage 11 再读。Stage 11 在带内从后向前处理最多 16 行；每个 tile 都将扫描首行更新到 suffix，下一 tile/下一带沿用。suffix、两个 partial 在 chunk 开始清零，只有最后一带结束后才写 partial。
 
+Stage 0～7 开发入口的实际 Stage 7 复用：q/k/gk 占 `[0,64)` KiB；保留 `[64,80)` 的下三角 mask。输入双槽 `[88,104)`，FP32 值/重建 `[104,120)`，BF16 高低位输出双槽 `[120,136)`，算术临时 `[136,160)`，带内指数 `[160,176)`，beta 广播 `[176,178)`。对角线、center 沿固定地址表；Gather 索引占 84.75 KiB 起的 64 B，仅初始化一次。该索引在接入 Stage 11 参数 partial 前须重新分配。
+
+进入 Stage 7 时，先排空 Stage 5 输出，再用 `V_MTE2` 约束 q/k/gk 搬入；退出时，重新发布两个 input-free，保证下一 work 的 Stage 1 不会覆盖仍在计算的临时区。只有原 strict-lower 输入的 free 不足以保护整个带循环。
+
 ## 搬运与尾块
 
 - 单个工作槽复用前同时满足 Vector 最后读取、MTE2 写入及 MTE3 读取完成；仅发出写回指令不能覆盖。

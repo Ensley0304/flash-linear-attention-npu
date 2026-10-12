@@ -519,6 +519,241 @@ public:
         }
     }
 
+
+    __aicore__ inline void InitStage7(GM_ADDR dAqk)
+    {
+        dAqk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk));
+        // CreateVecIndex starts with scalar stores on A2. Initialize once in a
+        // persistent region, outside every Stage 1/3/5 scratch lifetime.
+        auto indices = ub_[84 * 1024 + 768].ReinterpretCast<int32_t>();
+        AscendC::CreateVecIndex(indices, 0, 16);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(indices, indices, static_cast<int32_t>((CHUNK_SIZE + 1) * 4), 16);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    template <bool CAPTURE = false>
+    __aicore__ inline void Stage7(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+                                  int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
+    {
+        constexpr uint32_t ROWS = 16;
+        constexpr uint32_t ELEMENTS = ROWS * HEAD_DIM;
+        constexpr float LN2 = 0.6931471805599453f;
+        const uint32_t rows = chunk.validRows;
+        const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
+        const int64_t token = (batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart;
+        const uint64_t base =
+            static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES;
+        AscendC::GlobalTensor<float> dAkk;
+        AscendC::GlobalTensor<uint8_t> out, snapshot;
+        dAkk.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DAKK_RAW));
+        out.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(workspace_ + base));
+        if constexpr (CAPTURE) {
+            snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(
+                capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES));
+        }
+        // 0--64 KiB: q/k/original gk; 64--80: persistent strict-lower mask.
+        // 88--104: two input pairs; 104--120: value/reconstruction;
+        // 120--136: two hi/lo outputs; 136--160: arithmetic scratch;
+        // 160--176: band exponent; 176--178: beta broadcast; gather offsets stay at 84.75 KiB.
+        auto q = ub_.ReinterpretCast<bfloat16_t>();
+        auto k = ub_[UB_K].ReinterpretCast<bfloat16_t>();
+        auto g = ub_[UB_EXP2_GK].ReinterpretCast<float>();
+        auto lower = ub_[64 * 1024].ReinterpretCast<float>();
+        auto diag = ub_[80 * 1024 + 512].ReinterpretCast<float>();
+        auto center = ub_[82 * 1024 + 768].ReinterpretCast<float>();
+        auto value = ub_[104 * 1024].ReinterpretCast<float>();
+        auto rebuilt = ub_[112 * 1024].ReinterpretCast<float>();
+        auto operand = ub_[136 * 1024].ReinterpretCast<float>();
+        auto exponent = ub_[144 * 1024].ReinterpretCast<float>();
+        auto bandExp = ub_[160 * 1024].ReinterpretCast<float>();
+        auto broadcast = ub_[176 * 1024].ReinterpretCast<float>();
+        auto indices = ub_[84 * 1024 + 768].ReinterpretCast<int32_t>();
+        // Drain old layouts before remapping. Input and output permissions remain independent.
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+        }
+        // MTE3_V drains on V only; bridge to MTE2 before overwriting Stage 5 outputs.
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
+        AscendC::DataCopy(q, q_[token * HEAD_DIM], rows * HEAD_DIM);
+        AscendC::DataCopy(k, k_[token * HEAD_DIM], rows * HEAD_DIM);
+        AscendC::DataCopy(g, gk_[token * HEAD_DIM], rows * HEAD_DIM);
+        AscendC::Brcb(broadcast, ub_[UB_BETA].ReinterpretCast<float>(), 8, {1, 8});
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            auto input = ub_[UB_WORK + slot * 8 * 1024].ReinterpretCast<float>();
+            const uint32_t active = rows > slot * ROWS ? (rows - slot * ROWS < ROWS ? rows - slot * ROWS : ROWS) : 0;
+            if (active != 0) {
+                AscendC::DataCopy(input, dAqk_[(token + slot * ROWS) * CHUNK_SIZE], active * CHUNK_SIZE);
+            }
+            AscendC::DataCopy(input[ROWS * CHUNK_SIZE], dAkk[slot * ROWS * CHUNK_SIZE], ROWS * CHUNK_SIZE);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+        }
+        // Chunk-wide strict lower matrices are generated once. Output planes are hi then lo.
+        for (uint32_t tile = 0; tile < 4; ++tile) {
+            const uint32_t first = tile * ROWS;
+            const uint32_t slot = tile & 1;
+            const uint32_t active = rows > first ? (rows - first < ROWS ? rows - first : ROWS) : 0;
+            auto input = ub_[UB_WORK + slot * 8 * 1024].ReinterpretCast<float>();
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+            if (active < ROWS) {
+                AscendC::Duplicate(input[active * CHUNK_SIZE], 0.0f, (ROWS - active) * CHUNK_SIZE);
+            }
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Gather(diag[first], input, indices.ReinterpretCast<uint32_t>(), first * 4, ROWS);
+            for (uint32_t matrix = 0; matrix < 2; ++matrix) {
+                auto output = ub_[120 * 1024 + slot * 8 * 1024].ReinterpretCast<bfloat16_t>();
+                AscendC::Mul(value, input[matrix * ROWS * CHUNK_SIZE], lower[first * CHUNK_SIZE], ROWS * CHUNK_SIZE);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Muls(value, value, matrix == 0 ? 65536.0f : -65536.0f, ROWS * CHUNK_SIZE);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, ROWS * CHUNK_SIZE);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Cast(rebuilt, output, AscendC::RoundMode::CAST_NONE, ROWS * CHUNK_SIZE);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Sub(rebuilt, value, rebuilt, ROWS * CHUNK_SIZE);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Cast(output[ROWS * CHUNK_SIZE], rebuilt, AscendC::RoundMode::CAST_RINT, ROWS * CHUNK_SIZE);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+                const uint32_t dst = matrix == 0 ? WS_DAQK_LOWER : WS_DAKK_LOWER;
+                const uint32_t saved = matrix == 0 ? CAPTURE_DAQK_LOWER : CAPTURE_DAKK_LOWER;
+                for (uint32_t part = 0; part < 2; ++part) {
+                    AscendC::DataCopy(out[dst + part * 8192 + first * CHUNK_SIZE * 2],
+                                      output[part * ROWS * CHUNK_SIZE].ReinterpretCast<uint8_t>(),
+                                      ROWS * CHUNK_SIZE * 2);
+                    if constexpr (CAPTURE) {
+                        AscendC::DataCopy(snapshot[saved + part * 8192 + first * CHUNK_SIZE * 2],
+                                          output[part * ROWS * CHUNK_SIZE].ReinterpretCast<uint8_t>(),
+                                          ROWS * CHUNK_SIZE * 2);
+                    }
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+            if (tile + 2 < 4) {
+                const uint32_t next = first + 2 * ROWS;
+                const uint32_t count = rows > next ? (rows - next < ROWS ? rows - next : ROWS) : 0;
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+                if (count != 0) {
+                    AscendC::DataCopy(input, dAqk_[(token + next) * CHUNK_SIZE], count * CHUNK_SIZE);
+                }
+                AscendC::DataCopy(input[ROWS * CHUNK_SIZE], dAkk[next * CHUNK_SIZE], ROWS * CHUNK_SIZE);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+            }
+        }
+        // The partial harness captures both bands; its reusable workspace retains band s=0.
+        // Stage 8/10 must consume each band before the next iteration overwrites these slots.
+        for (int32_t start = ((rows - 1) / 32) * 32; start >= 0; start -= 32) {
+            const uint32_t end = (static_cast<uint32_t>(start + 32) < rows ? start + 32 : rows);
+            const uint32_t saved = CAPTURE_BANDS + (start / 32) * CAPTURE_BAND_BYTES;
+            AscendC::Add(center, g[start * HEAD_DIM], g[(end - 1) * HEAD_DIM], HEAD_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Muls(center, center, 0.5f, HEAD_DIM);
+            AscendC::Duplicate(bandExp, 0.0f, 32 * HEAD_DIM);
+            // qPos and bkPos use the same positive exponent in each tile.
+            for (uint32_t tile = 0; tile < 4; ++tile) {
+                const uint32_t first = tile * ROWS;
+                for (uint32_t matrix = 0; matrix < 3; ++matrix) {
+                    const uint32_t dst = matrix == 0 ? WS_KNEG : (matrix == 1 ? WS_QPOS : WS_BKPOS);
+                    const uint32_t slot = (3 * tile + matrix) & 1;
+                    const uint32_t limit = matrix == 0 ? end : rows;
+                    const uint32_t active = first < limit && (matrix == 0 || first >= start) ?
+                                                (limit - first < ROWS ? limit - first : ROWS) :
+                                                0;
+                    auto output = ub_[120 * 1024 + slot * 8 * 1024].ReinterpretCast<bfloat16_t>();
+                    AscendC::Duplicate(value, 0.0f, ELEMENTS);
+                    if (active != 0) {
+                        // Never evaluate Exp on masked rows or reconstruct gk from Stage 1's exponent.
+                        AscendC::PipeBarrier<PIPE_V>();
+                        if (matrix == 0) {
+                            AscendC::Sub(exponent, center, g[first * HEAD_DIM], 64, active, {1, 1, 1, 16, 0, 16});
+                            AscendC::Sub(exponent[64], center[64], g[first * HEAD_DIM + 64], 64, active,
+                                         {1, 1, 1, 16, 0, 16});
+                        } else if (matrix == 1) {
+                            AscendC::Sub(exponent, g[first * HEAD_DIM], center, 64, active, {1, 1, 1, 16, 16, 0});
+                            AscendC::Sub(exponent[64], g[first * HEAD_DIM + 64], center[64], 64, active,
+                                         {1, 1, 1, 16, 16, 0});
+                        }
+                        AscendC::Cast(operand, matrix == 1 ? q[first * HEAD_DIM] : k[first * HEAD_DIM],
+                                      AscendC::RoundMode::CAST_NONE, active * HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        if (matrix != 2) {
+                            AscendC::Muls(exponent, exponent, LN2, active * HEAD_DIM);
+                            AscendC::PipeBarrier<PIPE_V>();
+                            AscendC::Exp(exponent, exponent, active * HEAD_DIM);
+                            AscendC::PipeBarrier<PIPE_V>();
+                        }
+                        AscendC::Mul(value, operand, exponent, active * HEAD_DIM);
+                        if (matrix == 1 && first < end) {
+                            AscendC::Adds(bandExp[(first - start) * HEAD_DIM], exponent, 0.0f, active * HEAD_DIM);
+                        }
+                        if (matrix == 2) {
+                            AscendC::PipeBarrier<PIPE_V>();
+                            AscendC::Mul(value, value, broadcast[first * 8], 64, active, {1, 1, 0, 16, 16, 1});
+                            AscendC::Mul(value[64], value[64], broadcast[first * 8], 64, active, {1, 1, 0, 16, 16, 1});
+                        }
+                    }
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, ELEMENTS);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Cast(rebuilt, output, AscendC::RoundMode::CAST_NONE, ELEMENTS);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Sub(rebuilt, value, rebuilt, ELEMENTS);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Cast(output[ELEMENTS], rebuilt, AscendC::RoundMode::CAST_RINT, ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+                    for (uint32_t part = 0; part < 2; ++part) {
+                        AscendC::DataCopy(out[dst + part * 16384 + first * HEAD_DIM * 2],
+                                          output[part * ELEMENTS].ReinterpretCast<uint8_t>(), ELEMENTS * 2);
+                        if constexpr (CAPTURE) {
+                            AscendC::DataCopy(snapshot[saved + matrix * 32768 + part * 16384 + first * HEAD_DIM * 2],
+                                              output[part * ELEMENTS].ReinterpretCast<uint8_t>(), ELEMENTS * 2);
+                        }
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+                }
+            }
+            // These Vector operands stay in UB for Stage 9/11; only the test build exports them.
+            if constexpr (CAPTURE) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+                AscendC::DataCopy(snapshot[CAPTURE_DAQK_DIAG], diag.ReinterpretCast<uint8_t>(), CHUNK_SIZE * 4);
+                AscendC::DataCopy(snapshot[saved + 96 * 1024], bandExp.ReinterpretCast<uint8_t>(), 32 * HEAD_DIM * 4);
+                AscendC::DataCopy(snapshot[saved + 112 * 1024], center.ReinterpretCast<uint8_t>(), HEAD_DIM * 4);
+            }
+            // Consume both output frees before the band/resident regions can change.
+            for (uint32_t slot = 0; slot < 2; ++slot) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+            }
+            if constexpr (CAPTURE) {
+                // The preceding frees were issued before the small capture stores.
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[0]);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[0]);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+            for (uint32_t slot = 0; slot < 2; ++slot) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+            }
+        }
+        // Stage 1's next MTE2 writes overlap Stage 7 arithmetic scratch. Its old
+        // input-free flags only covered the strict-lower reads, not the band loop.
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+        }
+    }
+
     __aicore__ inline void End()
     {
         for (uint32_t slot = 0; slot < 2; ++slot) {
@@ -553,7 +788,7 @@ private:
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::LocalTensor<uint8_t> ub_;
     AscendC::GlobalTensor<bfloat16_t> k_, h_, dh_, v_, dv_;
-    AscendC::GlobalTensor<float> gk_, beta_, dqRaw_;
+    AscendC::GlobalTensor<float> gk_, beta_, dqRaw_, dAqk_;
     AscendC::GlobalTensor<bfloat16_t> q_;
     float scale_ = 1.0f;
     GM_ADDR workspace_ = nullptr;

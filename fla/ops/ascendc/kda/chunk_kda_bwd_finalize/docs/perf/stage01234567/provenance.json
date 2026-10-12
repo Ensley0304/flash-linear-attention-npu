@@ -1,0 +1,45 @@
+{
+  "server": "a2-server",
+  "hostname": "ubuntu",
+  "soc": "Ascend910B3",
+  "device": 1,
+  "cann": "/data/wys/Ascend/cann_9.1.0_910b_0605/cann",
+  "workspace": "/data/Ensley0304/kda-finalize-a2-stage7-20261012",
+  "base_commit": "18653f63",
+  "source_sha256": {
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "35ba0dff7631e9b931b986e29b7d9a5fc849b34cd5e59cba3b9c50631da82c74",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "24b1900a34edc548d8a99acf3635f74333ea647c6219e3518e7a628bb4a2f4a0",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "2e10cdabc866639696a407c3030530db4e40c908ee4bdc368a5feff970085577",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "d2b81a941e8e787f8151d8fe1d5a528060b17b35283f32926f25423df5161ded",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage7.py": "ba7b64c11a7d688df4778cadcc4266397f0ab15e82ac81b2a08fa2c9b116d50a",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "c522e2c44a624268e15cd9479cc7da1d2295cb882f0fd2b94c09ed4c035b95f4",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "537635b416db86d2d58dff2d3d8d214eeeb26e48d2b28f4161d6ab06a4a586ea",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "d2f03887e63ff5799436e09e3279d04e057551ca74ddb89494718cf9bb11e31c"
+  },
+  "source_lf_sha256": {
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "e05a715615e69fdd719cda038d00d7111dc90e09160191770c62e86e55c7bb39",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "df7306d4fcd4a4af463c3317e65011937a247b37d85a1a86ff42ed43a5e22e9a",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "c55f51270c63c7242f5943a2c54f82817875b639fa59690f221a4f4105ee7737",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "ba8e107fa4831f3a2ffaffd7f29751f3e7cbca3e2d42162f3ff4bb68b2f51648",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage7.py": "501583d7df522ded7229116c781b8849d813e2d656dfc98a5a98509e5510b6d9",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "1961386308c282bcb396ef3d05af5a1095481ba7b174979309a10485516a1b63",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "f7e0a894529817e19cf630006dab20fbe5ff515cafc68b2b529585781fa86795",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "d2f03887e63ff5799436e09e3279d04e057551ca74ddb89494718cf9bb11e31c"
+  },
+  "library_sha256": {
+    "r2-capture.so": "8cc92a2152c0ef1d063e0cba85b7f4e8692e46a1ef2314b416c0593e46af6542",
+    "r5-perf.so": "a9599035ba5b9c74c3fc6ea5cbe19b1241caa6fb5b08acd8cb1ec9259571f91d",
+    "r2-perf.so": "2bfab65f5737f48e41d1a8db9c9bcb03821f8367d3369fa0477bf081092e614b",
+    "r4-perf.so": "4ab6f113d2d089252d6e3ec3263251ec2efabeabb297045ecbe2e771229eed83",
+    "r5-capture.so": "ba74e00ccd1afb56b02b03b2d9f442ef6f7e0f7b5ba5794ccc77be4afb9875db",
+    "r3-capture.so": "c58c72e3eb0ef3f482754b08f3fab94c187157b8cc03b8e6d6905180b220af7a",
+    "r3-perf.so": "bfa7629722fd8c1dddb80be20f799d2c151a1eb7d7ae3b630ece9009e92cfa37",
+    "r1-perf.so": "51e9752ca088813c36fa2f67ff51a5ea2814cc66c1f0def08ea558044761e0e3",
+    "r1-capture.so": "7c7b9398dcf9ece2c5379e261891e315a809bd533574d517d63722b8003b5126",
+    "r4-capture.so": "9f08ad21769a37284df5689e59b937d79eea41dd78e48bedfbab63cc83c96a37",
+    "r0-capture.so": "836af5075d710894c051d06816b60ebb81a4c9f379d119e8eccbca974e3311f7",
+    "r0-perf.so": "7ebf06a8ea118eeb4d25670bf2a23fecb6c5e55322428deea3edb87b850e5e1a"
+  }
+}

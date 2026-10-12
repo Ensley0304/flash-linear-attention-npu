@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private Stage 0-6 checks; not an end-to-end Finalize accuracy claim."""
+"""Private Stage 0-7 checks; not an end-to-end Finalize accuracy claim."""
 import argparse
 import os
 import signal
@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch_npu  # noqa: F401
 
-CAPTURE_BYTES = 384 * 1024
+CAPTURE_BYTES = 656 * 1024
 OFFSETS = {
     "dk_state_raw": (0, torch.float32, (64, 128)),
     "dv_b": (32 * 1024, torch.float32, (64, 128)),
@@ -46,7 +46,9 @@ def make_case(batch, heads, tokens, lengths=None, seed=0, gate_mode="cumulative"
             chunks.append((sequence, local, start, rows))
             gate = -torch.rand((heads, rows, 128), generator=generator) * 5.0
             # FP32 cumsum is local to a chunk and is stored in base-2 units.
-            if gate_mode == "cumulative":
+            if gate_mode in ("cumulative", "extreme"):
+                if gate_mode == "extreme":
+                    gate.fill_(-5.0)
                 gate = gate.cumsum(1) / torch.log(torch.tensor(2.0))
             else:
                 # Keep every row significant when testing the Stage 2 kE path.
@@ -132,6 +134,8 @@ def check_case(args, batch, heads, tokens, lengths=None):
     generator = torch.Generator().manual_seed(593)
     q = (torch.randn(inputs[0].shape, generator=generator) * .125).bfloat16()
     dq_raw = torch.randn(inputs[0].shape, generator=generator) * .125
+    daqk = torch.randn((*inputs[0].shape[:-1], 64), generator=generator) * .125
+    device_daqk = daqk.to(f"npu:{args.device}")
     device_q, device_dq_raw = q.to(f"npu:{args.device}"), dq_raw.to(f"npu:{args.device}")
     device_beta = beta.to(f"npu:{args.device}")
     dv_out = torch.full_like(inputs[0], float("nan"), device=f"npu:{args.device}")
@@ -142,15 +146,18 @@ def check_case(args, batch, heads, tokens, lengths=None):
         signal.alarm(60)
         try:
             capture, trace, workspace = torch.ops.ascend_ops.kda_finalize_stage01(
-                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out, device_q, device_dq_raw, args.scale)
+                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out, device_q, device_dq_raw, args.scale, device_daqk)
             torch.npu.synchronize()
         finally:
             signal.alarm(0)
         capture, trace, workspace = capture.cpu(), trace.cpu(), workspace.cpu()
         if args.stage >= 3:
             check_stage3(inputs, beta, chunks, lengths is not None, capture, workspace, dv_out.cpu(), args.workspace_only, expected)
-        if args.stage >= 6:
+        if args.stage >= 6 and not (args.stage >= 7 and args.workspace_only):
             check_stage6(inputs, beta, chunks, lengths is not None, capture, workspace, args, expected)
+        if args.stage >= 7:
+            from check_stage7 import check_stage7
+            check_stage7(inputs, q, daqk, beta, chunks, lengths is not None, capture, workspace, args)
         if args.stage >= 5:
             check_stage5(inputs, q, dq_raw, beta, chunks, lengths is not None, capture, workspace, args, expected)
         if args.stage >= 4 and not args.workspace_only:
@@ -170,6 +177,8 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     wanted = reference(inputs, chunks, head, c, lengths is not None)
                     base = (2 * core + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3)
                     record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
+                    if args.stage >= 7:
+                        continue
                     for name in ((("zV",) if args.stage >= 5 else ("dk_state_raw", "dv_b", "zV")) +
                                  (("dKgb_raw", "zW") if args.stage >= 2 else ())):
                         actual = decode(record, name, workspace=True)
@@ -186,7 +195,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
             print(f"PASS workspace stage={args.stage} B={batch} H={heads} T={tokens} "
                   f"varlen={lengths is not None} gate={args.gate_mode} cores={used_cores} repeat={iteration + 1}", flush=True)
             continue
-        names = list(OFFSETS)[:(4, 8, 10, 10, 10, 10, 10)[args.stage]]
+        names = list(OFFSETS)[:(4, 8, 10, 10, 10, 10, 10, 10)[args.stage]]
         # Batch comparisons keep the full 8K check practical without sampling or
         # changing the per-element tolerance / independent CPU reference.
         for name in names:
@@ -266,6 +275,8 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     continue
                 base = (2 * core + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3)
                 record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
+                if args.stage >= 7:
+                    continue
                 for name in ((("zV",) if args.stage >= 5 else ("dk_state_raw", "dv_b", "zV")) +
                                  (("dKgb_raw", "zW") if args.stage >= 2 else ())):
                     torch.testing.assert_close(decode(record, name, workspace=True), decode(capture[head, c], name),
@@ -513,7 +524,7 @@ def check_stage6(inputs, beta, chunks, variable, capture, workspace, args, expec
                 got = record[360 * 1024:376 * 1024].clone().view(torch.float32).reshape(64, 64)
                 saved_tza = record[224 * 1024:232 * 1024].clone().view(torch.bfloat16).reshape(64, 64).double()
                 local.append((a.T @ saved_tza).float())
-                if (head, c) in retained:
+                if (head, c) in retained and args.stage < 7:
                     offset = retained[head, c] + 216 * 1024
                     torch.testing.assert_close(workspace[offset:offset + 16 * 1024].clone().view(torch.float32).reshape(64, 64),
                                                got, rtol=0, atol=0, msg='Stage 6 workspace/capture')
@@ -527,19 +538,19 @@ def check_stage6(inputs, beta, chunks, variable, capture, workspace, args, expec
             torch.testing.assert_close(got, torch.stack(local), rtol=3e-4, atol=2e-6, msg='Stage 6 local GEMM')
         assert ((got - wanted).abs() <= torch.stack(budgets) + 2e-6 + 3e-4 * wanted.abs()).all(), 'Stage 6 full dAkk_raw'
     if not args.workspace_only:
-        assert (capture[:, :, 376 * 1024:] == 0xA5).all(), 'Stage 6 capture guard'
+        assert (capture[:, :, 376 * 1024:384 * 1024 if args.stage >= 7 else CAPTURE_BYTES] == 0xA5).all(), 'Stage 6 capture guard'
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6, 7), default=0)
     parser.add_argument("--scale", type=float, default=128 ** -.5)
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--suite", choices=("smoke", "tails", "model"), default="smoke")
     parser.add_argument("--workspace-only", action="store_true")
-    parser.add_argument("--gate-mode", choices=("cumulative", "flat"), default="cumulative")
+    parser.add_argument("--gate-mode", choices=("cumulative", "flat", "extreme"), default="cumulative")
     parser.add_argument("--library", type=Path, required=True)
     args = parser.parse_args()
     torch.set_num_threads(4)
