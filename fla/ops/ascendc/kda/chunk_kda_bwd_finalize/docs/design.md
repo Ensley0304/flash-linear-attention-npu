@@ -140,7 +140,7 @@ bkPos[t, :] = beta[t] × k[t, :] ⊙ 2^(gk[t, :] − center) (s ≤ t < valid_ro
 
 上述 Cube 操作数采用 BF16 高位＋残差；Stage 8/10 按三项 `Ah@Bh + Ah@Bl + Al@Bh` 计算，FP32 累加。
 
-Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双缓冲；q/k/原始 gk 每 chunk 搬入一次，qPos/bkPos 共用同 tile 的正向指数。对角线、center、带内指数保留 UB，只有采数版导出。等待 Stage 6 的 `S6_READY[bank]`（FIX，flag 6/7），最终 band 写完才释放该代 workspace。Gather 索引初始化一次，驻留 UB 84.75 KiB；进入、退出均经 `V_MTE2` 保护 UB 复用。当前捕获两带结果，workspace 留 band 0 的 Cube 操作数；Stage 8/10 尚未接入，不提前搬入 L1，以免覆盖下一代 akk。
+Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双缓冲；q/k/原始 gk 每 chunk 搬入一次，qPos/bkPos 共用同 tile 的正向指数。对角线、center、带内指数保留 UB，只有采数版导出。等待 Stage 6 的 `S6_READY[bank]`（FIX，flag 6/7）。Gather 索引初始化一次，驻留 UB 84.75 KiB；进入、退出均经 `V_MTE2` 保护 UB 复用。截断到 Stage 7 时捕获两带，workspace 留 band 0，末带写完即释放；执行到 Stage 8 时增加下述带间消费握手及独立 L1 区。Stage 10 尚未接入。
 
 ## Stage 8：Cube
 
@@ -148,6 +148,14 @@ Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双
 dq_local_raw = dAqk_strict_lower[s:e, :] @ kNeg
 left_raw     = dAkk_strict_lower[s:e, :] @ kNeg
 ```
+
+开发入口首版：每带 32 行，两个 `32×64 @ 64×128` GEMM 各用三项 BF16 补算、FP32 累加，最后一次 Fixpipe 写 FP32 ND。L0A/B/C 各两槽，两结果交替装载、计算；不在补算项之间落 GM。
+
+Stage 8 专用 L1 为 `[384,448)`、`[448,512)` KiB，分别属于两个 head；每区前 32 KiB 保存两个 strict-lower 的高低位，后 32 KiB 保存 kNeg 高低位。strict-lower 每 chunk 只搬一次，kNeg 每带搬一次。原 `[0,384)` 的下一代 akk、状态预取保持不动。复用 Stage 2/4 已释放的 `keReady/keFree` 事件，不新增同方向硬事件。
+
+Stage 7 每带先生成完整 kNeg，从 MTE3 发 `BAND_READY=1`，随后生成 qPos/bkPos，与 Stage 8 并行；Cube 搬入两个有效 head 后从 MTE2 发 `BAND_LOADED=2`，Vector 才可覆盖该带 GM。无效奇数 head 仍参与每次握手。最后一带读取且全部 Vector 写回完成后释放该代 workspace；Cube 输出由自身顺序和 L0C free 事件保护。Stage 9/10 接入时还需保护带内指数和 qPos/bkPos，不能直接复用此提前释放条件。
+
+开发 workspace 每 head 两代，每代扩为 320 KiB，新增 `[256,288)` 的 dq_local_raw、`[288,320)` 的 left_raw；全核为 `usedCoreNum×1280 KiB`。采数区扩为 720 KiB，656/688 KiB 起保存两结果；短于 32 行时未计算的第二带保持 guard。性能版不导出采数。采用提前发布 kNeg 的 r1，性能数据见 [Stage 0～8 记录](perf/stage012345678/README.md)。
 
 ## Stage 9：Vector
 

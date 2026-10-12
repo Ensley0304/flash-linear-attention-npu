@@ -1,0 +1,128 @@
+[
+  {
+    "case": "correct",
+    "scale": 1e-25,
+    "rejected_elements": 0,
+    "expected_pass": true
+  },
+  {
+    "case": "missing_residual",
+    "scale": 1e-25,
+    "rejected_elements": 8043,
+    "expected_pass": false
+  },
+  {
+    "case": "missing_left_residual",
+    "scale": 1e-25,
+    "rejected_elements": 8046,
+    "expected_pass": false
+  },
+  {
+    "case": "wrong_sign",
+    "scale": 1e-25,
+    "rejected_elements": 8053,
+    "expected_pass": false
+  },
+  {
+    "case": "transpose",
+    "scale": 1e-25,
+    "rejected_elements": 8192,
+    "expected_pass": false
+  },
+  {
+    "case": "wrong_band",
+    "scale": 1e-25,
+    "rejected_elements": 8192,
+    "expected_pass": false
+  },
+  {
+    "case": "zero",
+    "scale": 1e-25,
+    "rejected_elements": 8064,
+    "expected_pass": false
+  },
+  {
+    "case": "correct",
+    "scale": 1.0,
+    "rejected_elements": 0,
+    "expected_pass": true
+  },
+  {
+    "case": "missing_residual",
+    "scale": 1.0,
+    "rejected_elements": 8043,
+    "expected_pass": false
+  },
+  {
+    "case": "missing_left_residual",
+    "scale": 1.0,
+    "rejected_elements": 8046,
+    "expected_pass": false
+  },
+  {
+    "case": "wrong_sign",
+    "scale": 1.0,
+    "rejected_elements": 8053,
+    "expected_pass": false
+  },
+  {
+    "case": "transpose",
+    "scale": 1.0,
+    "rejected_elements": 8192,
+    "expected_pass": false
+  },
+  {
+    "case": "wrong_band",
+    "scale": 1.0,
+    "rejected_elements": 8192,
+    "expected_pass": false
+  },
+  {
+    "case": "zero",
+    "scale": 1.0,
+    "rejected_elements": 8064,
+    "expected_pass": false
+  },
+  {
+    "case": "correct",
+    "scale": 1e+25,
+    "rejected_elements": 0,
+    "expected_pass": true
+  },
+  {
+    "case": "missing_residual",
+    "scale": 1e+25,
+    "rejected_elements": 8043,
+    "expected_pass": false
+  },
+  {
+    "case": "missing_left_residual",
+    "scale": 1e+25,
+    "rejected_elements": 8046,
+    "expected_pass": false
+  },
+  {
+    "case": "wrong_sign",
+    "scale": 1e+25,
+    "rejected_elements": 8053,
+    "expected_pass": false
+  },
+  {
+    "case": "transpose",
+    "scale": 1e+25,
+    "rejected_elements": 8192,
+    "expected_pass": false
+  },
+  {
+    "case": "wrong_band",
+    "scale": 1e+25,
+    "rejected_elements": 8192,
+    "expected_pass": false
+  },
+  {
+    "case": "zero",
+    "scale": 1e+25,
+    "rejected_elements": 8064,
+    "expected_pass": false
+  }
+]

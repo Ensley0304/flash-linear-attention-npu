@@ -10,7 +10,7 @@ int main()
     const auto fixed = BuildFinalizeStage01Plan(2, 3, 65, false, {}, 1);
     assert(fixed.chunks.size() == 4 && fixed.tiling.usedCoreNum == 1);
     assert(fixed.chunks[1].validRows == 1 && fixed.chunks[2].sequence == 1);
-    assert(fixed.workspaceBytes == 1024 * 1024);
+    assert(fixed.workspaceBytes == 1280 * 1024);
     assert(fixed.captureBytes == 3 * 4 * KDA::Arch22::CAPTURE_BYTES);
     const auto variable = BuildFinalizeStage01Plan(1, 3, 99, true, {0, 0, 1, 34, 99, 99}, 24);
     assert(variable.chunks.size() == 4 && variable.tiling.usedCoreNum == 8);
@@ -18,7 +18,7 @@ int main()
     assert(variable.chunks[3].validRows == 1);
     const auto model = BuildFinalizeStage01Plan(1, 96, 8192, false, {}, 24);
     assert(model.chunks.size() == 128 && model.tiling.usedCoreNum == 24);
-    assert(model.workspaceBytes == 24 * 1024 * 1024);
+    assert(model.workspaceBytes == 30 * 1024 * 1024);
     for (const auto &bad : std::vector<std::function<void()>>{
              [] { BuildFinalizeStage01Plan(1, 0, 64, false, {}, 1); },
              [] { BuildFinalizeStage01Plan(1, 1, 64, false, {}, 0); },

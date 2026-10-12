@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--heads", type=int, default=96)
     parser.add_argument("--tokens", type=int, default=8192)
     parser.add_argument("--cores", type=int, default=0)
-    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "6", "7", "both"), default="both")
+    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "6", "7", "8", "both"), default="both")
     parser.add_argument("--varlen", action="store_true")
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeat", type=int, default=10)

@@ -32,9 +32,9 @@ def check_split(got, wanted, name, exact=False):
 def check_stage7(inputs, q, daqk, beta, chunks, variable, capture, workspace, args):
     from check_stage01 import workspace_works, reference
     heads = inputs[0].shape[-3]
-    cores = workspace.numel() // (1024 * 1024)
+    cores = workspace.numel() // (1280 * 1024)
     retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
-                (2 * core + owner) * 512 * 1024 + ((work // cores) & 1) * 256 * 1024
+                (2 * core + owner) * 640 * 1024 + ((work // cores) & 1) * 320 * 1024
                 for core, work in workspace_works(heads, len(chunks), cores, 7) for owner in range(2)
                 if work // len(chunks) * 2 + owner < heads}
     for head in range(heads):
@@ -48,7 +48,7 @@ def check_stage7(inputs, q, daqk, beta, chunks, variable, capture, workspace, ar
             k, query, gate, aq = (token(x) for x in (inputs[0], q, inputs[2], daqk))
             b = torch.zeros(64, dtype=torch.float64)
             b[:rows] = (beta[head] if variable else beta[sequence, head])[first:first + rows].double()
-            ws = workspace[retained[head, c]:retained[head, c] + 256 * 1024] if (head, c) in retained else None
+            ws = workspace[retained[head, c]:retained[head, c] + 320 * 1024] if (head, c) in retained else None
             record = ws if args.workspace_only else capture[head, c]
             qo, ko = (64 * 1024, 80 * 1024) if args.workspace_only else (384 * 1024, 400 * 1024)
             check_split(read(record, qo, (2, 64, 64), torch.bfloat16), torch.tril(aq, -1) * 65536, 'dAqk lower', True)
@@ -97,4 +97,4 @@ def check_stage7(inputs, q, daqk, beta, chunks, variable, capture, workspace, ar
             if not args.workspace_only:
                 assert (record[416 * 1024 + 256:424 * 1024] == 0xA5).all(), 'diagonal guard'
                 if rows <= 32:
-                    assert (record[540 * 1024:] == 0xA5).all(), 'unused band'
+                    assert (record[540 * 1024:656 * 1024] == 0xA5).all(), 'unused band'

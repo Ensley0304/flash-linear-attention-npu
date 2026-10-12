@@ -1,0 +1,17 @@
+{
+  "precision_issue": {
+    "location": "extreme gate, rows=31, dq_local_raw[1,83]",
+    "got": -3.173574669095057e-33,
+    "fp64": -3.173110691304977e-33,
+    "operand": 2.988814658673134e-37,
+    "cause": "Initial Stage 8 full-formula budget omitted propagation of Stage 7 absolute 2e-38 operand allowance through the 2^16-scaled A.",
+    "fix": "Add abs(A).sum(-1)*2e-38 to the full-formula budget. Kernel and earlier-stage thresholds unchanged; local three-term MMAD gate passed before this fix.",
+    "evidence": [
+      "extreme-diagnose.log",
+      "extreme-detail.log",
+      "tails-extreme.log"
+    ]
+  },
+  "r0": "End-of-band ready after kNeg/qPos/bkPos generation.",
+  "r1": "Produce complete kNeg first, send ready, then produce qPos/bkPos while Cube runs; three-term arithmetic unchanged."
+}

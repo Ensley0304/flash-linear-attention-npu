@@ -1,0 +1,42 @@
+{
+  "cpu_checks": {
+    "r0_tail": {
+      "tails-cumulative.log": 22,
+      "tails-flat.log": 22,
+      "tails-extreme.log": 22
+    },
+    "r0_regression": {
+      "regression-0.log": 22,
+      "regression-1.log": 22,
+      "regression-2.log": 22,
+      "regression-3.log": 22,
+      "regression-4.log": 22,
+      "regression-5.log": 22,
+      "regression-6.log": 22,
+      "regression-7.log": 22
+    },
+    "r0_model": {
+      "model-cumulative.log": 2,
+      "model-flat.log": 2,
+      "perf-cumulative.log": 2,
+      "perf-flat.log": 2
+    },
+    "r1_tail": {
+      "r1-tails-cumulative.log": 22,
+      "r1-tails-flat.log": 22,
+      "r1-tails-extreme.log": 22
+    }
+  },
+  "check_total": 316,
+  "status": {
+    "accuracy.status": "PASS",
+    "accuracy-r1.status": "PASS",
+    "equivalence.status": "PASS",
+    "host-test.status": "PASS",
+    "format.status": "PASS",
+    "python-syntax.status": "PASS"
+  },
+  "local_mmad_budget": "2e-6 * sum(abs(Ai) @ abs(Bi)) + 2e-38",
+  "fp64_band_budget": "6e-5 * (abs(A) @ abs(kNeg)) + sum(abs(A), -1) * 2e-38 + 2e-38",
+  "scope": "private Stage 0-8 development entry; not full Finalize/ATK/A3 acceptance"
+}

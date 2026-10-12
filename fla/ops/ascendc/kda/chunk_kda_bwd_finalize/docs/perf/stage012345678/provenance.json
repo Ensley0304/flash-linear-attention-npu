@@ -1,0 +1,49 @@
+{
+  "base_commit": "7d30217e",
+  "branch": "kda-finalize-a2",
+  "server": "a2-server",
+  "workspace": "/data/Ensley0304/kda-finalize-a2-stage8-20261012",
+  "soc": "Ascend910B3",
+  "device": 1,
+  "cann": "9.1.0",
+  "reference_pr": "https://gitcode.com/cann/cannbot-skills/pull/1069",
+  "reference_commit": "4950cbd7c45e0d44cb8ec52598edf53cdc7f16ca",
+  "source_sha256": {
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "8e353f76d73dbf0cbebeb5c1a704cced5226f78a722f677aab3605e190913ec5",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "c5cd71b09e82d8e7f24c7edf11a1dfaa9b78c52fc37c14bda73633c8151b02c7",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "f1a526122aa89a03edd4ccfe8856d27fc17757cc9172bff1f57b75bf0a47594a",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "088f116a5291f0268f99bf6dacab5f568547107013be947a8df2f16b7fb5b241",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage8.py": "ebc3904b68cabf38de8f056620a014b4596cc4e49ad775fed794772acfd28cff",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage7.py": "257300297e89e226f5a5ea178b303cb5f3ff9f81f1a82cee573ffe427166f7aa",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "e6c3576cf7841e61747e604acb2adcfbd7649bb84acc1d6b5b8375689b9fe438",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "3e9f97ded0a7d55b7dfb31ca00121e4ac7052bb1d1fd93abfa627b1df5ba7690",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "98e5985e5a2c1e11fd8bfeb85e119b29fe0ad52686f96b22a26e9bcc21ddc06c"
+  },
+  "source_lf_sha256": {
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "99d29dc96a4c6ebc157743c2c0285412086d9c82232cfaea390b327a0197ca76",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "bdb0687b6a349d1d566be3e8bc45446158250d30f6c09c566f56b815a804e307",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "5812e32826fcd374fe61970cf2a27cd50461709b0626871dfa3fc429f4ec5064",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "602f2055e1a51d423566704669a0dfa9643861ca719adf9f4c678fca6d786f93",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage8.py": "ac46c6db7306b46bc0029a651619e641afe1970cc742c133ad3f01125206d171",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage7.py": "78d849154edd9d2a80f2c6fe77ac586eab5f1c6ca83a78acbef0d718fa7aedd2",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "258413ba36783ccc8d1a3e2a1db51746254b43d434d041b01295b277a2bf2241",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "abf1f3f6ff5a5781348b4835e4f7351b1abb8faccc29f64759c1676824bb2145",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "27b18b42a77a433577f8a390c2fe649c3682785bbe40c8972e8566cc49ea32d9"
+  },
+  "library_sha256": {
+    "stage8/r1-perf.so": "2a3b1c2b867734ed9bb3b92257d3f565253ea9453657b36d90f6bb4d4ce778e8",
+    "stage8/r1-capture.so": "871b5f18ed53eabe53cbe61c19f920e76b76ec86dc7f52a6ff430d13cb22c1fb",
+    "stage8/r0-capture.so": "628a1b17e49d4351c4d68fee112880a70a1e157ef127b09ab6903438fdd932f3",
+    "stage8/r0-perf.so": "d95a02c7e82a3d479630f86107a14e9c3956e2945d6fe76172c9f72ec4e87a95"
+  },
+  "baseline_library": {
+    "path": "/data/Ensley0304/kda-finalize-a2-stage7-20261012/stage7/r5-perf.so",
+    "sha256": "a9599035ba5b9c74c3fc6ea5cbe19b1241caa6fb5b08acd8cb1ec9259571f91d",
+    "commit": "7d30217e"
+  },
+  "candidate_vector_sha256": {
+    "stage8/r0-vector.h": "015e93d4fa3744d5622094b9e9e3996c2d5210a5a6dcb5a49eb02c1ee772ab66",
+    "stage8/r1-vector.h": "8e353f76d73dbf0cbebeb5c1a704cced5226f78a722f677aab3605e190913ec5"
+  },
+  "selected_tag": "r1"
+}

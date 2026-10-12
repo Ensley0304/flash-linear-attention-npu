@@ -1,0 +1,72 @@
+[
+  {
+    "mode": "capture",
+    "case_count": 4,
+    "bitwise_equal": true,
+    "checks": [
+      {
+        "gate": "cumulative",
+        "varlen": false,
+        "dv": "f8335e111dd3ad98fac5742d86a9eb854782ceca71ed88d275df6aad5ce6c405",
+        "capture": "9cfa84450026e68c31f9a7c1ac8dba1f184520ede221bce8b90afddb96fec15c",
+        "trace": "227e150a05722d8335e5fc7755ec2e73ed8a2754ac61ca5fc6c1fc3f1844a815",
+        "workspace_live": "2c781619e3d84ccf1ae9d75799dccccb88982029158484ee5a15c567c13ab754"
+      },
+      {
+        "gate": "cumulative",
+        "varlen": true,
+        "dv": "76c1ecfa256ff0e47cf88fcbe83670ef650d726ed6baa4d0f2e83bdf56bbc92a",
+        "capture": "5c379b7c71f93c282af559cde872dcc89fb24a6530fcd42aa0137922a3d7e93d",
+        "trace": "1d440483a0f8920b2f3b75b5c9198625661992545a6d4fada3caf4af41eb0087",
+        "workspace_live": "c3ece946067de242a3a61387554ab5f175c3a6eb23c1ac25e64a054e0df83034"
+      },
+      {
+        "gate": "flat",
+        "varlen": false,
+        "dv": "f8335e111dd3ad98fac5742d86a9eb854782ceca71ed88d275df6aad5ce6c405",
+        "capture": "7433ccd1fa2475ed5a9d5112271191aa4907e5672f10a72762998f44f2abe7ca",
+        "trace": "227e150a05722d8335e5fc7755ec2e73ed8a2754ac61ca5fc6c1fc3f1844a815",
+        "workspace_live": "e700f7892beddec089b8befc0c2df3a8b2e804ca3317c5f21c2a4e59f493c843"
+      },
+      {
+        "gate": "flat",
+        "varlen": true,
+        "dv": "76c1ecfa256ff0e47cf88fcbe83670ef650d726ed6baa4d0f2e83bdf56bbc92a",
+        "capture": "6bbf51d57f144411b0019d386b560238571a699ea162d3a8e457625693767cad",
+        "trace": "1d440483a0f8920b2f3b75b5c9198625661992545a6d4fada3caf4af41eb0087",
+        "workspace_live": "def7a7ed002c4775ba3c8bbcc1fb43ff2ecb51b69ec20b25ad52153022362fb9"
+      }
+    ]
+  },
+  {
+    "mode": "perf",
+    "case_count": 4,
+    "bitwise_equal": true,
+    "checks": [
+      {
+        "gate": "cumulative",
+        "varlen": false,
+        "dv": "f8335e111dd3ad98fac5742d86a9eb854782ceca71ed88d275df6aad5ce6c405",
+        "workspace_live": "2c781619e3d84ccf1ae9d75799dccccb88982029158484ee5a15c567c13ab754"
+      },
+      {
+        "gate": "cumulative",
+        "varlen": true,
+        "dv": "76c1ecfa256ff0e47cf88fcbe83670ef650d726ed6baa4d0f2e83bdf56bbc92a",
+        "workspace_live": "c3ece946067de242a3a61387554ab5f175c3a6eb23c1ac25e64a054e0df83034"
+      },
+      {
+        "gate": "flat",
+        "varlen": false,
+        "dv": "f8335e111dd3ad98fac5742d86a9eb854782ceca71ed88d275df6aad5ce6c405",
+        "workspace_live": "e700f7892beddec089b8befc0c2df3a8b2e804ca3317c5f21c2a4e59f493c843"
+      },
+      {
+        "gate": "flat",
+        "varlen": true,
+        "dv": "76c1ecfa256ff0e47cf88fcbe83670ef650d726ed6baa4d0f2e83bdf56bbc92a",
+        "workspace_live": "def7a7ed002c4775ba3c8bbcc1fb43ff2ecb51b69ec20b25ad52153022362fb9"
+      }
+    ]
+  }
+]

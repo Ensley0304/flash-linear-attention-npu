@@ -1,6 +1,8 @@
 # A2/A3 Finalize Workspace 与同步
 
-完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前开发入口实现 Stage 0～7，其余阶段仍为规划。
+完整方案使用两个 kernel：主 MIX kernel 执行 Stage 0～11，独立 Vector kernel 执行 Stage 12；调用层在同一 stream 顺序提交。当前开发入口实现 Stage 0～8，其余阶段仍为规划。
+
+Stage 8 开发入口：每 head 两代 320 KiB，基址为 `(2×core+owner)×640 KiB+bank×320 KiB`。原槽内偏移不变，新增 `[256,288)` 的 dq_local_raw 和 `[288,320)` 的 left_raw（FP32 ND，64×128，按带写入）；总量 `P×1280 KiB`。每带通过 `BAND_READY=1` / `BAND_LOADED=2` 完成 AIV MTE3→AIC MTE2→AIV MTE3 握手，搬入 L1 后允许下一带覆盖 GM。L1 使用独立 `[384,512)`，不覆盖下一代 akk。Stage 9/10 接入时需扩展末次消费者保护。下文 256 KiB 双槽描述为 Stage 0～7 历史布局，完整方案表也不是当前开发地址。
 
 四阶段开发入口将每 head 的 512 KiB 分为两个 256 KiB 槽，按 `floor(w/P)%2` 交替使用，槽内沿用下表 Stage 0～3 的偏移。AIC 在 FIX 上发布 `S02_READY[bank]`，AIV 读取并完成 Stage 3 后确认 `ACK[bank]`；下一次复用同槽前必须等确认。此双槽安排不改变总分配，但不直接适用于下表完整 Stage 0～11 的地址范围。
 
