@@ -84,13 +84,16 @@ def check_stage7(inputs, q, daqk, beta, chunks, variable, capture, workspace, ar
                 saved = (424 + start // 32 * 116) * 1024
                 offsets = (96 * 1024, 128 * 1024, 224 * 1024) if args.workspace_only else tuple(saved + i * 32768 for i in range(3))
                 for offset, wanted, name in zip(offsets, (kn, qp, bp), ('kNeg', 'qPos', 'bkPos')):
-                    check_split(read(record, offset, (2, 64, 128), torch.bfloat16), wanted, name)
+                    if not (args.workspace_only and args.stage >= 10 and name == 'kNeg'):
+                        check_split(read(record, offset, (2, 64, 128), torch.bfloat16), wanted, name)
                 if not args.workspace_only:
                     eo, co = saved + 96 * 1024, saved + 112 * 1024
                     torch.testing.assert_close(read(record, co, (128,)).double(), center, rtol=2e-7, atol=0)
                     torch.testing.assert_close(read(record, eo, (32, 128)).double(), exp, rtol=2e-5, atol=2e-38)
                 if not args.workspace_only and start == 0 and ws is not None:
                     for wo, so, count in ((64, 384, 16), (80, 400, 16), (96, 424, 32), (128, 456, 32), (224, 488, 32)):
+                        if args.stage >= 10 and wo == 96:
+                            continue  # Stage 10 reuses the consumed kNeg slot.
                         assert torch.equal(ws[wo * 1024:(wo + count) * 1024], record[so * 1024:(so + count) * 1024]), 'Stage 7 workspace/capture'
                 if not args.workspace_only:
                     assert (record[saved + 112 * 1024 + 512:saved + 116 * 1024] == 0xA5).all(), 'band guard'

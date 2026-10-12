@@ -2,7 +2,7 @@
 
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
 
-本轮实现范围：Stage 0～7 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
+本轮实现范围：Stage 0～10 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
 
 硬件预算：L1 512 KiB，L0A/L0B 各 64 KiB，L0C 128 KiB，每个 AIV 的 UB 192 KiB。
 
@@ -140,7 +140,7 @@ bkPos[t, :] = beta[t] × k[t, :] ⊙ 2^(gk[t, :] − center) (s ≤ t < valid_ro
 
 上述 Cube 操作数采用 BF16 高位＋残差；Stage 8/10 按三项 `Ah@Bh + Ah@Bl + Al@Bh` 计算，FP32 累加。
 
-Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双缓冲；q/k/原始 gk 每 chunk 搬入一次，qPos/bkPos 共用同 tile 的正向指数。对角线、center、带内指数保留 UB，只有采数版导出。等待 Stage 6 的 `S6_READY[bank]`（FIX，flag 6/7）。Gather 索引初始化一次，驻留 UB 84.75 KiB；进入、退出均经 `V_MTE2` 保护 UB 复用。截断到 Stage 7 时捕获两带，workspace 留 band 0，末带写完即释放；执行到 Stage 8 时增加下述带间消费握手及独立 L1 区。Stage 10 尚未接入。
+Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双缓冲；q/k/原始 gk 每 chunk 搬入一次，qPos/bkPos 共用同 tile 的正向指数。对角线、center、带内指数保留 UB，只有采数版导出。等待 Stage 6 的 `S6_READY[bank]`（FIX，flag 6/7）。Gather 索引初始化一次，驻留 UB 84.75 KiB；进入、退出均经 `V_MTE2` 保护 UB 复用。截断到 Stage 7 时捕获两带，workspace 留 band 0，末带写完即释放；执行到 Stage 8 时增加下述带间消费握手及独立 L1 区。Stage 10 使用下述第二轮带间握手。
 
 Stage 7 输出按实际产出顺序交替使用双槽。带内全零 tile 直接清零高低位两份输出；完整有效 tile 不预先清零临时量，尾 tile 保留清零和原精度转换。
 
@@ -185,6 +185,10 @@ Stage 9 保持 16 行输入、输出双槽：先搬入已就绪的 dq_base/dg_ba
 right_raw = dAqk_strict_lower[:, s:e]ᵀ @ qPos
           + dAkk_strict_lower[:, s:e]ᵀ @ bkPos
 ```
+
+Stage 10 开发入口沿用逆序 32 行带，与 Stage 9 重叠。每项计算 `Ah@Bh + Ah@Bl + Al@Bh`，六次 MMAD 在 FP32 L0C 中累加后一次写回。两个 head 分别使用 L0A/B/C 双槽；L1 保留 strict-lower，高低位 qPos、bkPos 依次复用 kNeg 的 32 KiB/head，仍为 512 KiB。
+
+每带的 `BAND_READY/BAND_LOADED` 使用两轮握手：第一轮传 kNeg；第二轮在第一轮消费完成后发布 qPos/bkPos，Cube 完成 right_raw 写回后释放。Stage 9 不等待第二轮计算，下一带等待。right_raw 复用已消费的 workspace kNeg 槽（96 KiB，FP32 32×128/带），未来由 Stage 11 消费；当前开发入口仅保留最后一带，采数区另存两带。workspace 大小不变。
 
 ## Stage 11：Vector
 

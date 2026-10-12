@@ -1,0 +1,49 @@
+[
+  {
+    "name": "r1-smoke-s10-smoke-cumulative-n0-p0",
+    "rc": 0,
+    "seconds": 23.8416748046875,
+    "command": [
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py",
+      "--library",
+      "stage10/r1-capture.so",
+      "--device",
+      "3",
+      "--stage",
+      "10",
+      "--suite",
+      "smoke",
+      "--gate-mode",
+      "cumulative",
+      "--cores",
+      "1",
+      "--repeat",
+      "2"
+    ]
+  },
+  {
+    "name": "r1-smoke-s10-smoke-cumulative-n1-p0",
+    "rc": 0,
+    "seconds": 14.483926057815552,
+    "command": [
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py",
+      "--library",
+      "stage10/r1-capture.so",
+      "--device",
+      "3",
+      "--stage",
+      "10",
+      "--suite",
+      "smoke",
+      "--gate-mode",
+      "cumulative",
+      "--cores",
+      "1",
+      "--repeat",
+      "2",
+      "--q-norm"
+    ]
+  }
+]

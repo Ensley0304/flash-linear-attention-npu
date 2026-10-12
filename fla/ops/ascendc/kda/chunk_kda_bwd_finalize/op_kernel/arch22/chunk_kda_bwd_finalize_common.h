@@ -102,7 +102,7 @@ struct Stage01TilingData {
 
 // Optional test snapshots, separate from the reusable production workspace.
 // Each (head, chunk) owns a complete record, including padding and tail rows.
-constexpr uint32_t CAPTURE_BYTES = 784 * 1024;
+constexpr uint32_t CAPTURE_BYTES = 816 * 1024;
 constexpr uint32_t CAPTURE_DK_STATE_RAW = 0;
 constexpr uint32_t CAPTURE_DV_B = 32 * 1024;
 constexpr uint32_t CAPTURE_ZV = 64 * 1024;
@@ -133,7 +133,9 @@ constexpr uint32_t CAPTURE_DQ_LOCAL = 656 * 1024;
 constexpr uint32_t CAPTURE_LEFT = 688 * 1024;
 constexpr uint32_t CAPTURE_DQ = 720 * 1024;
 constexpr uint32_t CAPTURE_DG = 752 * 1024;
-static_assert(CAPTURE_DG + 32 * 1024 == CAPTURE_BYTES);
+constexpr uint32_t CAPTURE_RIGHT = 784 * 1024;
+constexpr uint32_t WS_RIGHT = WS_KNEG; // Stage 8 has consumed kNeg before Stage 10 writes.
+static_assert(CAPTURE_RIGHT + 32 * 1024 == CAPTURE_BYTES);
 static_assert(CAPTURE_BANDS + 2 * CAPTURE_BAND_BYTES == CAPTURE_DQ_LOCAL);
 static_assert(WS_LEFT + 32 * 1024 == WS_BANK_BYTES);
 

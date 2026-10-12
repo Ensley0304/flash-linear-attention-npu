@@ -1,0 +1,21 @@
+Name: torch
+Version: 2.7.1+cpu
+Summary: Tensors and Dynamic neural networks in Python with strong GPU acceleration
+Home-page: https://pytorch.org/
+Author: PyTorch Team
+Author-email: packages@pytorch.org
+License: BSD-3-Clause
+Location: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages
+Requires: filelock, fsspec, jinja2, networkx, sympy, typing-extensions
+Required-by: flash-linear-attention-npu, torch_npu
+---
+Name: torch_npu
+Version: 2.7.1.post5
+Summary: NPU bridge for PyTorch
+Home-page: https://gitcode.com/ascend/pytorch
+Author: 
+Author-email: 
+License: BSD License
+Location: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages
+Requires: torch
+Required-by: flash-linear-attention-npu

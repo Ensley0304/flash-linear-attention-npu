@@ -1,0 +1,24 @@
+r1-smoke-s10-smoke-cumulative-n0-p0 0 23.84
+r1-smoke-s10-smoke-cumulative-n1-p0 0 14.48
+r1-check-s10-tails-cumulative-n0-p0 0 31.5
+r1-check-s10-tails-flat-n0-p0 0 31.16
+r1-check-s10-tails-extreme-n0-p0 0 32.82
+r1-check-s10-tails-cumulative-n1-p0 0 31.02
+r1-check-s10-tails-flat-n1-p0 0 66.1
+r1-check-s10-tails-extreme-n1-p0 0 31.62
+r1-check-s0-smoke-cumulative-n0-p0 0 15.57
+r1-check-s1-smoke-cumulative-n0-p0 0 13.95
+r1-check-s2-smoke-cumulative-n0-p0 0 15.68
+r1-check-s3-smoke-cumulative-n0-p0 0 14.58
+r1-check-s4-smoke-cumulative-n0-p0 0 14.72
+r1-check-s5-smoke-cumulative-n0-p0 0 17.02
+r1-check-s6-smoke-cumulative-n0-p0 0 13.92
+r1-check-s7-smoke-cumulative-n0-p0 0 14.59
+r1-check-s8-smoke-cumulative-n0-p0 0 19.8
+r1-check-s9-smoke-cumulative-n0-p0 0 27.39
+r1-check-s10-tails-cumulative-n0-p1 0 21.09
+r1-check-s10-tails-cumulative-n1-p1 0 18.7
+r1-profile-fixed {'min': 8480.647, 'median': 8498.79, 'max': 8514.152} {'min': 0.574, 'median': 0.5745, 'max': 0.576}
+r1-profile-varlen {'min': 8590.763, 'median': 8604.5245, 'max': 8633.989} {'min': 0.576, 'median': 0.577, 'max': 0.578}
+baseline-profile-fixed {'min': 7503.89, 'median': 7530.494500000001, 'max': 7541.355} {'min': 0.651, 'median': 0.653, 'max': 0.654}
+baseline-profile-varlen {'min': 7631.409, 'median': 7643.639999999999, 'max': 7659.172} {'min': 0.651, 'median': 0.652, 'max': 0.652}

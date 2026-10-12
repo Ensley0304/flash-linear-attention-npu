@@ -534,7 +534,8 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
     }
 
-    template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false>
+    template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false,
+              bool COMPUTE_RIGHT = false>
     __aicore__ inline void Stage7(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
@@ -778,11 +779,17 @@ public:
             if constexpr (CONSUME_BANDS) {
                 // The next band may overwrite GM only after Cube's MTE2 read.
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
+                if constexpr (COMPUTE_RIGHT) {
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
+                }
                 if constexpr (FINALIZE_Q) {
                     Stage9<CAPTURE, Q_NORM>(tiling, chunk, chunkIndex, head, owner, core, capture, bank, start, end);
                     if (owner == 0) {
                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
                     }
+                }
+                if constexpr (COMPUTE_RIGHT) {
+                    AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
                 }
             }
         }

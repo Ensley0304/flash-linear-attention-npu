@@ -1,0 +1,46 @@
+/data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/wheel/bdist_wheel.py:4: FutureWarning: The 'wheel' package is no longer the canonical location of the 'bdist_wheel' command, and will be removed in a future release. Please update to setuptools v70.1 or later which contains an integrated version of this command.
+  warn(
+INFO: running cmake_build
+INFO: get env ASCEND_HOME_PATH = /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0
+INFO: Using Torch path: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/share/cmake/Torch
+INFO: Using Torch NPU path: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch_npu
+INFO: get env NPU_ARCH = ascend910b
+INFO: Using NPU_ARCH: ascend910b
+INFO: get env FAST_KERNEL_OP_NAME = kda_finalize_stage01
+INFO: Building only fast kernel op: kda_finalize_stage01
+INFO: get env PATH = /data/miniconda3/envs/wys_gdn/bin:/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/bin:/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/tools/ccec_compiler/bin:/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/tools/profiler/bin:/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/tools/ascend_system_advisor/asys:/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/tools/show_kernel_debug_data:/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/tools/msobjdump:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+-- Using Ascend toolkit path: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0
+-- Bisheng compiler path: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/ccec_compiler/bin/bisheng
+-- Found Python3: /data/miniconda3/envs/wys_gdn/bin/python3.10 (found version 3.10.20)
+-- Python3 include dir: /data/miniconda3/envs/wys_gdn/include/python3.10
+-- Python3 libraries: /data/miniconda3/envs/wys_gdn/lib/libpython3.10.so
+-- Using Torch path: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/share/cmake/Torch
+CMake Warning at /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:22 (message):
+  static library kineto_LIBRARY-NOTFOUND not found.
+Call Stack (most recent call first):
+  /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:125 (append_torchlib_if_found)
+  cmake/torch.cmake:14 (find_package)
+  CMakeLists.txt:26 (include)
+
+
+-- Found Torch version: 2.7.1
+-- Torch include dirs: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/include;/data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/include/torch/csrc/api/include
+-- Torch libraries: torch;torch_library;/data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch/lib/libc10.so
+-- Using Torch NPU path: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch_npu
+-- Torch NPU include path: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch_npu/include
+-- Torch NPU lib path: /data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch_npu/lib
+-- OBJECTS_LIST before adding sources: 
+-- CMAKE_CURRENT_SOURCE_DIR = /data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b
+-- OP_NAME: kda_finalize_stage01
+-- COMPILE FLAGS: --npu-arch=dav-2201 --cce-auto-sync=off -DKDA_FINALIZE_STAGE01_CAPTURE=0 -xasc 
+-- SOURCE FILES: kda_finalize_stage01.cpp
+-- OBJECTS_LIST after adding sources: $<TARGET_OBJECTS:kda_finalize_stage01_obj>
+-- Configuring done (0.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/build
+[ 33%] Building CXX object csrc/kda_finalize_stage01/ascend910b/CMakeFiles/kda_finalize_stage01_obj.dir/kda_finalize_stage01.cpp.o
+[ 33%] Built target kda_finalize_stage01_obj
+[ 66%] Linking CXX shared library _C.abi3.so
+Copying compiled extension _C.abi3.so to /data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/ascend_ops/
+[100%] Built target _C
+INFO: CMake extensions built successfully.

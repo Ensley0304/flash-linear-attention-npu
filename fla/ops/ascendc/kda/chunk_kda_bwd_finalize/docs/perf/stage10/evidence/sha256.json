@@ -1,0 +1,15 @@
+{
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "21c3589c751241f4d4dbcecfbc963e81ece1ce4c8a06c576209368bb2567c41f",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "d4324c9ed51a405dd8b03970a4df6ce0500e95d0c2940b84598ff8f6456f5e8e",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "8b58c379951d60b4174d3a588222cea0f425a617ba233a48df41425e54b8f2ad",
+  "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "6e52d170048b044f84485d2a51668c77fb193086eaa6f3ec285f5bc440838347",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage8.py": "ebc3904b68cabf38de8f056620a014b4596cc4e49ad775fed794772acfd28cff",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage7.py": "15228c7b5c8f57547be6c7949c91ee7f52dcdacc18db2784a7d17bb6e8be871e",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "0487b17642612f91aa58341ae175eb01d78629f06f5a44a1966b3a8a38c7e575",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage10.py": "51d26d3aa6f907e4866c491f00f04124fd991fa415aed3b7fbfe61a07db3947e",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "5d3e4eb12bfc3eae19787c8c01a8240c537bcdaf2c253e5e368c8cbca77971a4",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage9.py": "33ed247cdd0addef97dd18f515b88f00442429f886b16bad53eaf91f4378a3ee",
+  "stage10/r1-capture.so": "08e721b072cd722b99f687789650b28c5618c82c24fb0a821cce2760b7e95ce3",
+  "stage10/r1-perf.so": "5caedf45b8225b94df6e87cc785ef7d257966f9bc737a596f0e1ebdd7c82cb83",
+  "bound-opt/r11-perf.so": "017b39f644a31790f6c2a032e70abcfca8a08f3b59ea3337e7e7c7bc040c66d4"
+}

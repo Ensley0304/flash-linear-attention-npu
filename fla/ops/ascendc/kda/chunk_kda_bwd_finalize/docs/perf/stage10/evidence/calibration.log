@@ -1,0 +1,30 @@
+{
+  "zero": {
+    "rejected_elements": 4096,
+    "elements": 4096
+  },
+  "missing_query": {
+    "rejected_elements": 4096,
+    "elements": 4096
+  },
+  "missing_beta_key": {
+    "rejected_elements": 4096,
+    "elements": 4096
+  },
+  "missing_residuals": {
+    "rejected_elements": 4067,
+    "elements": 4096
+  },
+  "wrong_sign": {
+    "rejected_elements": 4096,
+    "elements": 4096
+  },
+  "wrong_scale": {
+    "rejected_elements": 4096,
+    "elements": 4096
+  },
+  "wrong_transpose": {
+    "rejected_elements": 4096,
+    "elements": 4096
+  }
+}

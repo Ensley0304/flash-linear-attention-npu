@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch_npu  # noqa: F401
 
-CAPTURE_BYTES = 784 * 1024
+CAPTURE_BYTES = 816 * 1024
 OFFSETS = {
     "dk_state_raw": (0, torch.float32, (64, 128)),
     "dv_b": (32 * 1024, torch.float32, (64, 128)),
@@ -170,6 +170,9 @@ def check_case(args, batch, heads, tokens, lengths=None):
             from check_stage9 import check_stage9
             check_stage9(inputs, q, dq_raw, beta, daqk, rstd, chunks, lengths is not None,
                          capture, workspace, dq_out.cpu(), args, expected)
+        if args.stage >= 10:
+            from check_stage10 import check_stage10
+            check_stage10(inputs, q, beta, daqk, chunks, lengths is not None, capture, workspace, args)
         if args.stage >= 5:
             check_stage5(inputs, q, dq_raw, beta, chunks, lengths is not None, capture, workspace, args, expected)
         if args.stage >= 4 and not args.workspace_only:
@@ -557,7 +560,7 @@ def check_stage6(inputs, beta, chunks, variable, capture, workspace, args, expec
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), default=0)
     parser.add_argument("--q-norm", action="store_true")
     parser.add_argument("--scale", type=float, default=128 ** -.5)
     parser.add_argument("--device", type=int, default=1)

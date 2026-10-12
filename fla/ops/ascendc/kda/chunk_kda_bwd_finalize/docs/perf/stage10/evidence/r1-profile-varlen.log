@@ -1,0 +1,33 @@
+[INFO] Start profiling....
+[W1012 23:37:35.333319700 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+DONE stage=10 H=96 T=8192 varlen=True warmup=20 samples=10
+[INFO] Start export data in PROF_000001_20261012233734532_00667644MEHQQGAH.
+Mon 12 Oct 2026 23:37:40 [WARNING] [MSVP] [668944] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/host" ...
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_common.py: It may take few minutes, please be patient ...
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/host" finished.
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3" ...
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_common.py: It may take few minutes, please be patient ...
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3" finished.
+Mon 12 Oct 2026 23:37:40 [INFO] [MSVP] [668962] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3.
+Mon 12 Oct 2026 23:37:41 [WARNING] [MSVP] [669145] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/host" has been analyzed. Parsing phase will be skipped.
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3" has been analyzed. Parsing phase will be skipped.
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3.
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/host"
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3.
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/device_3"
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_common.py: Start exporting summary output_file.
+Mon 12 Oct 2026 23:37:41 [INFO] [MSVP] [669147] msprof_common.py: End exporting summary output_file.The file is stored in the /data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20261012233734532_00667644MEHQQGAH done.
+[INFO] Start query data in PROF_000001_20261012233734532_00667644MEHQQGAH.
+Mon 12 Oct 2026 23:37:42 [WARNING] [MSVP] [669248] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID	
+
+NA      	         	host    	2026-10-12 23:37:34.774450	N/A     	N/A             	N/A               	-1     	
+
+NA      	3        	device_3	2026-10-12 23:37:34.778601	N/A     	N/A             	N/A               	-1     	
+
+[INFO] Query all data in PROF_000001_20261012233734532_00667644MEHQQGAH done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /data/wys/kda-finalize-a2-stage9-20261012/stage10/r1-profile-varlen/PROF_000001_20261012233734532_00667644MEHQQGAH

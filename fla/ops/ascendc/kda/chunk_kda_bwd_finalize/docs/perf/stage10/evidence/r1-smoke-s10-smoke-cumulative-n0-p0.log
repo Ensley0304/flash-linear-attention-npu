@@ -1,0 +1,5 @@
+[W1012 23:29:32.937331340 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS stage=10 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2

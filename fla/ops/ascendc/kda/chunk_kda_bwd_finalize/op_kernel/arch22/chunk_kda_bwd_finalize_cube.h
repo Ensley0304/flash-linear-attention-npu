@@ -317,7 +317,7 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
     }
 
-    template <bool CAPTURE = false, bool FINALIZE_Q = false>
+    template <bool CAPTURE = false, bool FINALIZE_Q = false, bool COMPUTE_RIGHT = false>
     __aicore__ inline void Stage8(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t firstHead, uint32_t core, uint32_t bank, GM_ADDR capture)
     {
@@ -397,7 +397,84 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(owner == 0 ? S8_READY : S8_SECOND_READY);
                 }
             }
+            if constexpr (COMPUTE_RIGHT) {
+                Stage10<CAPTURE>(tiling, chunkIndex, firstHead, core, bank, capture, start);
+            }
         }
+    }
+
+    template <bool CAPTURE = false>
+    __aicore__ inline void Stage10(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t firstHead,
+                                   uint32_t core, uint32_t bank, GM_ADDR capture, uint32_t start)
+    {
+        // Second band handshake: qPos/bkPos are ready; Stage 9 runs independently.
+        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(BAND_READY);
+        for (uint32_t matrix = 0; matrix < 2; ++matrix) {
+            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                if (firstHead + owner >= tiling.heads) {
+                    continue;
+                }
+                auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
+                AscendC::GlobalTensor<bfloat16_t> input;
+                input.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
+                    workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES +
+                    bank * WS_BANK_BYTES + (matrix == 0 ? WS_QPOS : WS_BKPOS)));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                for (uint32_t plane = 0; plane < 2; ++plane) {
+                    CopyToL1(l1[32768 + plane * 16384].ReinterpretCast<bfloat16_t>(), input[plane * 8192], 64, 128, 64,
+                             128);
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+            }
+            for (uint32_t term = 0; term < 3; ++term) {
+                for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                    if (firstHead + owner >= tiling.heads) {
+                        continue;
+                    }
+                    if (term == 0) {
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+                    }
+                    auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
+                    auto a = l1[matrix * 16384 + (term == 2 ? 8192 : 0)].ReinterpretCast<bfloat16_t>();
+                    auto b = l1[32768 + (term == 1 ? 16384 : 0)].ReinterpretCast<bfloat16_t>();
+                    // NZ column bands are contiguous: A[:,start:start+32].T is [32,64].
+                    LoadOperands<true, false>(a[start * 64], b, 32, 128, 64, owner);
+                }
+                for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                    if (firstHead + owner < tiling.heads) {
+                        Multiply(32, 128, 64, owner, matrix == 0 && term == 0, matrix == 1 && term == 2);
+                    }
+                }
+            }
+            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                if (firstHead + owner < tiling.heads) {
+                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                }
+            }
+        }
+        auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
+        fix.quantPre = QuantMode_t::NoQuant;
+        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+            if (firstHead + owner >= tiling.heads) {
+                continue;
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
+            auto result = l0CBuf_.Get<float>()[owner * L0_C_SLOT_BYTES / 4];
+            AscendC::GlobalTensor<float> output;
+            output.SetGlobalBuffer(
+                reinterpret_cast<__gm__ float *>(workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES +
+                                                 owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES + WS_RIGHT));
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+            if constexpr (CAPTURE) {
+                output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                    capture + static_cast<uint64_t>((firstHead + owner) * tiling.chunks + chunkIndex) * CAPTURE_BYTES +
+                    CAPTURE_RIGHT));
+                AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
+        }
+        // Protect right_raw from the next band's kNeg stores (same GM slot).
+        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(BAND_LOADED);
     }
 
     __aicore__ inline void ReleaseAkk(uint32_t owner)

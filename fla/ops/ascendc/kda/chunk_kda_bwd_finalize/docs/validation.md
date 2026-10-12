@@ -212,3 +212,15 @@ r2 的 132 次采数版 tails、44 次性能版 tails、18 次前序 smoke 回�
 最终版本通过 132 次 Stage 9 tails、36 次 Stage 0～8 smoke、44 次性能库 tails；四组完整 8K 采数/性能版与已验证原基线输出逐位一致。Host 检查与三 lane 模拟器通过。去掉无效 Vector 计算后耗时和占比同时下降；本轮有实际加速，但 bound 目标仍未完成。
 
 全部候选、同步/布局说明、精度范围、原始 msprof 和复现脚本见[本轮记录](perf/stage09-bound-opt/README.md)。仍为部分 Stage 开发验证，不代表完整 Finalize、ATK 或 A3 验收。
+
+## Stage 10：转置 GEMM 接入
+
+沿用已确认的一 AIV 一 head、逆序 32 行带与私有 fast launch 入口。参考角色仍为 CHUNK_INDEPENDENT V1（PR #404）；不改变公开 A5 ABI。两项转置 GEMM 各保留三项高低位乘积，L0A/B/C 双槽按 head 轮转，FP32 累加后写 right_raw。L1/workspace 复用消费结束的 kNeg 区，UB、workspace 总量不变。
+
+同步按带执行两轮 BAND_READY/BAND_LOADED：kNeg 先读入 L1，qPos/bkPos 再发布，Stage 9 与 Stage 10 并行；第二轮完成后才能写下一带。空 owner 也闭合全部通知。精度检查增加实际六项乘积与独立 FP64 居中公式，前序门槛不变；计划覆盖三种 gate、Q norm、尾块、奇数 head、槽位回绕、性能库与完整 8K 模型，并对比同期 Stage 9 的 msprof。
+
+224 次小 case 检查通过（8 次 Stage 10 smoke、132 次三种 gate×Q norm tails、40 次前序 smoke、44 次性能库 tails）。四组完整 8K 模型在采数版与性能版均通过；前序结果与已验证基线逐位一致，right_raw 通过 FP64 检查，性能库保留结果与采数版逐位一致。Host、格式、源码身份与完整三 lane 模拟器检查通过，三个 work 共 192 次 MMAD。
+
+同期 Stage 0～9 → Stage 0～10：定长 7530.495 → 8498.790 μs，变长 7643.640 → 8604.525 μs；最大流水为 Vector 57.45% / 57.70%，未达到 80%。新增计算没有完全隐藏在前序流水中，前缀耗时增量约 0.96 ms，不能视为独立 Stage 10 耗时。
+
+实现、精度边界、原始 CSV、模型哈希和复现脚本见 [Stage 10 记录](perf/stage10/README.md)。仍缺 Stage 11～12，不代表完整 Finalize、ATK 或 A3 验收。

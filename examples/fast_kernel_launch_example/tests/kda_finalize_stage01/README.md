@@ -1,6 +1,6 @@
-# KDA Finalize A2/A3：Stage 0～9 开发验证
+# KDA Finalize A2/A3：Stage 0～10 开发验证
 
-仅验证 Stage 0～9，不代表完整 Finalize 已支持 A2/A3。公开 A5 入口不变，开发入口保留原名。
+仅验证 Stage 0～10，不代表完整 Finalize 已支持 A2/A3。公开 A5 入口不变，开发入口保留原名。
 
 ## 构建和运行
 
@@ -45,7 +45,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -I. \
 - 逐项对照 FP64/FP32 CPU 标杆，检查 NaN/Inf、capture 哨兵及真实 workspace 最后一代数据。
 - trace 记录实际 work/core/owner/head/chunk、槽位使用次数、block 数、子核数、GM 偏移及握手进度；奇数 head 的空 owner 仍参与同步。
 
-开发入口返回 `(capture, trace, workspace)`。当前 capture 每个 `(head,chunk)` 占 784 KiB，Stage 2 结果位于 160/192 KiB；真实 workspace 的对应偏移为 80/112 KiB。额外采数不用于性能评估。Stage 2 实际消费驻留 L1 的 dW，验证 L0C→L1 链路。
+开发入口返回 `(capture, trace, workspace)`。当前 capture 每个 `(head,chunk)` 占 816 KiB，Stage 2 结果位于 160/192 KiB；真实 workspace 的对应偏移为 80/112 KiB。额外采数不用于性能评估。Stage 2 实际消费驻留 L1 的 dW，验证 L0C→L1 链路。
 
 Stage 0/1 的容差不变。Stage 2 同时检查两层：以设备捕获的 BF16 dW/kE 做 FP64 矩阵乘，使用 `rtol=3e-4, atol=2e-6`；再与独立 CPU 全路径结果比较，传播既定 BF16 门槛 `E(x)=2e-5+8e-3|x|`：
 
@@ -92,9 +92,9 @@ capture 中四个结果分别位于 256/288/320/352 KiB。所有 head/chunk/元�
 
 `--stage 7` 要求末尾参数 `dAqk`：与 akk 同 shape/device 的连续 FP32 输入。两个严格下三角矩阵乘以 ±65536 后拆为 BF16 高位和残差；对角线保留原始 FP32。随后按 32 行带逆序，从原始 gk 计算居中指数，生成 kNeg/qPos/bkPos。无效行不进入 Exp，直接写零。
 
-capture 扩为每 head/chunk 656 KiB：384/400 KiB 保存两个 strict-lower 高低位，416 KiB 保存对角线；两带从 424 KiB 起各占 116 KiB，依次保存三个操作数、32 行指数和 center。严格下三角拆分与实际 Stage 6 输入逐位一致；居中操作数对照 FP64 公式，检查高低位重建误差、残差幅度、有限值及零填充。新增 `--gate-mode extreme` 覆盖每 token 自然对数 gate=-5。
+Stage 7 写入 capture 的前 656 KiB：384/400 KiB 保存两个 strict-lower 高低位，416 KiB 保存对角线；两带从 424 KiB 起各占 116 KiB，依次保存三个操作数、32 行指数和 center。严格下三角拆分与实际 Stage 6 输入逐位一致；居中操作数对照 FP64 公式，检查高低位重建误差、残差幅度、有限值及零填充。新增 `--gate-mode extreme` 覆盖每 token 自然对数 gate=-5。
 
-workspace 总量仍为每 AIC 1 MiB、每 head 两个 256 KiB 槽。Stage 7 消费 raw 后复用其地址，保留四个 Stage 5 base；性能库检查最后两代 band 0 的 Cube 操作数。对角线、center、带内指数保留 UB，仅采数版导出，性能库不增加验证写回。当前尚无 Stage 8/10 消费者，未增加 GM→L1 搬运；完整路径接入时必须在两带间插入消费者，不能先覆盖再消费。此处不代表完整 Finalize 精度验收。
+当前 workspace 为每 AIC 1280 KiB、每 head 两个 320 KiB 槽。Stage 7 消费 raw 后复用其地址，保留四个 Stage 5 base；性能库检查最后两代 band 0 的 Cube 操作数。对角线、center、带内指数保留 UB，仅采数版导出。单独截止 Stage 7 时没有 Cube 消费者；执行 Stage 8/10 时逐带握手后才能覆盖 GM。此处不代表完整 Finalize 精度验收。
 
 ## 双缓冲回归与性能
 
@@ -136,4 +136,12 @@ Cube 每个 head 写完后独立发布 ready，两 AIV 按相同顺序消费两�
 
 `check_stage9.py` 对照捕获输入的局部 FP64 公式和原始 gate 差构造的因果公式，检查实际 BF16 dq、FP32 dq/dg、尾行、保护区及最后两代 workspace。局部沿用 FP32 门槛 `rtol=3e-4, atol=2e-6`；最终 BF16 沿用 `rtol=8e-3, atol=2e-5`，上游误差按 Stage 5/8 既有预算传播。`--q-norm` 覆盖独立的编译期归一化分支；性能库使用 `--workspace-only` 验证。
 
-性能命令沿用前文，将 `--stage 8` 改为 `--stage 9`；需要测归一化路径时加 `--q-norm`。此开发入口尚未包含 Stage 10～12。
+性能命令沿用前文，将 `--stage 8` 改为 `--stage 9`；需要测归一化路径时加 `--q-norm`。
+
+## Stage 10
+
+`--stage 10` 不增加参数。计算两项转置 GEMM，每项保留 `Ah@Bh + Ah@Bl + Al@Bh`，六项在 FP32 L0C 累加后写回。两个 head 使用独立的 L0A/B/C 槽，qPos/bkPos 依次复用 Stage 8 的 L1 kNeg 区；与 Stage 9 重叠。
+
+capture 每 head/chunk 为 816 KiB，784 KiB 起保存两带 right_raw。workspace 大小不变，96 KiB 起的旧 kNeg 区保存最终 band 0 的 FP32 right_raw。两轮带间握手保证输入写完才读、结果写完才复用；Stage 11 尚未接入。
+
+`check_stage10.py` 检查实际六项乘积、独立 FP64 居中公式、尾行零值、未计算带保护区及保留 workspace。局部门槛为 `3e-6 * Σ(abs(Ai) @ abs(Bi)) + 2e-38`；分带门槛沿用 Stage 8 的 `6e-5` 操作数传播预算。Stage 0～9 门槛不变。命令使用 `--stage 10`，覆盖 `--q-norm`、三种 gate 和 `--workspace-only`；此入口仍缺 Stage 11～12，不代表完整算子精度验收。

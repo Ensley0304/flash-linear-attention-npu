@@ -176,7 +176,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                 AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S6_READY + readyBank);
                                 if constexpr (LAST_STAGE >= 8) {
                                     const int64_t readyChunk = readyWork % tiling.chunks;
-                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9)>(
+                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9), (LAST_STAGE >= 10)>(
                                         tiling, ResolveChunk(tiling, chunks, readyChunk), readyChunk, readyHead, core,
                                         readyBank, capture);
                                 }
@@ -212,7 +212,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                 AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S6_READY + readyBank);
                                 if constexpr (LAST_STAGE >= 8) {
                                     const int64_t readyChunk = readyWork % tiling.chunks;
-                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9)>(
+                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9), (LAST_STAGE >= 10)>(
                                         tiling, ResolveChunk(tiling, chunks, readyChunk), readyChunk, readyHead, core,
                                         readyBank, capture);
                                 }
@@ -300,16 +300,23 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S6_READY + (bank ^ 1));
                             if (previousHead < tiling.heads) {
                                 const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
-                                vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM>(
-                                    tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
+                                vector
+                                    .Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, (LAST_STAGE >= 10)>(
+                                        tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                             } else if constexpr (LAST_STAGE >= 8) {
                                 const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
                                 for (int32_t start = ((chunk.validRows - 1) / 32) * 32; start >= 0; start -= 32) {
                                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
                                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
+                                    if constexpr (LAST_STAGE >= 10) {
+                                        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
+                                    }
                                     if constexpr (LAST_STAGE >= 9) {
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_READY);
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
+                                    }
+                                    if constexpr (LAST_STAGE >= 10) {
+                                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
                                     }
                                 }
                             }
@@ -334,16 +341,23 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S6_READY + bank);
                             if (head < tiling.heads) {
                                 const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
-                                vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM>(
-                                    tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                                vector
+                                    .Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, (LAST_STAGE >= 10)>(
+                                        tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                             } else if constexpr (LAST_STAGE >= 8) {
                                 const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                                 for (int32_t start = ((chunk.validRows - 1) / 32) * 32; start >= 0; start -= 32) {
                                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
                                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
+                                    if constexpr (LAST_STAGE >= 10) {
+                                        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
+                                    }
                                     if constexpr (LAST_STAGE >= 9) {
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_READY);
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
+                                    }
+                                    if constexpr (LAST_STAGE >= 10) {
+                                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
                                     }
                                 }
                             }
@@ -409,7 +423,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
            const c10::optional<at::Tensor> &dqRaw, double scale, const c10::optional<at::Tensor> &dAqk,
            const c10::optional<at::Tensor> &dq, const c10::optional<at::Tensor> &qRstd)
 {
-    TORCH_CHECK(lastStage >= 0 && lastStage <= 9, "last_stage must be 0, 1, 2, 3, 4, 5, 6, 7, 8 or 9");
+    TORCH_CHECK(lastStage >= 0 && lastStage <= 10, "last_stage must be in [0, 10]");
     TORCH_CHECK(k.device().type() == c10::DeviceType::PrivateUse1, "expected NPU inputs");
     c10::DeviceGuard guard(k.device());
     TORCH_CHECK(k.dim() == 3 || k.dim() == 4, "expected [B,H,T,128] or [H,T,128]");
@@ -581,6 +595,26 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
                 (GM_ADDR)trace.data_ptr(), tiling);
         } else if (lastStage == 8) {
             Stage01Kernel<8><<<tiling.usedCoreNum, nullptr, stream>>>(
+                (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
+                (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
+                (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)(dAqk ? dAqk->data_ptr() : nullptr),
+                (GM_ADDR)(dq ? dq->data_ptr() : nullptr), (GM_ADDR)(qRstd ? qRstd->data_ptr() : nullptr),
+                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
+                (GM_ADDR)trace.data_ptr(), tiling);
+        } else if (lastStage == 10 && qRstd.has_value()) {
+            Stage01Kernel<10, true><<<tiling.usedCoreNum, nullptr, stream>>>(
+                (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
+                (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
+                (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)(dAqk ? dAqk->data_ptr() : nullptr),
+                (GM_ADDR)(dq ? dq->data_ptr() : nullptr), (GM_ADDR)(qRstd ? qRstd->data_ptr() : nullptr),
+                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
+                (GM_ADDR)trace.data_ptr(), tiling);
+        } else if (lastStage == 10) {
+            Stage01Kernel<10, false><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),

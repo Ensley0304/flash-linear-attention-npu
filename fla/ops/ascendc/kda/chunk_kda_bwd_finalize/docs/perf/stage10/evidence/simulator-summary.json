@@ -1,0 +1,49 @@
+{
+  "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage10/simulator-r1/OPPROF_20261012234904_TLQSQDNDCNOIWSQO/simulator/trace.json",
+  "lanes": {
+    "core0.cubecore0": {
+      "max_end_us": 98.55722113722004,
+      "instructions": 22165,
+      "mmad": 192,
+      "pipes": {
+        "SCALAR": 19139,
+        "MTE1": 1035,
+        "MTE2": 156,
+        "FLOWCTRL": 1226,
+        "CUBE": 192,
+        "FIXP": 252,
+        "ALL": 1,
+        "CACHEMISS": 164
+      }
+    },
+    "core0.veccore0": {
+      "max_end_us": 98.61222144239582,
+      "instructions": 37602,
+      "mmad": 0,
+      "pipes": {
+        "SCALAR": 27656,
+        "VECTOR": 4565,
+        "FLOWCTRL": 3874,
+        "MTE2": 213,
+        "MTE3": 309,
+        "ALL": 1,
+        "CACHEMISS": 984
+      }
+    },
+    "core0.veccore1": {
+      "max_end_us": 98.61333533399738,
+      "instructions": 37620,
+      "mmad": 0,
+      "pipes": {
+        "SCALAR": 27620,
+        "VECTOR": 4565,
+        "FLOWCTRL": 3868,
+        "MTE2": 213,
+        "MTE3": 309,
+        "ALL": 1,
+        "CACHEMISS": 1044
+      }
+    }
+  },
+  "production_mmad_expected": 192
+}

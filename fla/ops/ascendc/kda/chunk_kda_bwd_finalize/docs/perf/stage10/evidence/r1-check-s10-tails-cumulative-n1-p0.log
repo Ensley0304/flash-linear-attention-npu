@@ -1,0 +1,23 @@
+[W1012 23:31:37.143737500 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS stage=10 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
