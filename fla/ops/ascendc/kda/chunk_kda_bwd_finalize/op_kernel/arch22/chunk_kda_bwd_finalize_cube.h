@@ -5,8 +5,8 @@
 #ifndef CHUNK_KDA_BWD_FINALIZE_ARCH22_CUBE_H
 #define CHUNK_KDA_BWD_FINALIZE_ARCH22_CUBE_H
 
-#include "kernel_operator.h"
 #include "chunk_kda_bwd_finalize_common.h"
+#include "kernel_operator.h"
 
 namespace KDA::Arch22 {
 
@@ -264,8 +264,8 @@ public:
         }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
         if constexpr (CAPTURE) {
-            // Test-only consumer proves the actual NZ L1 write, not just its GM mirror.
-            // This extra GEMM and export are absent from performance builds.
+            // Test-only consumer proves the actual NZ L1 write, not just its GM
+            // mirror. This extra GEMM and export are absent from performance builds.
             AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
             LoadOperands<false, true>(l1[L1_TZA + bank * L1_TZA_BANK_STRIDE].ReinterpretCast<bfloat16_t>(),
@@ -317,7 +317,7 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
     }
 
-    template <bool CAPTURE = false>
+    template <bool CAPTURE = false, bool FINALIZE_Q = false>
     __aicore__ inline void Stage8(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t firstHead, uint32_t core, uint32_t bank, GM_ADDR capture)
     {
@@ -333,7 +333,8 @@ public:
                     reinterpret_cast<__gm__ bfloat16_t *>(workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES +
                                                           owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
-                // Two strict-lower matrices, each with high and residual planes, retained across bands.
+                // Two strict-lower matrices, each with high and residual planes,
+                // retained across bands.
                 if (start == ((chunk.validRows - 1) / 32) * 32) {
                     for (uint32_t plane = 0; plane < 4; ++plane) {
                         CopyToL1(l1[plane * 8192].ReinterpretCast<bfloat16_t>(),
@@ -346,16 +347,21 @@ public:
                 }
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
             }
-            // Vector prepares the next band while the current operands are consumed from L1.
+            // Vector prepares the next band while the current operands are consumed
+            // from L1.
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(BAND_LOADED);
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner >= tiling.heads) {
+                    if constexpr (FINALIZE_Q) {
+                        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S8_SECOND_READY);
+                    }
                     continue;
                 }
                 auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
-                // dq_local_raw = dAqk_lower[s:e,:] @ kNeg; left_raw = dAkk_lower[s:e,:] @ kNeg.
-                // Each result accumulates Ah@Bh + Ah@Bl + Al@Bh in FP32, without intermediate Fixpipe.
+                // dq_local_raw = dAqk_lower[s:e,:] @ kNeg; left_raw = dAkk_lower[s:e,:]
+                // @ kNeg. Each result accumulates Ah@Bh + Ah@Bl + Al@Bh in FP32,
+                // without intermediate Fixpipe.
                 for (uint32_t term = 0; term < 3; ++term) {
                     for (uint32_t matrix = 0; matrix < 2; ++matrix) {
                         auto a = l1[matrix * 16384 + (term == 2 ? 8192 : 0)].ReinterpretCast<bfloat16_t>();
@@ -385,6 +391,10 @@ public:
                         AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
                     }
                     AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[matrix]);
+                }
+                if constexpr (FINALIZE_Q) {
+                    // Publish each head after its own Fixpipe, not after the pair.
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(owner == 0 ? S8_READY : S8_SECOND_READY);
                 }
             }
         }

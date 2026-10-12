@@ -184,3 +184,16 @@ r3 完成 228 次 CPU 标杆检查；最终 r5 新增 70 次检查，四组完�
 | 变长 8K | 同上 | 通过 | 7704.344 → 6593.072 μs | Vector 62.70% → 73.20% | 快 14.42%，90% 未达 |
 
 同期 Stage 7 最大占比为 74.40% / 74.20%，本轮没有继续提高该占比。变长自动导出异常，离线恢复完整 30 条目标记录，两次测量差异约 0.31%；退出码和复采均归档。详见[九阶段开发记录](perf/stage012345678/README.md)。仍是部分 Stage 验证，不代表完整 Finalize、ATK 或 A3 验收。
+
+## Stage 9：分阶段验证通过
+
+范围：逐带合成 dq、更新 dg，包含可选 Q L2Norm backward。沿用用户确认的一 AIV 一 head 调度和私有分阶段入口，不改变公开 A5 ABI。Stage 10/11 尚未接入。
+
+- Stage 8 的 h0/h1 分别在 Fixpipe 完成后发布 S8_READY=3 / S8_SECOND_READY=14。两 AIV 都按 3→14 消费，owner 在自己的 ready 后执行本带 Stage 9；h0 可与 h1 Cube 重叠。下一带 BAND_READY 形成反压，奇数 head 的空 owner 也闭合两次通知。
+- UB 保留 Stage 7 的 q/k/gk、下三角 mask、对角线、带指数与 beta 广播。16 行 tile；输入/原位 FP32 输出双槽 `[88,112)` / `[112,136)` KiB，BF16 输出双槽 `[136,140)` / `[140,144)`，q/k 转换 `[144,160)`，乘积 `[184,192)`，归约 `[178,180)`、行广播 `[180,180.5)`；q_rstd 复用 `[81,81.25)`。进入本带时等待两份旧输出并桥接到 MTE2，再重装原位槽；退出时排空输出，保护 Stage 7 的区间复用。
+- dq/dg 更新复用 WS_DQ_BASE/WS_DG_BASE；Stage 5 的旧值在当前 tile 读入后结束生命周期。dq 另转 BF16 写实际输出，capture 的 720/752 KiB 保存 FP32 dq/dg；workspace 不扩容。
+- 精度检查：原有 Stage 0～8 不放宽门槛；Stage 9 对照局部 FP64、直接因果指数差公式、实际 BF16 输出和 workspace，覆盖 Q norm、尾块、空序列、奇数 head、回绕、极端 gate 与完整 8K 模型。性能库另行检查。
+- 性能实验：同卡重测 Stage 8 和 Stage 9，B=1/H=96/T=8192/K=V=128，定长与既定变长切分，20 次预热、10 次采样；统计 Task Duration 和最大流水占比。90% 是目标，不以增加无效指令提高占比。
+- 优化参考：cannbot-skills PR 1069 对应本地参考提交 4950cbd7 的 double_buffer_design / ub_resident_design；先做片上复用及双槽，再根据实测选择广播或 tile 优化。
+
+r2 的 132 次采数版 tails、44 次性能版 tails、18 次前序 smoke 回归通过；四组完整 8K 模型的 Stage 9 精度和版本一致性检查通过。最终定长/变长耗时 7717.991 / 7836.817 μs，最大流水为 Vector 67.70% / 67.85%，90% 目标未达。原始 CSV、源码哈希、模型输出哈希及完整三 lane 模拟器摘要见[十阶段验证记录](perf/stage0123456789/README.md)。工作目录已集中到 `/data/wys/kda-finalize-a2-stage9-20261012`。

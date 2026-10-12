@@ -1,0 +1,466 @@
+[
+  {
+    "name": "baseline8-r2-fixed",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/baseline8-r2-fixed/PROF_000001_20261012171441816_01124402FBIFFOJO/mindstudio_profiler_output/op_summary_20261012171450.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 6412.798,
+        "median": 6430.220499999999,
+        "max": 6458.744
+      },
+      "aic_mac_ratio": {
+        "min": 0.148,
+        "median": 0.149,
+        "max": 0.149
+      },
+      "aic_scalar_ratio": {
+        "min": 0.306,
+        "median": 0.307,
+        "max": 0.307
+      },
+      "aic_mte1_ratio": {
+        "min": 0.205,
+        "median": 0.206,
+        "max": 0.206
+      },
+      "aic_mte2_ratio": {
+        "min": 0.31,
+        "median": 0.312,
+        "max": 0.315
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.287,
+        "median": 0.288,
+        "max": 0.29
+      },
+      "aiv_vec_ratio": {
+        "min": 0.736,
+        "median": 0.738,
+        "max": 0.74
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.509,
+        "median": 0.511,
+        "max": 0.512
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.322,
+        "median": 0.323,
+        "max": 0.325
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.35,
+        "median": 0.352,
+        "max": 0.353
+      }
+    }
+  },
+  {
+    "name": "baseline8-r2-varlen",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/baseline8-r2-varlen/PROF_000001_20261012171501312_01129835NPKMEKPJ/mindstudio_profiler_output/op_summary_20261012171509.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 6583.602,
+        "median": 6605.9445,
+        "max": 6614.686
+      },
+      "aic_mac_ratio": {
+        "min": 0.147,
+        "median": 0.147,
+        "max": 0.148
+      },
+      "aic_scalar_ratio": {
+        "min": 0.307,
+        "median": 0.3075,
+        "max": 0.308
+      },
+      "aic_mte1_ratio": {
+        "min": 0.203,
+        "median": 0.204,
+        "max": 0.204
+      },
+      "aic_mte2_ratio": {
+        "min": 0.311,
+        "median": 0.313,
+        "max": 0.313
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.287,
+        "median": 0.288,
+        "max": 0.289
+      },
+      "aiv_vec_ratio": {
+        "min": 0.73,
+        "median": 0.73,
+        "max": 0.731
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.515,
+        "median": 0.515,
+        "max": 0.517
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.326,
+        "median": 0.3275,
+        "max": 0.328
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.348,
+        "median": 0.349,
+        "max": 0.349
+      }
+    }
+  },
+  {
+    "name": "r0-fixed",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/r0-fixed/PROF_000001_20261012170518625_00985482FKBANDKH/mindstudio_profiler_output/op_summary_20261012170527.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 8119.956,
+        "median": 8144.15,
+        "max": 8171.344
+      },
+      "aic_mac_ratio": {
+        "min": 0.117,
+        "median": 0.117,
+        "max": 0.118
+      },
+      "aic_scalar_ratio": {
+        "min": 0.338,
+        "median": 0.338,
+        "max": 0.339
+      },
+      "aic_mte1_ratio": {
+        "min": 0.162,
+        "median": 0.163,
+        "max": 0.163
+      },
+      "aic_mte2_ratio": {
+        "min": 0.24,
+        "median": 0.242,
+        "max": 0.244
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.225,
+        "median": 0.225,
+        "max": 0.226
+      },
+      "aiv_vec_ratio": {
+        "min": 0.648,
+        "median": 0.6505000000000001,
+        "max": 0.652
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.454,
+        "median": 0.457,
+        "max": 0.458
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.328,
+        "median": 0.33,
+        "max": 0.331
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.333,
+        "median": 0.3335,
+        "max": 0.334
+      }
+    }
+  },
+  {
+    "name": "r0-varlen",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/r0-varlen/PROF_000001_20261012170536523_00991160MIBBMPQC/mindstudio_profiler_output/op_summary_20261012170553.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 8278.219,
+        "median": 8291.911,
+        "max": 8315.745
+      },
+      "aic_mac_ratio": {
+        "min": 0.117,
+        "median": 0.117,
+        "max": 0.117
+      },
+      "aic_scalar_ratio": {
+        "min": 0.339,
+        "median": 0.339,
+        "max": 0.339
+      },
+      "aic_mte1_ratio": {
+        "min": 0.162,
+        "median": 0.162,
+        "max": 0.162
+      },
+      "aic_mte2_ratio": {
+        "min": 0.245,
+        "median": 0.246,
+        "max": 0.247
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.226,
+        "median": 0.226,
+        "max": 0.227
+      },
+      "aiv_vec_ratio": {
+        "min": 0.647,
+        "median": 0.647,
+        "max": 0.648
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.458,
+        "median": 0.46,
+        "max": 0.46
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.324,
+        "median": 0.3255,
+        "max": 0.328
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.333,
+        "median": 0.334,
+        "max": 0.334
+      }
+    }
+  },
+  {
+    "name": "r1-fixed",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/r1-fixed/PROF_000001_20261012165539342_00842606BIPFAEJF/mindstudio_profiler_output/op_summary_20261012165813.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 7852.959,
+        "median": 7899.706,
+        "max": 7915.808
+      },
+      "aic_mac_ratio": {
+        "min": 0.121,
+        "median": 0.121,
+        "max": 0.122
+      },
+      "aic_scalar_ratio": {
+        "min": 0.352,
+        "median": 0.352,
+        "max": 0.353
+      },
+      "aic_mte1_ratio": {
+        "min": 0.168,
+        "median": 0.168,
+        "max": 0.169
+      },
+      "aic_mte2_ratio": {
+        "min": 0.251,
+        "median": 0.253,
+        "max": 0.255
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.235,
+        "median": 0.235,
+        "max": 0.236
+      },
+      "aiv_vec_ratio": {
+        "min": 0.658,
+        "median": 0.66,
+        "max": 0.662
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.448,
+        "median": 0.451,
+        "max": 0.453
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.304,
+        "median": 0.308,
+        "max": 0.31
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.327,
+        "median": 0.328,
+        "max": 0.328
+      }
+    }
+  },
+  {
+    "name": "r1-varlen",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/r1-varlen/PROF_000001_20261012165553262_00847394NDLNCPCO/mindstudio_profiler_output/op_summary_20261012165815.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 8024.824,
+        "median": 8048.397,
+        "max": 8062.329
+      },
+      "aic_mac_ratio": {
+        "min": 0.121,
+        "median": 0.121,
+        "max": 0.121
+      },
+      "aic_scalar_ratio": {
+        "min": 0.352,
+        "median": 0.353,
+        "max": 0.353
+      },
+      "aic_mte1_ratio": {
+        "min": 0.167,
+        "median": 0.167,
+        "max": 0.167
+      },
+      "aic_mte2_ratio": {
+        "min": 0.254,
+        "median": 0.256,
+        "max": 0.257
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.235,
+        "median": 0.2355,
+        "max": 0.236
+      },
+      "aiv_vec_ratio": {
+        "min": 0.656,
+        "median": 0.657,
+        "max": 0.657
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.453,
+        "median": 0.454,
+        "max": 0.454
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.312,
+        "median": 0.315,
+        "max": 0.316
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.325,
+        "median": 0.325,
+        "max": 0.326
+      }
+    }
+  },
+  {
+    "name": "r2-fixed",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/r2-fixed/PROF_000001_20261012171519940_01133926FMHBDNKB/mindstudio_profiler_output/op_summary_20261012173425.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 7698.938,
+        "median": 7717.9905,
+        "max": 7749.385
+      },
+      "aic_mac_ratio": {
+        "min": 0.124,
+        "median": 0.124,
+        "max": 0.124
+      },
+      "aic_scalar_ratio": {
+        "min": 0.365,
+        "median": 0.366,
+        "max": 0.367
+      },
+      "aic_mte1_ratio": {
+        "min": 0.172,
+        "median": 0.172,
+        "max": 0.172
+      },
+      "aic_mte2_ratio": {
+        "min": 0.258,
+        "median": 0.259,
+        "max": 0.26
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.239,
+        "median": 0.239,
+        "max": 0.24
+      },
+      "aiv_vec_ratio": {
+        "min": 0.675,
+        "median": 0.677,
+        "max": 0.678
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.449,
+        "median": 0.451,
+        "max": 0.452
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.306,
+        "median": 0.3075,
+        "max": 0.309
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.328,
+        "median": 0.329,
+        "max": 0.33
+      }
+    }
+  },
+  {
+    "name": "r2-varlen",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/mindstudio_profiler_output/op_summary_20261012171543.csv",
+    "total_rows": 30,
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 7791.951,
+        "median": 7836.817,
+        "max": 7846.919
+      },
+      "aic_mac_ratio": {
+        "min": 0.125,
+        "median": 0.125,
+        "max": 0.125
+      },
+      "aic_scalar_ratio": {
+        "min": 0.368,
+        "median": 0.369,
+        "max": 0.37
+      },
+      "aic_mte1_ratio": {
+        "min": 0.172,
+        "median": 0.173,
+        "max": 0.173
+      },
+      "aic_mte2_ratio": {
+        "min": 0.262,
+        "median": 0.263,
+        "max": 0.264
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.241,
+        "median": 0.242,
+        "max": 0.242
+      },
+      "aiv_vec_ratio": {
+        "min": 0.677,
+        "median": 0.6785000000000001,
+        "max": 0.679
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.458,
+        "median": 0.459,
+        "max": 0.46
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.302,
+        "median": 0.3045,
+        "max": 0.306
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.33,
+        "median": 0.33,
+        "max": 0.331
+      }
+    }
+  }
+]

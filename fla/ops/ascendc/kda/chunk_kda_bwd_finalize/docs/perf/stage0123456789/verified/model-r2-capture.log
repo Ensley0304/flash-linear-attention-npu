@@ -1,0 +1,9 @@
+[W1012 17:16:58.586966610 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+DEVICE_DONE model-r2-capture fixed-norm0
+PASS model-r2-capture fixed-norm0
+DEVICE_DONE model-r2-capture varlen-norm0
+PASS model-r2-capture varlen-norm0
+DEVICE_DONE model-r2-capture fixed-norm1
+PASS model-r2-capture fixed-norm1
+DEVICE_DONE model-r2-capture varlen-norm1
+PASS model-r2-capture varlen-norm1

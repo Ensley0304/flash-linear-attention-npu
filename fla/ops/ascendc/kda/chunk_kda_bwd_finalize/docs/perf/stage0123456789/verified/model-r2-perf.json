@@ -1,0 +1,26 @@
+[
+  {
+    "case": "fixed-norm0",
+    "dq": "6848f0b223546e72fe2a2f33b3497728a4ea7714e09a4e67216dc24aa940eb81",
+    "dv": "f8335e111dd3ad98fac5742d86a9eb854782ceca71ed88d275df6aad5ce6c405",
+    "workspace": "0592f082a379e5fef5a3782106e7ee8279ba15e939eae6eda4f77f34d686e3f7"
+  },
+  {
+    "case": "varlen-norm0",
+    "dq": "32c822cbe1e882b802424f88bc476efad0edc59e2b32b382c3d0b35772a2f60a",
+    "dv": "76c1ecfa256ff0e47cf88fcbe83670ef650d726ed6baa4d0f2e83bdf56bbc92a",
+    "workspace": "1b47bc90d06e99b1eb8c66ba6c4102a001c88df5ae28bd3b7ccba1796fa33377"
+  },
+  {
+    "case": "fixed-norm1",
+    "dq": "432f9d5ce6c77c36a7dd4f3030acf64db373e1fd576e4254b02a03fdefd9fc35",
+    "dv": "f8335e111dd3ad98fac5742d86a9eb854782ceca71ed88d275df6aad5ce6c405",
+    "workspace": "a53f6e4bf04ea11b707abc174c3cacf67264ac04ccaa731bea99cf17beb99d02"
+  },
+  {
+    "case": "varlen-norm1",
+    "dq": "859124639e1b26e9afdc45dad754112efed1b9e6dc43db0224f93b1cd0c1e525",
+    "dv": "76c1ecfa256ff0e47cf88fcbe83670ef650d726ed6baa4d0f2e83bdf56bbc92a",
+    "workspace": "dd9a6b9763f20f7cd7568155c8080de0c88eb65b210d3544a4aff639b85df331"
+  }
+]

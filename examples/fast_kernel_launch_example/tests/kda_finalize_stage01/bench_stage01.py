@@ -16,7 +16,8 @@ def main():
     parser.add_argument("--heads", type=int, default=96)
     parser.add_argument("--tokens", type=int, default=8192)
     parser.add_argument("--cores", type=int, default=0)
-    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "6", "7", "8", "both"), default="both")
+    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "both"), default="both")
+    parser.add_argument("--q-norm", action="store_true")
     parser.add_argument("--varlen", action="store_true")
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeat", type=int, default=10)
@@ -53,6 +54,8 @@ def main():
     q = rand(shape)
     dq_raw = (torch.randn(shape, device=source_device) * .125).to(device)
     daqk = (torch.randn((*shape[:-1], 64), device=source_device) * .125).to(device)
+    dq = torch.empty_like(q)
+    q_rstd = torch.ones(shape[:-1], device=device) if args.q_norm else None
     torch.npu.synchronize()
     stages = (0, 1) if args.stage == "both" else (int(args.stage),)
     for stage in stages:
@@ -60,7 +63,7 @@ def main():
             if not simulator:
                 signal.alarm(60)
             capture, _, _ = torch.ops.ascend_ops.kda_finalize_stage01(
-                k, v, gk, akk, v_new, h, dh, dv_scan, cu, args.cores, stage, beta, dv, q, dq_raw, 128 ** -.5, *([daqk] if stage >= 7 else []))
+                k, v, gk, akk, v_new, h, dh, dv_scan, cu, args.cores, stage, beta, dv, q, dq_raw, 128 ** -.5, *([daqk] if stage >= 7 else []), *([dq, q_rstd] if stage >= 9 else []))
             torch.npu.synchronize()
             signal.alarm(0)
             assert capture.numel() == 1, "rebuild with KDA_FINALIZE_STAGE01_CAPTURE=0"

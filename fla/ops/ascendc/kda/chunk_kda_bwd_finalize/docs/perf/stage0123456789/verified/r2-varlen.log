@@ -1,0 +1,33 @@
+[INFO] Start profiling....
+[W1012 17:15:35.209696750 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+DONE stage=9 H=96 T=8192 varlen=True warmup=20 samples=10
+[INFO] Start export data in PROF_000001_20261012171535413_01136222MKFEOPIC.
+Mon 12 Oct 2026 17:15:41 [WARNING] [MSVP] [1141434] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Mon 12 Oct 2026 17:15:41 [INFO] [MSVP] [1141453] msprof_common.py: Start analyzing data in "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/host" ...
+Mon 12 Oct 2026 17:15:41 [INFO] [MSVP] [1141453] msprof_common.py: It may take few minutes, please be patient ...
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141453] msprof_common.py: Analysis data in "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/host" finished.
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141453] msprof_common.py: Start analyzing data in "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3" ...
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141453] msprof_common.py: It may take few minutes, please be patient ...
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141453] msprof_common.py: Analysis data in "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3" finished.
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141453] msprof_export.py: All collected data will be exported, path is: /data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3.
+Mon 12 Oct 2026 17:15:42 [WARNING] [MSVP] [1141650] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141774] msprof_export.py: The data in "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/host" has been analyzed. Parsing phase will be skipped.
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141774] msprof_export.py: The data in "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3" has been analyzed. Parsing phase will be skipped.
+Mon 12 Oct 2026 17:15:42 [INFO] [MSVP] [1141774] msprof_export.py: All collected data will be exported, path is: /data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3.
+Mon 12 Oct 2026 17:15:43 [INFO] [MSVP] [1141774] msprof_export.py: There is no summary data to export for "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/host"
+Mon 12 Oct 2026 17:15:43 [INFO] [MSVP] [1141774] msprof_export.py: All collected data will be exported, path is: /data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3.
+Mon 12 Oct 2026 17:15:43 [INFO] [MSVP] [1141774] msprof_export.py: There is no summary data to export for "/data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/device_3"
+Mon 12 Oct 2026 17:15:43 [INFO] [MSVP] [1141774] msprof_common.py: Start exporting summary output_file.
+Mon 12 Oct 2026 17:15:43 [INFO] [MSVP] [1141774] msprof_common.py: End exporting summary output_file.The file is stored in the /data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20261012171535413_01136222MKFEOPIC done.
+[INFO] Start query data in PROF_000001_20261012171535413_01136222MKFEOPIC.
+Mon 12 Oct 2026 17:15:43 [WARNING] [MSVP] [1141859] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID	
+
+NA      	         	host    	2026-10-12 17:15:35.487255	N/A     	N/A             	N/A               	-1     	
+
+NA      	3        	device_3	2026-10-12 17:15:35.491889	N/A     	N/A             	N/A               	-1     	
+
+[INFO] Query all data in PROF_000001_20261012171535413_01136222MKFEOPIC done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /data/Ensley0304/kda-finalize-a2-stage9-20261012/stage9/r2-varlen/PROF_000001_20261012171535413_01136222MKFEOPIC

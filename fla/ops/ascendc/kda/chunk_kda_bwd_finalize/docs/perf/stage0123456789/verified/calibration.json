@@ -1,0 +1,10 @@
+{
+  "correct_bf16_pass": true,
+  "rejected_elements": {
+    "zero": 8186,
+    "omit_diagonal": 7501,
+    "omit_local": 8023,
+    "wrong_local_scale": 8023,
+    "omit_q_norm": 8137
+  }
+}
