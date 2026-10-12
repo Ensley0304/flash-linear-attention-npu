@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private Stage 0-4 checks; not an end-to-end Finalize accuracy claim."""
+"""Private Stage 0-5 checks; not an end-to-end Finalize accuracy claim."""
 import argparse
 import os
 import signal
@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch_npu  # noqa: F401
 
-CAPTURE_BYTES = 256 * 1024
+CAPTURE_BYTES = 360 * 1024
 OFFSETS = {
     "dk_state_raw": (0, torch.float32, (64, 128)),
     "dv_b": (32 * 1024, torch.float32, (64, 128)),
@@ -129,6 +129,10 @@ def check_case(args, batch, heads, tokens, lengths=None):
         for head in range(heads)]
     beta = torch.rand(inputs[0].shape[:-1], generator=torch.Generator().manual_seed(137)) * 2
     beta.flatten()[:min(4, beta.numel())] = torch.tensor([0.0, 1.0, 2.0, 0.99966466])[:min(4, beta.numel())]
+    generator = torch.Generator().manual_seed(593)
+    q = (torch.randn(inputs[0].shape, generator=generator) * .125).bfloat16()
+    dq_raw = torch.randn(inputs[0].shape, generator=generator) * .125
+    device_q, device_dq_raw = q.to(f"npu:{args.device}"), dq_raw.to(f"npu:{args.device}")
     device_beta = beta.to(f"npu:{args.device}")
     dv_out = torch.full_like(inputs[0], float("nan"), device=f"npu:{args.device}")
     device_inputs = [x.to(f"npu:{args.device}") for x in inputs]
@@ -138,15 +142,19 @@ def check_case(args, batch, heads, tokens, lengths=None):
         signal.alarm(60)
         try:
             capture, trace, workspace = torch.ops.ascend_ops.kda_finalize_stage01(
-                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out)
+                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out, device_q, device_dq_raw, args.scale)
             torch.npu.synchronize()
         finally:
             signal.alarm(0)
         capture, trace, workspace = capture.cpu(), trace.cpu(), workspace.cpu()
         if args.stage >= 3:
             check_stage3(inputs, beta, chunks, lengths is not None, capture, workspace, dv_out.cpu(), args.workspace_only, expected)
+        if args.stage >= 5:
+            check_stage5(inputs, q, dq_raw, beta, chunks, lengths is not None, capture, workspace, args, expected)
         if args.stage >= 4 and not args.workspace_only:
             check_stage4(inputs, beta, chunks, lengths is not None, capture, expected)
+            if args.stage == 4:
+                assert (capture[:, :, 256 * 1024:] == 0xA5).all(), "unused Stage 5 capture guard"
         if args.workspace_only:
             assert capture.numel() == 1, "workspace-only requires a capture-disabled build"
             used_cores = workspace.numel() // (1024 * 1024)
@@ -160,7 +168,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     wanted = reference(inputs, chunks, head, c, lengths is not None)
                     base = (2 * core + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3)
                     record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
-                    for name in (("dk_state_raw", "dv_b", "zV") +
+                    for name in ((("zV",) if args.stage >= 5 else ("dk_state_raw", "dv_b", "zV")) +
                                  (("dKgb_raw", "zW") if args.stage >= 2 else ())):
                         actual = decode(record, name, workspace=True)
                         assert torch.isfinite(actual).all(), name
@@ -176,7 +184,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
             print(f"PASS workspace stage={args.stage} B={batch} H={heads} T={tokens} "
                   f"varlen={lengths is not None} gate={args.gate_mode} cores={used_cores} repeat={iteration + 1}", flush=True)
             continue
-        names = list(OFFSETS)[:(4, 8, 10, 10, 10)[args.stage]]
+        names = list(OFFSETS)[:(4, 8, 10, 10, 10, 10)[args.stage]]
         # Batch comparisons keep the full 8K check practical without sampling or
         # changing the per-element tolerance / independent CPU reference.
         for name in names:
@@ -256,7 +264,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     continue
                 base = (2 * core + owner) * 512 * 1024 + ((work // used_cores) & 1) * 256 * 1024 * (args.stage >= 3)
                 record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
-                for name in (("dk_state_raw", "dv_b", "zV") +
+                for name in ((("zV",) if args.stage >= 5 else ("dk_state_raw", "dv_b", "zV")) +
                                  (("dKgb_raw", "zW") if args.stage >= 2 else ())):
                     torch.testing.assert_close(decode(record, name, workspace=True), decode(capture[head, c], name),
                                                rtol=0, atol=0)
@@ -264,7 +272,11 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     actual_ke = record[144 * 1024:160 * 1024].clone().view(torch.bfloat16).reshape(64, 128)
                     torch.testing.assert_close(actual_ke, decode(capture[head, c], "kE"), rtol=0, atol=0)
                 assert (record[(128 if args.stage >= 2 else 80) * 1024:144 * 1024] == 0x5A).all(), "workspace guard overwritten"
-                assert (record[(168 if args.stage >= 3 else 160) * 1024:] == 0x5A).all(), "workspace guard overwritten"
+                if args.stage >= 5:
+                    assert (record[200 * 1024 + 256:208 * 1024] == 0x5A).all(), "Stage 5 workspace guard"
+                    assert (record[208 * 1024 + 512:] == 0x5A).all(), "Stage 5 workspace guard"
+                else:
+                    assert (record[(168 if args.stage >= 3 else 160) * 1024:] == 0x5A).all(), "workspace guard overwritten"
         if args.cores == 1 and works > 1:
             assert trace[-1, 5] > 1, "workspace reuse was not exercised"
         print(f"PASS stage={args.stage} B={batch} H={heads} T={tokens} "
@@ -378,12 +390,95 @@ def check_stage4(inputs, beta, chunks, variable, capture, expected):
         assert torch.isfinite(got).all(), 'Tza nonfinite'
         torch.testing.assert_close(got, torch.stack(local), rtol=8e-3, atol=2e-5, msg='Stage 4 local Tza')
         assert ((got - wanted).abs() <= torch.stack(budgets) + 2e-5 + 8e-3 * wanted.abs()).all(), 'Stage 4 full Tza'
-    assert (capture[:, :, 248 * 1024:] == 0xA5).all(), 'Tza capture guard'
+    assert (capture[:, :, 248 * 1024:256 * 1024] == 0xA5).all(), 'Tza capture guard'
+
+
+def stage5_reference(inputs, q, dq_raw, beta, chunk, head, variable, ref, scale):
+    sequence, _, start, rows = chunk
+    def token(x):
+        width = x.shape[-1]
+        out = torch.zeros((64, width), dtype=torch.float64)
+        out[:rows] = (x[head] if variable else x[sequence, head])[start:start + rows].double()
+        return out
+    k, query, raw = token(inputs[0]), token(q), token(dq_raw)
+    g = token(inputs[2])
+    b = torch.zeros(64, dtype=torch.float64)
+    b[:rows] = (beta[head] if variable else beta[sequence, head])[start:start + rows].double()
+    exponent = torch.zeros_like(g); exponent[:rows] = torch.exp2(g[:rows])
+    ratio = torch.exp2(g[rows - 1] - g)
+    state = ref['dk_state_raw'].double() * ratio
+    gb = ref['dKgb_raw'].double() * exponent
+    dq = scale * raw * exponent
+    dk = state - b[:, None] * gb
+    db = ref['db_v'].double() - (k * gb).sum(-1)
+    dg = query * dq - k * state - b[:, None] * k * gb
+    dg[rows - 1] += (k * state).sum(0) + torch.exp2(g[rows - 1]) * ref['rH'].double()
+    return dict(dq_base=dq.float(), dk_base=dk.float(), dg_base=dg.float(), db_base=db.float())
+
+
+def check_stage5(inputs, q, dq_raw, beta, chunks, variable, capture, workspace, args, expected):
+    names = ('dq_base', 'dk_base', 'dg_base', 'db_base')
+    cap_offsets = (256, 288, 320, 352)
+    ws_offsets = (32, 0, 168, 200)
+    heads = inputs[0].shape[-3]
+    cores = workspace.numel() // (1024 * 1024)
+    retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
+                (2 * core + owner) * 512 * 1024 + ((work // cores) & 1) * 256 * 1024
+                for core, work in workspace_works(heads, len(chunks), cores, 5) for owner in range(2)
+                if work // len(chunks) * 2 + owner < heads}
+    for head in range(heads):
+        for c, chunk in enumerate(chunks):
+            if args.workspace_only and (head, c) not in retained:
+                continue
+            sequence, _, start, rows = chunk
+            ref = dict(expected[head][c] if expected is not None else reference(inputs, chunks, head, c, variable))
+            v = torch.zeros((64, 128), dtype=torch.float64)
+            v[:rows] = (inputs[1][head] if variable else inputs[1][sequence, head])[start:start + rows].double()
+            ref['db_v'] = (v * ref['dv_b'].double()).sum(-1).float()
+            full = stage5_reference(inputs, q, dq_raw, beta, chunk, head, variable, ref, args.scale)
+            if not args.workspace_only:
+                record = capture[head, c]
+                local = {key: decode(record, key) for key in ('dk_state_raw', 'dKgb_raw', 'rH')}
+                local['db_v'] = record[216 * 1024:216 * 1024 + 256].clone().view(torch.float32)
+                wanted_local = stage5_reference(inputs, q, dq_raw, beta, chunk, head, variable, local, args.scale)
+            # Independent full-path bound propagates the fixed Stage 2 budget.
+            k = torch.zeros((64, 128), dtype=torch.float64)
+            g = torch.zeros_like(k); b = torch.zeros(64, dtype=torch.float64)
+            k[:rows] = (inputs[0][head] if variable else inputs[0][sequence, head])[start:start + rows].double()
+            g[:rows] = (inputs[2][head] if variable else inputs[2][sequence, head])[start:start + rows].double()
+            b[:rows] = (beta[head] if variable else beta[sequence, head])[start:start + rows].double()
+            exp = torch.zeros_like(g); exp[:rows] = torch.exp2(g[:rows])
+            state_err = (2e-6 + 3e-4 * ref['dk_state_raw'].double().abs()) * torch.exp2(g[rows - 1] - g)
+            gb_err = (ref['dKgb_budget'].double() + 2e-6 + 3e-4 * ref['dKgb_raw'].double().abs()) * exp
+            dg_err = k.abs() * (state_err + b[:, None] * gb_err)
+            dg_err[rows - 1] += (k.abs() * state_err).sum(0) + torch.exp2(g[rows - 1]) * (2e-6 + 3e-4 * ref['rH'].double().abs())
+            budgets = dict(dq_base=torch.zeros_like(g), dk_base=state_err + b[:, None] * gb_err,
+                           dg_base=dg_err, db_base=(k.abs() * gb_err).sum(-1) + 2e-6 + 3e-4 * ref['db_v'].double().abs())
+            for name, co, wo in zip(names, cap_offsets, ws_offsets):
+                count = 64 if name == 'db_base' else 8192
+                shape = (64,) if name == 'db_base' else (64, 128)
+                if args.workspace_only:
+                    base = retained[head, c] + wo * 1024
+                    got = workspace[base:base + count * 4].clone().view(torch.float32).reshape(shape)
+                else:
+                    got = record[co * 1024:co * 1024 + count * 4].clone().view(torch.float32).reshape(shape)
+                    torch.testing.assert_close(got, wanted_local[name], rtol=3e-4, atol=2e-6,
+                                               msg=f'Stage 5 local {name} head={head} chunk={c}')
+                    if (head, c) in retained:
+                        base = retained[head, c] + wo * 1024
+                        actual_ws = workspace[base:base + count * 4].clone().view(torch.float32).reshape(shape)
+                        torch.testing.assert_close(actual_ws, got, rtol=0, atol=0)
+                assert torch.isfinite(got).all(), name
+                assert ((got - full[name]).abs() <= budgets[name] + 2e-6 + 3e-4 * full[name].abs()).all(), f'Stage 5 full {name}'
+                assert torch.count_nonzero(got[rows:]) == 0, f'{name} tail'
+    if not args.workspace_only:
+        assert (capture[:, :, 352 * 1024 + 256:] == 0xA5).all(), 'Stage 5 capture guard'
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5), default=0)
+    parser.add_argument("--scale", type=float, default=128 ** -.5)
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=2)

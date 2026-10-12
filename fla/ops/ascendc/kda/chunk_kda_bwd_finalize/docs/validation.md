@@ -133,3 +133,15 @@ Stage 0 每 head 最后一次 L1 读取后，提前装载下一 work 的五个�
 140 次设备检查通过，覆盖 Stage 0～3 回归、Stage 4 单核/多核尾块、两种 gate 的完整 8K 定长/变长及性能库实际 GM 中间量。Host tiling 和 clang-format 通过。最终 Stage 0～4 耗时为定长 2036.11 μs、变长 2102.43 μs，最大流水线 AIC MTE2 分别为 91.2%/91.4%；最后 10 次均超过 90%，msprof 均正常退出。
 
 测试清单、msprof 和完整三 lane 时间线见[五阶段性能记录](perf/stage01234/README.md)。复现入口为 `--stage 4`。这仍是部分 Stage 的开发验证，不能代替完整七输出、ATK 双标杆及 A3 验收；后续 Stage 5/6 须继续延长驻留数据生命周期。
+
+## Stage 5：六阶段流水（精度通过，性能目标未达标）
+
+新增 FP32 dq_base/dk_base/dg_base/db_base，按原始 gk 差值计算状态门控，在最后有效 token 加入 gate_state。Stage 1 按代保存 rH；Stage 5 完成通知保护两代 GM 槽，Stage 3 的 ACK 仍允许 Cube Stage 4 与 Stage 5 重叠。生产 workspace 不扩容，采数区扩为 360 KiB/head/chunk。
+
+局部 FP64 检查使用实际捕获的上游量，独立全路径检查传播原有 BF16/FP32 误差预算；未放宽已有门槛。CPU 门槛校准拒绝全零、减半、串 head/代、错误 scale、遗漏 beta 和错误 gate 补偿位置。166 次设备检查、Host tiling 和 clang-format 全部通过，覆盖完整 8K 定长/变长、两种 gate、旧 Stage 回归和缩放边界。
+
+已实验 32 行输入复用、减少核数、循环展开、共用 mask、UB 地址错开及分块行归约。保留 16 行 UB 地址错开版本：最终定长 3003.52 μs、变长 3095.20 μs，两组 msprof 均退出 0。最大流水占比分别为 Vector 75.55%/75.05%，未达到 90%。32 行方案还曾触发 Select 内部临时区覆盖 beta 广播，修复后精度通过，但耗时仍回退，不采用。
+
+2026-10-12 `/data` 满盘导致两次 msprof 空输出，已排除；工作副本复制至 A2 的 `/root/ensley-kda-finalize-a2-stage5-20261012`，原目录与文件保留。所有异常采集日志保留，不能用工具退出码或 benchmark 的 DONE 单独认定性能数据有效。
+
+完整三 lane 模拟器确认 42 次生产 MMAD，两个 AIV 的 Stage 5 均与 MTE2、MTE3 及 Cube Stage 4 重叠。数据与复现方式见[六阶段开发记录](perf/stage012345/README.md)。这仍是部分 Stage 的开发验证，不能代替完整七输出、ATK 双标杆或 A3 验收；90% 性能目标仍待完成。

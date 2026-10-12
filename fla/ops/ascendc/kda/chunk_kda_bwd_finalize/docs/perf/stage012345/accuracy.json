@@ -1,0 +1,24 @@
+{
+  "scope": "Private Stage 0-5; not complete Finalize, ATK or A3 acceptance",
+  "device": "A2 Ascend910B3 device 1",
+  "checks": {
+    "final-test.log": 22,
+    "final-tails-flat.log": 22,
+    "final-stage0.log": 22,
+    "final-stage1.log": 22,
+    "final-stage2.log": 22,
+    "final-stage3.log": 22,
+    "final-stage4.log": 22,
+    "final-model-cumulative.log": 2,
+    "final-model-flat.log": 2,
+    "final-perf-cumulative.log": 2,
+    "final-perf-flat.log": 2,
+    "final-scale-0.log": 2,
+    "final-scale--0.5.log": 2
+  },
+  "total": 166,
+  "stage5": "All heads/chunks/elements in capture; local FP64 and independent full-path references; existing tolerances unchanged",
+  "performance_validation": "All dv outputs and last two retained GM generations per core; intermediate overwritten generations are not exported",
+  "host_tiling": "PASS",
+  "native_format": "clang-format 18 repository style"
+}

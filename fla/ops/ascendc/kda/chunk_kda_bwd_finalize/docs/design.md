@@ -95,6 +95,13 @@ dg_base = q ⊙ dq_base
 dg_base[valid_rows - 1, :] += gate_state
 ```
 
+Stage 0～5 开发调度按 16 行双缓冲。Stage 1 按代保存 rH（512 B/head），Stage 5 重读原始 k/gk，并直接计算 `gk_last-gk` 后求指数；不依赖已被下一 work 覆盖的 UB。Stage 3 发 ACK 后，Cube Stage 4 与 Vector Stage 5 可并行；Stage 5 另发完成通知，阻止两代 GM 槽提前复用。
+
+Stage 5 的 FP32 dq/dk 复用已消费的 dv_b/dk_state_raw 区，dg/db 放在槽内空闲区，双槽总量仍为 512 KiB/head。后续 Stage 需按新的保留位置消费，不能直接套用完整方案的旧偏移。
+
+UB 使用两份 40 KiB 输入和两份 24 KiB 输出；ratio 写入 dk 后，其 8 KiB 临时区依次复用为 q 和 db 归约。exponent/product 分别错开 256/512 B，减少 bank 冲突，总 UB 仍为 192 KiB。输入末次读取后预取下一 tile，输出按槽等待；退出前排空输出，防止下一 Stage 覆盖。
+
+
 ## Stage 6：Cube
 
 ```text

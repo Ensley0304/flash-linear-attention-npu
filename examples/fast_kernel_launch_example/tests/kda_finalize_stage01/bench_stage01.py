@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile a capture-disabled Stage 0-4 build; report latency from msprof CSVs."""
+"""Profile a capture-disabled Stage 0-5 build; report latency from msprof CSVs."""
 import argparse
 import os
 import signal
@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--heads", type=int, default=96)
     parser.add_argument("--tokens", type=int, default=8192)
     parser.add_argument("--cores", type=int, default=0)
-    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "both"), default="both")
+    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "both"), default="both")
     parser.add_argument("--varlen", action="store_true")
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeat", type=int, default=10)
@@ -50,6 +50,8 @@ def main():
     h, dh = rand(state), rand(state)
     beta = torch.rand(shape[:-1], device=source_device).to(device)
     dv = torch.empty_like(k)
+    q = rand(shape)
+    dq_raw = (torch.randn(shape, device=source_device) * .125).to(device)
     torch.npu.synchronize()
     stages = (0, 1) if args.stage == "both" else (int(args.stage),)
     for stage in stages:
@@ -57,7 +59,7 @@ def main():
             if not simulator:
                 signal.alarm(60)
             capture, _, _ = torch.ops.ascend_ops.kda_finalize_stage01(
-                k, v, gk, akk, v_new, h, dh, dv_scan, cu, args.cores, stage, beta, dv)
+                k, v, gk, akk, v_new, h, dh, dv_scan, cu, args.cores, stage, beta, dv, q, dq_raw, 128 ** -.5)
             torch.npu.synchronize()
             signal.alarm(0)
             assert capture.numel() == 1, "rebuild with KDA_FINALIZE_STAGE01_CAPTURE=0"

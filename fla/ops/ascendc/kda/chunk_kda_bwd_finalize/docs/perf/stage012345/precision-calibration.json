@@ -1,0 +1,12 @@
+{
+  "baseline": "PASS",
+  "mutations": {
+    "zero": "REJECTED",
+    "half": "REJECTED",
+    "wrong_head": "REJECTED",
+    "wrong_generation": "REJECTED",
+    "wrong_scale": "REJECTED",
+    "missing_beta": "REJECTED",
+    "gate_wrong_row": "REJECTED"
+  }
+}

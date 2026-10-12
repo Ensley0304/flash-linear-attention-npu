@@ -3,6 +3,7 @@
  * Licensed under the BSD 3-Clause License.
  */
 #include <algorithm>
+#include <cmath>
 #include <tuple>
 #include <vector>
 #include <ATen/ATen.h>
@@ -26,11 +27,12 @@ constexpr bool CAPTURE = KDA_FINALIZE_STAGE01_CAPTURE != 0;
 
 using namespace KDA::Arch22;
 
-// Stage 0-4 harness: two GM generations overlap Stage 3 with the next Cube work.
+// Stage 0-5 harness: two GM generations overlap Stage 3 with the next Cube work.
 // Later stages must retain exp2_gk/rH or defer this release until their last UB read.
 constexpr uint16_t VECTOR_RELEASE = 9;
 constexpr uint16_t VECTOR_ACK = 10;
 constexpr uint16_t S02_READY = 4;
+constexpr uint16_t S5_DONE = 12;
 
 __aicore__ inline ChunkInfo ResolveChunk(const Stage01TilingData &tiling, const __gm__ ChunkInfo *chunks,
                                          int64_t chunkIndex)
@@ -52,8 +54,9 @@ __aicore__ inline ChunkInfo ResolveChunk(const Stage01TilingData &tiling, const 
 
 template <uint32_t LAST_STAGE>
 __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk, GM_ADDR vNew, GM_ADDR h,
-                                         GM_ADDR dh, GM_ADDR dvScan, GM_ADDR beta, GM_ADDR dv, GM_ADDR metadata,
-                                         GM_ADDR workspace, GM_ADDR capture, GM_ADDR trace, Stage01TilingData tiling)
+                                         GM_ADDR dh, GM_ADDR dvScan, GM_ADDR beta, GM_ADDR dv, GM_ADDR q, GM_ADDR dqRaw,
+                                         float scale, GM_ADDR metadata, GM_ADDR workspace, GM_ADDR capture,
+                                         GM_ADDR trace, Stage01TilingData tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     uint32_t core = AscendC::GetBlockIdx();
@@ -74,6 +77,11 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
             if (LAST_STAGE < 2 || work == core) {
                 AscendC::CrossCoreSetFlag<0x2, PIPE_MTE1>(WORK_OPEN);
+            }
+            if constexpr (LAST_STAGE >= 5) {
+                if (work >= core + 2 * tiling.usedCoreNum) {
+                    AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S5_DONE + bank);
+                }
             }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
@@ -177,6 +185,13 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_ACK);
             }
         }
+        if constexpr (LAST_STAGE >= 5) {
+            const int64_t last = core + ((workCount - 1 - core) / tiling.usedCoreNum) * tiling.usedCoreNum;
+            if (last > core) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S5_DONE + (((last / tiling.usedCoreNum) & 1) ^ 1));
+            }
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S5_DONE + ((last / tiling.usedCoreNum) & 1));
+        }
         cube.End();
     }
     if ASCEND_IS_AIV {
@@ -190,6 +205,9 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             vector.Init(k, gk, h, dh, workspace, ub, &pipe);
             if constexpr (LAST_STAGE >= 3) {
                 vector.InitStage3(v, beta, dv);
+            }
+            if constexpr (LAST_STAGE >= 5) {
+                vector.InitStage5(q, dqRaw, scale);
             }
         }
         AscendC::GlobalTensor<int64_t> traceGm;
@@ -207,7 +225,8 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             if constexpr (LAST_STAGE >= 1) {
                 if (head < tiling.heads) {
                     const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
-                    vector.Stage1<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                    vector.Stage1<CAPTURE, (LAST_STAGE >= 5)>(tiling, chunk, chunkIndex, head, owner, core, capture,
+                                                              bank);
                 }
             }
             // The absent owner in an odd-head work also closes the collective.
@@ -225,6 +244,14 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                                bank ^ 1);
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK + (bank ^ 1));
+                    if constexpr (LAST_STAGE >= 5) {
+                        if (previousHead < tiling.heads) {
+                            const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
+                            vector.Stage5<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
+                                                   bank ^ 1);
+                        }
+                        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(S5_DONE + (bank ^ 1));
+                    }
                 }
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_RELEASE);
                 if (work + tiling.usedCoreNum >= workCount) {
@@ -234,6 +261,13 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         vector.Stage3<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK + bank);
+                    if constexpr (LAST_STAGE >= 5) {
+                        if (head < tiling.heads) {
+                            const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
+                            vector.Stage5<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                        }
+                        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(S5_DONE + (bank));
+                    }
                 }
             } else {
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(VECTOR_RELEASE);
@@ -289,9 +323,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor>
 RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const at::Tensor &akk,
            const at::Tensor &vNew, const at::Tensor &h, const at::Tensor &dh, const at::Tensor &dvScan,
            at::IntArrayRef cuSeqlens, int64_t coreLimit, int64_t lastStage, const c10::optional<at::Tensor> &beta,
-           const c10::optional<at::Tensor> &dv)
+           const c10::optional<at::Tensor> &dv, const c10::optional<at::Tensor> &q,
+           const c10::optional<at::Tensor> &dqRaw, double scale)
 {
-    TORCH_CHECK(lastStage >= 0 && lastStage <= 4, "last_stage must be 0, 1, 2, 3 or 4");
+    TORCH_CHECK(lastStage >= 0 && lastStage <= 5, "last_stage must be 0, 1, 2, 3, 4 or 5");
     TORCH_CHECK(k.device().type() == c10::DeviceType::PrivateUse1, "expected NPU inputs");
     c10::DeviceGuard guard(k.device());
     TORCH_CHECK(k.dim() == 3 || k.dim() == 4, "expected [B,H,T,128] or [H,T,128]");
@@ -299,7 +334,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
     const int64_t batch = variable ? 1 : k.size(0);
     const int64_t heads = k.size(k.dim() - 3);
     const int64_t tokens = k.size(k.dim() - 2);
-    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-4 requires K=V=128");
+    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-5 requires K=V=128");
     for (const auto *tensor : {&k, &v, &vNew, &h, &dh, &dvScan, &akk}) {
         TORCH_CHECK(tensor->device() == k.device() && tensor->is_contiguous() && tensor->scalar_type() == at::kBFloat16,
                     "expected contiguous BF16 inputs on one device");
@@ -319,6 +354,16 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
         TORCH_CHECK(dv->device() == k.device() && dv->is_contiguous() && dv->scalar_type() == at::kBFloat16 &&
                         dv->sizes() == k.sizes(),
                     "dv_out must be contiguous BF16 with k's shape");
+    }
+    if (lastStage >= 5) {
+        TORCH_CHECK(q.has_value() && dqRaw.has_value(), "Stage 5 requires q and dq_raw");
+        TORCH_CHECK(q->device() == k.device() && q->is_contiguous() && q->scalar_type() == at::kBFloat16 &&
+                        q->sizes() == k.sizes(),
+                    "q must be contiguous BF16 with k's shape");
+        TORCH_CHECK(dqRaw->device() == k.device() && dqRaw->is_contiguous() && dqRaw->scalar_type() == at::kFloat &&
+                        dqRaw->sizes() == k.sizes(),
+                    "dq_raw must be contiguous FP32 with k's shape");
+        TORCH_CHECK(std::isfinite(static_cast<float>(scale)), "scale must be finite");
     }
     auto akkShape = k.sizes().vec();
     akkShape.back() = CHUNK_SIZE;
@@ -358,36 +403,49 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
-                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
-                (GM_ADDR)trace.data_ptr(), tiling);
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
         } else if (lastStage == 1) {
             Stage01Kernel<1><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
-                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
-                (GM_ADDR)trace.data_ptr(), tiling);
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
         } else if (lastStage == 2) {
             Stage01Kernel<2><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
-                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
-                (GM_ADDR)trace.data_ptr(), tiling);
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
         } else if (lastStage == 3) {
             Stage01Kernel<3><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
-                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
-                (GM_ADDR)trace.data_ptr(), tiling);
-        } else {
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
+        } else if (lastStage == 4) {
             Stage01Kernel<4><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
-                (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(), (GM_ADDR)capture.data_ptr(),
-                (GM_ADDR)trace.data_ptr(), tiling);
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
+        } else {
+            Stage01Kernel<5><<<tiling.usedCoreNum, nullptr, stream>>>(
+                (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
+                (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
+                (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
         }
         return 0;
     };
@@ -399,7 +457,7 @@ TORCH_LIBRARY_FRAGMENT(ascend_ops, m)
 {
     m.def("kda_finalize_stage01(Tensor k, Tensor v, Tensor gk, Tensor akk, Tensor v_new, Tensor h, Tensor dh, "
           "Tensor dv_scan, int[] cu_seqlens, int core_limit=0, int last_stage=1, Tensor? beta=None, Tensor(a!)? "
-          "dv_out=None) -> (Tensor, Tensor, Tensor)");
+          "dv_out=None, Tensor? q=None, Tensor? dq_raw=None, float scale=1.0) -> (Tensor, Tensor, Tensor)");
 }
 
 TORCH_LIBRARY_IMPL(ascend_ops, PrivateUse1, m)
