@@ -1,0 +1,71 @@
+[
+  {
+    "kernel": "main",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-main-r4/OPPROF_20261013010909_RILMNCBCAMZNUTTB/simulator/trace.json",
+    "lanes": {
+      "core0.cubecore0": {
+        "max_end_us": 150.00610419386066,
+        "instructions": 22166,
+        "mmads": 192,
+        "pipes": {
+          "SCALAR": 19139,
+          "MTE1": 1035,
+          "MTE2": 156,
+          "FLOWCTRL": 1226,
+          "CUBE": 192,
+          "FIXP": 252,
+          "ALL": 1,
+          "CACHEMISS": 165
+        }
+      },
+      "core0.veccore0": {
+        "max_end_us": 149.78944464796223,
+        "instructions": 62373,
+        "mmads": 0,
+        "pipes": {
+          "SCALAR": 45992,
+          "VECTOR": 8628,
+          "FLOWCTRL": 5674,
+          "MTE2": 366,
+          "MTE3": 384,
+          "ALL": 1,
+          "CACHEMISS": 1328
+        }
+      },
+      "core0.veccore1": {
+        "max_end_us": 150.00778266065754,
+        "instructions": 62277,
+        "mmads": 0,
+        "pipes": {
+          "SCALAR": 45858,
+          "VECTOR": 8628,
+          "FLOWCTRL": 5647,
+          "MTE2": 366,
+          "MTE3": 384,
+          "ALL": 1,
+          "CACHEMISS": 1393
+        }
+      }
+    }
+  },
+  {
+    "kernel": "reduce",
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-reduce-small-r4/OPPROF_20261013011256_IDUUSUQUEQHZZQED/simulator/trace.json",
+    "lanes": {
+      "core0.veccore0": {
+        "max_end_us": 148.96333380811848,
+        "instructions": 397,
+        "mmads": 0,
+        "pipes": {
+          "SCALAR": 306,
+          "VECTOR": 31,
+          "FLOWCTRL": 26,
+          "MTE2": 1,
+          "MTE3": 2,
+          "ALL": 1,
+          "CACHEMISS": 30
+        }
+      }
+    }
+  }
+]

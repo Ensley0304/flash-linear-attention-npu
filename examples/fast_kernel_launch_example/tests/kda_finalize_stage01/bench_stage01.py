@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--heads", type=int, default=96)
     parser.add_argument("--tokens", type=int, default=8192)
     parser.add_argument("--cores", type=int, default=0)
-    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "both"), default="both")
+    parser.add_argument("--stage", choices=("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "both"), default="both")
     parser.add_argument("--q-norm", action="store_true")
     parser.add_argument("--varlen", action="store_true")
     parser.add_argument("--warmup", type=int, default=20)
@@ -59,11 +59,21 @@ def main():
     torch.npu.synchronize()
     stages = (0, 1) if args.stage == "both" else (int(args.stage),)
     for stage in stages:
+        tail = {}
+        if stage >= 11:
+            gate_shape = (args.tokens, args.heads, 128) if args.varlen else (1, args.tokens, args.heads, 128)
+            tail = dict(raw_g=torch.zeros_like(gk), a_log=torch.zeros(args.heads, device=device),
+                        dt_bias=torch.zeros((args.heads, 128), device=device), k_rstd=q_rstd,
+                        dk_out=torch.empty_like(k), dg_out=torch.empty(gate_shape, device=device),
+                        db_out=torch.empty(gate_shape[:-1], device=device),
+                        partial_out=torch.empty((args.heads, chunks, 136), device=device),
+                        da_log_out=torch.empty(args.heads, device=device),
+                        ddt_bias_out=torch.empty((args.heads, 128), device=device))
         for _ in range(args.warmup + args.repeat):
             if not simulator:
                 signal.alarm(60)
             capture, _, _ = torch.ops.ascend_ops.kda_finalize_stage01(
-                k, v, gk, akk, v_new, h, dh, dv_scan, cu, args.cores, stage, beta, dv, q, dq_raw, 128 ** -.5, *([daqk] if stage >= 7 else []), *([dq, q_rstd] if stage >= 9 else []))
+                k, v, gk, akk, v_new, h, dh, dv_scan, cu, args.cores, stage, beta, dv, q, dq_raw, 128 ** -.5, *([daqk] if stage >= 7 else []), *([dq, q_rstd] if stage >= 9 else []), **tail)
             torch.npu.synchronize()
             signal.alarm(0)
             assert capture.numel() == 1, "rebuild with KDA_FINALIZE_STAGE01_CAPTURE=0"

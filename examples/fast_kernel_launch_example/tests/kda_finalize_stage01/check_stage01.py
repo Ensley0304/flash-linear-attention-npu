@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch_npu  # noqa: F401
 
-CAPTURE_BYTES = 816 * 1024
+CAPTURE_BYTES = 928 * 1024
 OFFSETS = {
     "dk_state_raw": (0, torch.float32, (64, 128)),
     "dv_b": (32 * 1024, torch.float32, (64, 128)),
@@ -126,11 +126,16 @@ def workspace_works(heads, chunks, cores, stage):
 
 def check_case(args, batch, heads, tokens, lengths=None):
     inputs, cu, chunks = make_case(batch, heads, tokens, lengths, gate_mode=args.gate_mode)
+    if args.stage >= 11 and args.q_norm:
+        inputs = (torch.nn.functional.normalize(inputs[0].float(), dim=-1).bfloat16(), *inputs[1:])
     expected = None if args.workspace_only else [
         [reference(inputs, chunks, head, c, lengths is not None) for c in range(len(chunks))]
         for head in range(heads)]
     beta = torch.rand(inputs[0].shape[:-1], generator=torch.Generator().manual_seed(137)) * 2
     beta.flatten()[:min(4, beta.numel())] = torch.tensor([0.0, 1.0, 2.0, 0.99966466])[:min(4, beta.numel())]
+    if args.stage >= 11 and args.beta_mode == 1:
+        beta *= .5
+        beta.flatten()[:min(4, beta.numel())] = torch.tensor([0., 1., .5, .99966466])[:min(4, beta.numel())]
     generator = torch.Generator().manual_seed(593)
     q = (torch.randn(inputs[0].shape, generator=generator) * .125).bfloat16()
     dq_raw = torch.randn(inputs[0].shape, generator=generator) * .125
@@ -145,13 +150,18 @@ def check_case(args, batch, heads, tokens, lengths=None):
     device_beta = beta.to(f"npu:{args.device}")
     dv_out = torch.full_like(inputs[0], float("nan"), device=f"npu:{args.device}")
     device_inputs = [x.to(f"npu:{args.device}") for x in inputs]
+    tail_cpu, tail_args = None, {}
+    if args.stage >= 11:
+        from check_stage11 import make_tail
+        tail_cpu, tail_args = make_tail(inputs, chunks, args.q_norm, f"npu:{args.device}", args.beta_mode)
+        tail_args['lower_bound'] = args.lower_bound
     torch.npu.synchronize()
     for iteration in range(args.repeat):
         # The alarm covers kernel execution and the following device synchronize.
         signal.alarm(60)
         try:
             capture, trace, workspace = torch.ops.ascend_ops.kda_finalize_stage01(
-                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out, device_q, device_dq_raw, args.scale, device_daqk, *([dq_out, device_rstd] if args.stage >= 9 else []))
+                *device_inputs, cu, args.cores, args.stage, device_beta, dv_out, device_q, device_dq_raw, args.scale, device_daqk, *([dq_out, device_rstd] if args.stage >= 9 else []), **tail_args)
             torch.npu.synchronize()
         finally:
             signal.alarm(0)
@@ -173,6 +183,25 @@ def check_case(args, batch, heads, tokens, lengths=None):
         if args.stage >= 10:
             from check_stage10 import check_stage10
             check_stage10(inputs, q, beta, daqk, chunks, lengths is not None, capture, workspace, args)
+        if args.stage >= 11:
+            from check_stage11 import check_stage11
+            if not args.workspace_only:
+                check_stage11(inputs, q, beta, daqk, chunks, lengths is not None, capture, tail_cpu, tail_args, args)
+            if args.tail_golden_dir is not None:
+                args.tail_golden_dir.mkdir(parents=True, exist_ok=True)
+                name = f's{args.stage}-b{batch}-h{heads}-t{tokens}-v{int(lengths is not None)}-n{int(args.q_norm)}-m{args.beta_mode}-{args.gate_mode}-lb{args.lower_bound:g}.pt'
+                path = args.tail_golden_dir / name
+                values = {key: value.cpu() for key, value in tail_args.items() if key.endswith('_out') and
+                          (args.stage == 12 or key not in ('da_log_out', 'ddt_bias_out'))}
+                values.update(dq=dq_out.cpu(), dv=dv_out.cpu())
+                if args.workspace_only:
+                    wanted = torch.load(path, weights_only=True)
+                    for key in values:
+                        torch.testing.assert_close(values[key], wanted[key], rtol=0, atol=0, msg=key+' capture/perf')
+                elif iteration == 0:
+                    torch.save(values, path)
+            else:
+                assert not args.workspace_only, 'Stage 11/12 performance checks require --tail-golden-dir'
         if args.stage >= 5:
             check_stage5(inputs, q, dq_raw, beta, chunks, lengths is not None, capture, workspace, args, expected)
         if args.stage >= 4 and not args.workspace_only:
@@ -560,8 +589,11 @@ def check_stage6(inputs, beta, chunks, variable, capture, workspace, args, expec
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), default=0)
     parser.add_argument("--q-norm", action="store_true")
+    parser.add_argument("--beta-mode", type=int, choices=(0, 1, 2), default=0)
+    parser.add_argument("--lower-bound", type=float, default=-5.)
+    parser.add_argument("--tail-golden-dir", type=Path)
     parser.add_argument("--scale", type=float, default=128 ** -.5)
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)

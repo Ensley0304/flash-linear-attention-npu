@@ -1,0 +1,2 @@
+d2-baseline-profile-fixed {'min': 8455.109, 'median': 8478.449, 'max': 8490.749}
+d2-baseline-profile-varlen {'min': 8581.912, 'median': 8598.7415, 'max': 8619.212}

@@ -1,0 +1,39 @@
+--- stage12/r3-vector.h	2026-10-13 00:52:24.984000000 +0800
++++ fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h	2026-10-13 00:52:30.944000000 +0800
+@@ -1123,12 +1123,32 @@
+                 }
+                 AscendC::PipeBarrier<PIPE_V>();
+                 AscendC::Cast(packedDk, dk, AscendC::RoundMode::CAST_RINT, count);
+-                // Carry crosses 8-row tiles and the two 32-row bands, never chunks.
+-                for (int32_t row = active - 1; row >= 0; --row) {
+-                    AscendC::Add(dg[row * HEAD_DIM], dg[row * HEAD_DIM], suffix, HEAD_DIM);
++                // Eight rows scan in three steps; left is dead after dk/db/dg formation.
++                // Carry crosses tiles and 32-row bands, never chunks.
++                if (active == ROWS) {
++                    auto scanSrc = dg;
++                    auto scanDst = left;
++                    for (uint32_t step = 1; step < ROWS; step *= 2) {
++                        const uint32_t prefix = (ROWS - step) * HEAD_DIM;
++                        AscendC::Add(scanDst, scanSrc, scanSrc[step * HEAD_DIM], prefix);
++                        AscendC::Adds(scanDst[prefix], scanSrc[prefix], 0.0f, step * HEAD_DIM);
++                        AscendC::PipeBarrier<PIPE_V>();
++                        auto temp = scanSrc;
++                        scanSrc = scanDst;
++                        scanDst = temp;
++                    }
++                    AscendC::Add(dg, scanSrc, suffix, 64, ROWS, {1, 1, 1, 16, 16, 0});
++                    AscendC::Add(dg[64], scanSrc[64], suffix[64], 64, ROWS, {1, 1, 1, 16, 16, 0});
+                     AscendC::PipeBarrier<PIPE_V>();
+-                    AscendC::Adds(suffix, dg[row * HEAD_DIM], 0.0f, HEAD_DIM);
++                    AscendC::Adds(suffix, dg, 0.0f, HEAD_DIM);
+                     AscendC::PipeBarrier<PIPE_V>();
++                } else {
++                    for (int32_t row = active - 1; row >= 0; --row) {
++                        AscendC::Add(dg[row * HEAD_DIM], dg[row * HEAD_DIM], suffix, HEAD_DIM);
++                        AscendC::PipeBarrier<PIPE_V>();
++                        AscendC::Adds(suffix, dg[row * HEAD_DIM], 0.0f, HEAD_DIM);
++                        AscendC::PipeBarrier<PIPE_V>();
++                    }
+                 }
+                 AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active, {1, 1, 1, 16, 16, 0});
+                 AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,

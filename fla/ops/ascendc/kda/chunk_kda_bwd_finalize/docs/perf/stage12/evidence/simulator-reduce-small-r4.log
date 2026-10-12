@@ -1,0 +1,592 @@
+[WARN]  Currently, the root permission is used, which is unrecommended. Please ensure the security of the execution environment and programs.
+[INFO]  Op profiling analysis start.
+[INFO]  Running simulation task: Binary Simulation Running, use simulator Ascend910B3 by --soc-version
+[W1013 01:12:58.232260860 FunctionLoader.cpp:48] Warning: LD_PRELOAD detected, FunctionLoader prefers RTLD_DEFAULT for symbol resolution. (function operator())
+[INFO] Top sim cfg file: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/simulator/dav_2201/lib/Ascend910_93_sim_ffts_plus.toml
+[INFO] Config file [Ascend910_93_model.toml] from environment variable [CAMODEL_CONFIG_PATH]. Path: /data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-reduce-small-r4/OPPROF_20261013011256_IDUUSUQUEQHZZQED/device0/tmp_dump/config/Ascend910_93_model.toml
+[INFO] Model cfg file: /data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-reduce-small-r4/OPPROF_20261013011256_IDUUSUQUEQHZZQED/device0/tmp_dump/config/Ascend910_93_model.toml
+[INFO] FFTS plus cfg file: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/simulator/dav_2201/lib/Ascend910_93_ffts_plus.toml
+[INFO] [0000000000] sim_cfg: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/simulator/dav_2201/lib/Ascend910_93_sim_ffts_plus.toml
+[INFO] [0000000000] model_cfg: /data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-reduce-small-r4/OPPROF_20261013011256_IDUUSUQUEQHZZQED/device0/tmp_dump/config/Ascend910_93_model.toml
+[INFO] [0000000000] stars_cfg: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/simulator/dav_2201/lib/Ascend910_93_stars_ffts_plus.toml
+[INFO] [0000000000] ffts_cfg: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/simulator/dav_2201/lib/Ascend910_93_ffts.toml
+[INFO] [0000000000] ffts_plus_cfg: /data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0/aarch64-linux/simulator/dav_2201/lib/Ascend910_93_ffts_plus.toml
+[FuncCache]: size:0x20000, line_size:128, way_num:16, line_num:1024, idx_num:64
+             idx_lsb:7, idx_mask:0x3f, tag_lsb:13, tag_mask:0xffffffffffffffff, ofst_mask:0x7f
+
+[TmSim]: Run in parallel worker mode, core num is: 24
+
+[INFO] Config file [./pem_config_cloud.toml] from environment variable [CAMODEL_CONFIG_PATH]. Path: /data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-reduce-small-r4/OPPROF_20261013011256_IDUUSUQUEQHZZQED/device0/tmp_dump/config/pem_config_cloud.toml
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 0 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 0: chip_id 0 die_id 0, dev_core_id  0, subcore  0 of  3 (CUBE), spr COREID 0x0000 (0)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 0: chip_id 0 die_id 0, dev_core_id  0, subcore  1 of  3  (VEC), spr COREID 0x0018 (24)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 0: chip_id 0 die_id 0, dev_core_id  0, subcore  2 of  3  (VEC), spr COREID 0x0019 (25)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 0 access PV with mutex
+[PEM_AIC_LOG] [INFO] [0000000000] configure_shared_bus (411):: L2 cache is enabled
+[INFO] AicWrapper attach AIC 0, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 1 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 1: chip_id 0 die_id 0, dev_core_id  1, subcore  0 of  3 (CUBE), spr COREID 0x0001 (1)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 1: chip_id 0 die_id 0, dev_core_id  1, subcore  1 of  3  (VEC), spr COREID 0x001A (26)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 1: chip_id 0 die_id 0, dev_core_id  1, subcore  2 of  3  (VEC), spr COREID 0x001B (27)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 1 access PV with mutex
+[INFO] AicWrapper attach AIC 1, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 2 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 2: chip_id 0 die_id 0, dev_core_id  2, subcore  0 of  3 (CUBE), spr COREID 0x0002 (2)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 2: chip_id 0 die_id 0, dev_core_id  2, subcore  1 of  3  (VEC), spr COREID 0x001C (28)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 2: chip_id 0 die_id 0, dev_core_id  2, subcore  2 of  3  (VEC), spr COREID 0x001D (29)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 2 access PV with mutex
+[INFO] AicWrapper attach AIC 2, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 3 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 3: chip_id 0 die_id 0, dev_core_id  3, subcore  0 of  3 (CUBE), spr COREID 0x0003 (3)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 3: chip_id 0 die_id 0, dev_core_id  3, subcore  1 of  3  (VEC), spr COREID 0x001E (30)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 3: chip_id 0 die_id 0, dev_core_id  3, subcore  2 of  3  (VEC), spr COREID 0x001F (31)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 3 access PV with mutex
+[INFO] AicWrapper attach AIC 3, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 4 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 4: chip_id 0 die_id 0, dev_core_id  4, subcore  0 of  3 (CUBE), spr COREID 0x0004 (4)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 4: chip_id 0 die_id 0, dev_core_id  4, subcore  1 of  3  (VEC), spr COREID 0x0020 (32)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 4: chip_id 0 die_id 0, dev_core_id  4, subcore  2 of  3  (VEC), spr COREID 0x0021 (33)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 4 access PV with mutex
+[INFO] AicWrapper attach AIC 4, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 5 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 5: chip_id 0 die_id 0, dev_core_id  5, subcore  0 of  3 (CUBE), spr COREID 0x0005 (5)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 5: chip_id 0 die_id 0, dev_core_id  5, subcore  1 of  3  (VEC), spr COREID 0x0022 (34)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 5: chip_id 0 die_id 0, dev_core_id  5, subcore  2 of  3  (VEC), spr COREID 0x0023 (35)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 5 access PV with mutex
+[INFO] AicWrapper attach AIC 5, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 6 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 6: chip_id 0 die_id 0, dev_core_id  6, subcore  0 of  3 (CUBE), spr COREID 0x0006 (6)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 6: chip_id 0 die_id 0, dev_core_id  6, subcore  1 of  3  (VEC), spr COREID 0x0024 (36)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 6: chip_id 0 die_id 0, dev_core_id  6, subcore  2 of  3  (VEC), spr COREID 0x0025 (37)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 6 access PV with mutex
+[INFO] AicWrapper attach AIC 6, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 7 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 7: chip_id 0 die_id 0, dev_core_id  7, subcore  0 of  3 (CUBE), spr COREID 0x0007 (7)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 7: chip_id 0 die_id 0, dev_core_id  7, subcore  1 of  3  (VEC), spr COREID 0x0026 (38)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 7: chip_id 0 die_id 0, dev_core_id  7, subcore  2 of  3  (VEC), spr COREID 0x0027 (39)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 7 access PV with mutex
+[INFO] AicWrapper attach AIC 7, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 8 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 8: chip_id 0 die_id 0, dev_core_id  8, subcore  0 of  3 (CUBE), spr COREID 0x0008 (8)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 8: chip_id 0 die_id 0, dev_core_id  8, subcore  1 of  3  (VEC), spr COREID 0x0028 (40)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 8: chip_id 0 die_id 0, dev_core_id  8, subcore  2 of  3  (VEC), spr COREID 0x0029 (41)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 8 access PV with mutex
+[INFO] AicWrapper attach AIC 8, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 9 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 9: chip_id 0 die_id 0, dev_core_id  9, subcore  0 of  3 (CUBE), spr COREID 0x0009 (9)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 9: chip_id 0 die_id 0, dev_core_id  9, subcore  1 of  3  (VEC), spr COREID 0x002A (42)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 9: chip_id 0 die_id 0, dev_core_id  9, subcore  2 of  3  (VEC), spr COREID 0x002B (43)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 9 access PV with mutex
+[INFO] AicWrapper attach AIC 9, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 10 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 10: chip_id 0 die_id 0, dev_core_id 10, subcore  0 of  3 (CUBE), spr COREID 0x000A (10)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 10: chip_id 0 die_id 0, dev_core_id 10, subcore  1 of  3  (VEC), spr COREID 0x002C (44)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 10: chip_id 0 die_id 0, dev_core_id 10, subcore  2 of  3  (VEC), spr COREID 0x002D (45)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 10 access PV with mutex
+[INFO] AicWrapper attach AIC 10, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 11 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 11: chip_id 0 die_id 0, dev_core_id 11, subcore  0 of  3 (CUBE), spr COREID 0x000B (11)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 11: chip_id 0 die_id 0, dev_core_id 11, subcore  1 of  3  (VEC), spr COREID 0x002E (46)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 11: chip_id 0 die_id 0, dev_core_id 11, subcore  2 of  3  (VEC), spr COREID 0x002F (47)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 11 access PV with mutex
+[INFO] AicWrapper attach AIC 11, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 12 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 12: chip_id 0 die_id 0, dev_core_id 12, subcore  0 of  3 (CUBE), spr COREID 0x000C (12)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 12: chip_id 0 die_id 0, dev_core_id 12, subcore  1 of  3  (VEC), spr COREID 0x0030 (48)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 12: chip_id 0 die_id 0, dev_core_id 12, subcore  2 of  3  (VEC), spr COREID 0x0031 (49)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 12 access PV with mutex
+[INFO] AicWrapper attach AIC 12, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 13 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 13: chip_id 0 die_id 0, dev_core_id 13, subcore  0 of  3 (CUBE), spr COREID 0x000D (13)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 13: chip_id 0 die_id 0, dev_core_id 13, subcore  1 of  3  (VEC), spr COREID 0x0032 (50)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 13: chip_id 0 die_id 0, dev_core_id 13, subcore  2 of  3  (VEC), spr COREID 0x0033 (51)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 13 access PV with mutex
+[INFO] AicWrapper attach AIC 13, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 14 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 14: chip_id 0 die_id 0, dev_core_id 14, subcore  0 of  3 (CUBE), spr COREID 0x000E (14)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 14: chip_id 0 die_id 0, dev_core_id 14, subcore  1 of  3  (VEC), spr COREID 0x0034 (52)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 14: chip_id 0 die_id 0, dev_core_id 14, subcore  2 of  3  (VEC), spr COREID 0x0035 (53)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 14 access PV with mutex
+[INFO] AicWrapper attach AIC 14, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 15 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 15: chip_id 0 die_id 0, dev_core_id 15, subcore  0 of  3 (CUBE), spr COREID 0x000F (15)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 15: chip_id 0 die_id 0, dev_core_id 15, subcore  1 of  3  (VEC), spr COREID 0x0036 (54)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 15: chip_id 0 die_id 0, dev_core_id 15, subcore  2 of  3  (VEC), spr COREID 0x0037 (55)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 15 access PV with mutex
+[INFO] AicWrapper attach AIC 15, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 16 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 16: chip_id 0 die_id 0, dev_core_id 16, subcore  0 of  3 (CUBE), spr COREID 0x0010 (16)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 16: chip_id 0 die_id 0, dev_core_id 16, subcore  1 of  3  (VEC), spr COREID 0x0038 (56)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 16: chip_id 0 die_id 0, dev_core_id 16, subcore  2 of  3  (VEC), spr COREID 0x0039 (57)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 16 access PV with mutex
+[INFO] AicWrapper attach AIC 16, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 17 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 17: chip_id 0 die_id 0, dev_core_id 17, subcore  0 of  3 (CUBE), spr COREID 0x0011 (17)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 17: chip_id 0 die_id 0, dev_core_id 17, subcore  1 of  3  (VEC), spr COREID 0x003A (58)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 17: chip_id 0 die_id 0, dev_core_id 17, subcore  2 of  3  (VEC), spr COREID 0x003B (59)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 17 access PV with mutex
+[INFO] AicWrapper attach AIC 17, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 18 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 18: chip_id 0 die_id 0, dev_core_id 18, subcore  0 of  3 (CUBE), spr COREID 0x0012 (18)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 18: chip_id 0 die_id 0, dev_core_id 18, subcore  1 of  3  (VEC), spr COREID 0x003C (60)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 18: chip_id 0 die_id 0, dev_core_id 18, subcore  2 of  3  (VEC), spr COREID 0x003D (61)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 18 access PV with mutex
+[INFO] AicWrapper attach AIC 18, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 19 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 19: chip_id 0 die_id 0, dev_core_id 19, subcore  0 of  3 (CUBE), spr COREID 0x0013 (19)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 19: chip_id 0 die_id 0, dev_core_id 19, subcore  1 of  3  (VEC), spr COREID 0x003E (62)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 19: chip_id 0 die_id 0, dev_core_id 19, subcore  2 of  3  (VEC), spr COREID 0x003F (63)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 19 access PV with mutex
+[INFO] AicWrapper attach AIC 19, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 20 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 20: chip_id 0 die_id 0, dev_core_id 20, subcore  0 of  3 (CUBE), spr COREID 0x0014 (20)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 20: chip_id 0 die_id 0, dev_core_id 20, subcore  1 of  3  (VEC), spr COREID 0x0040 (64)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 20: chip_id 0 die_id 0, dev_core_id 20, subcore  2 of  3  (VEC), spr COREID 0x0041 (65)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 20 access PV with mutex
+[INFO] AicWrapper attach AIC 20, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 21 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 21: chip_id 0 die_id 0, dev_core_id 21, subcore  0 of  3 (CUBE), spr COREID 0x0015 (21)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 21: chip_id 0 die_id 0, dev_core_id 21, subcore  1 of  3  (VEC), spr COREID 0x0042 (66)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 21: chip_id 0 die_id 0, dev_core_id 21, subcore  2 of  3  (VEC), spr COREID 0x0043 (67)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 21 access PV with mutex
+[INFO] AicWrapper attach AIC 21, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 22 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 22: chip_id 0 die_id 0, dev_core_id 22, subcore  0 of  3 (CUBE), spr COREID 0x0016 (22)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 22: chip_id 0 die_id 0, dev_core_id 22, subcore  1 of  3  (VEC), spr COREID 0x0044 (68)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 22: chip_id 0 die_id 0, dev_core_id 22, subcore  2 of  3  (VEC), spr COREID 0x0045 (69)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 22 access PV with mutex
+[INFO] AicWrapper attach AIC 22, num_vec_core=2, num_subcore=3
+[PEM_AIC_LOG] [INFO] [0000000000] init (132):: Core 23 (CA) init with config file: ./pem_config_cloud.toml
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 23: chip_id 0 die_id 0, dev_core_id 23, subcore  0 of  3 (CUBE), spr COREID 0x0017 (23)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 23: chip_id 0 die_id 0, dev_core_id 23, subcore  1 of  3  (VEC), spr COREID 0x0046 (70)
+[PEM_AIC_LOG] [DEBUG] [0000000000] init_core_spr (205)::     Core 23: chip_id 0 die_id 0, dev_core_id 23, subcore  2 of  3  (VEC), spr COREID 0x0047 (71)
+[PEM_AIC_LOG] [INFO] [0000000000] update_core_attach (536):: Core 23 access PV with mutex
+[INFO] AicWrapper attach AIC 23, num_vec_core=2, num_subcore=3
+[INFO] Chip 0 AIC / Scheduler / Soc periods: 200.0000 / 200.0000 / 105.0000
+[INFO] chip 0 die 0 device created
+>> Start ModelParsim with 24 threads for 25 thread units, mode is 0
+================================================================================
+>>>>                                                                        
+>>>>                             " PEM MODEL "                                
+>>>>             Total no. of 1 chip(s) Model Init Success!                
+>>>>                                                                        
+================================================================================
+[INFO] Model Start Time: 2026-10-13 01:13:05
+[DRVSTUB_LOG] driver_api.c:521 sendSwapBuf:swapbuf_base_addr:10000000
+[DRVSTUB_LOG] driver_api.c:522 sendSwapBuf:sq:0 swapbuf_addr:10000000
+[DRVSTUB_LOG] driver_api.c:521 sendSwapBuf:swapbuf_base_addr:10000000
+[DRVSTUB_LOG] driver_api.c:522 sendSwapBuf:sq:1 swapbuf_addr:10000040
+[DRVSTUB_LOG] driver_api.c:521 sendSwapBuf:swapbuf_base_addr:10000000
+[DRVSTUB_LOG] driver_api.c:522 sendSwapBuf:sq:2 swapbuf_addr:10000080
+[DRVSTUB_LOG] driver_api.c:521 sendSwapBuf:swapbuf_base_addr:10000000
+[DRVSTUB_LOG] driver_api.c:522 sendSwapBuf:sq:3 swapbuf_addr:100000c0
+[DRVSTUB_LOG] driver_api.c:521 sendSwapBuf:swapbuf_base_addr:10000000
+[DRVSTUB_LOG] driver_api.c:522 sendSwapBuf:sq:4 swapbuf_addr:10000100
+[W1013 01:13:05.948058880 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+[INFO]  Kernel ZerosLike_5c5e58e043224cccf51a06108010ae13_high_performance_210000000 skipped: not selected via --kernel-name.
+[info] [0000010332] [context_start]       : AIV, stream_id=3, rtsq_id=3 task_id=0, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [0000010335] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=0, blkdim=39, blkID=0
+[info] [0000010336] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=1, blkdim=39, blkID=1
+[info] [0000010337] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=2, blkdim=39, blkID=2
+[info] [0000010338] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=3, blkdim=39, blkID=3
+[info] [0000010339] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=4, blkdim=39, blkID=4
+[info] [0000010340] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=5, blkdim=39, blkID=5
+[info] [0000010341] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=6, blkdim=39, blkID=6
+[info] [0000010342] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=7, blkdim=39, blkID=7
+[info] [0000010343] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=8, blkdim=39, blkID=8
+[info] [0000010344] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=9, blkdim=39, blkID=9
+[info] [0000010345] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=10, blkdim=39, blkID=10
+[info] [0000010346] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=11, blkdim=39, blkID=11
+[info] [0000010347] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=12, blkdim=39, blkID=12
+[info] [0000010348] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=13, blkdim=39, blkID=13
+[info] [0000010349] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=14, blkdim=39, blkID=14
+[info] [0000010350] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=15, blkdim=39, blkID=15
+[info] [0000010351] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=16, blkdim=39, blkID=16
+[info] [0000010352] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=17, blkdim=39, blkID=17
+[info] [0000010353] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=18, blkdim=39, blkID=18
+[info] [0000010354] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=19, blkdim=39, blkID=19
+[info] [0000010355] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=20, blkdim=39, blkID=20
+[info] [0000010356] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=21, blkdim=39, blkID=21
+[info] [0000010357] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=22, blkdim=39, blkID=22
+[info] [0000010358] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=23, blkdim=39, blkID=23
+[info] [0000010359] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=24, blkdim=39, blkID=24
+[info] [0000010360] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=25, blkdim=39, blkID=25
+[info] [0000010361] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=26, blkdim=39, blkID=26
+[info] [0000010362] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=27, blkdim=39, blkID=27
+[info] [0000010363] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=28, blkdim=39, blkID=28
+[info] [0000010364] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=29, blkdim=39, blkID=29
+[info] [0000010365] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=30, blkdim=39, blkID=30
+[info] [0000010366] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=31, blkdim=39, blkID=31
+[info] [0000010367] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=32, blkdim=39, blkID=32
+[info] [0000010368] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=33, blkdim=39, blkID=33
+[info] [0000010369] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=34, blkdim=39, blkID=34
+[info] [0000010370] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=35, blkdim=39, blkID=35
+[info] [0000010371] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=36, blkdim=39, blkID=36
+[info] [0000010372] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=37, blkdim=39, blkID=37
+[info] [0000010373] [block_start]           : AIV, task_id=0, contextID=0, threadID=0, coreID=38, blkdim=39, blkID=38
+[PEM_AIC_LOG] [INFO] [0000010534] kickstart (316):: Core 0 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010535] kickstart (316):: Core 0 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010536] kickstart (316):: Core 1 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010537] kickstart (316):: Core 1 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010538] kickstart (316):: Core 2 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010539] kickstart (316):: Core 2 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010540] kickstart (316):: Core 3 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010541] kickstart (316):: Core 3 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010542] kickstart (316):: Core 4 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010543] kickstart (316):: Core 4 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010544] kickstart (316):: Core 5 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010545] kickstart (316):: Core 5 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010546] kickstart (316):: Core 6 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010547] kickstart (316):: Core 6 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010548] kickstart (316):: Core 7 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010549] kickstart (316):: Core 7 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010550] kickstart (316):: Core 8 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010551] kickstart (316):: Core 8 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010552] kickstart (316):: Core 9 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010553] kickstart (316):: Core 9 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010554] kickstart (316):: Core 10 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010555] kickstart (316):: Core 10 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010556] kickstart (316):: Core 11 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010557] kickstart (316):: Core 11 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010558] kickstart (316):: Core 12 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010559] kickstart (316):: Core 12 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010560] kickstart (316):: Core 13 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010561] kickstart (316):: Core 13 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010562] kickstart (316):: Core 14 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010563] kickstart (316):: Core 14 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010564] kickstart (316):: Core 15 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010565] kickstart (316):: Core 15 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010566] kickstart (316):: Core 16 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010567] kickstart (316):: Core 16 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010568] kickstart (316):: Core 17 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010569] kickstart (316):: Core 17 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010570] kickstart (316):: Core 18 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010571] kickstart (316):: Core 18 subcore 2 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000010572] kickstart (316):: Core 19 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000012028] aic_done_callback (72):: Core 1 subcore 1 early_end 0 done
+[info] [0000012030] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=2, blkdim=39, blkID=2
+[PEM_AIC_LOG] [INFO] [0000012030] aic_done_callback (72):: Core 0 subcore 2 early_end 0 done
+[info] [0000012032] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=1, blkdim=39, blkID=1
+[PEM_AIC_LOG] [INFO] [0000012035] aic_done_callback (72):: Core 3 subcore 2 early_end 0 done
+[info] [0000012037] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=7, blkdim=39, blkID=7
+[PEM_AIC_LOG] [INFO] [0000012036] aic_done_callback (72):: Core 3 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012036] aic_done_callback (72):: Core 8 subcore 2 early_end 0 done
+[info] [0000012038] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=6, blkdim=39, blkID=6
+[info] [0000012038] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=17, blkdim=39, blkID=17
+[PEM_AIC_LOG] [INFO] [0000012044] aic_done_callback (72):: Core 0 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012044] aic_done_callback (72):: Core 4 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012044] aic_done_callback (72):: Core 19 subcore 1 early_end 0 done
+[info] [0000012046] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=8, blkdim=39, blkID=8
+[info] [0000012046] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=38, blkdim=39, blkID=38
+[PEM_AIC_LOG] [INFO] [0000012045] aic_done_callback (72):: Core 11 subcore 2 early_end 0 done
+[info] [0000012046] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=0, blkdim=39, blkID=0
+[info] [0000012047] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=23, blkdim=39, blkID=23
+[PEM_AIC_LOG] [INFO] [0000012047] aic_done_callback (72):: Core 1 subcore 2 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012047] aic_done_callback (72):: Core 5 subcore 1 early_end 0 done
+[info] [0000012049] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=3, blkdim=39, blkID=3
+[info] [0000012049] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=10, blkdim=39, blkID=10
+[PEM_AIC_LOG] [INFO] [0000012049] aic_done_callback (72):: Core 2 subcore 2 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012049] aic_done_callback (72):: Core 8 subcore 1 early_end 0 done
+[info] [0000012051] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=5, blkdim=39, blkID=5
+[info] [0000012051] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=16, blkdim=39, blkID=16
+[PEM_AIC_LOG] [INFO] [0000012051] aic_done_callback (72):: Core 7 subcore 1 early_end 0 done
+[info] [0000012053] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=14, blkdim=39, blkID=14
+[PEM_AIC_LOG] [INFO] [0000012052] aic_done_callback (72):: Core 2 subcore 1 early_end 0 done
+[info] [0000012054] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=4, blkdim=39, blkID=4
+[PEM_AIC_LOG] [INFO] [0000012054] aic_done_callback (72):: Core 4 subcore 2 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012054] aic_done_callback (72):: Core 10 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012054] aic_done_callback (72):: Core 15 subcore 1 early_end 0 done
+[info] [0000012056] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=9, blkdim=39, blkID=9
+[info] [0000012056] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=20, blkdim=39, blkID=20
+[info] [0000012056] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=30, blkdim=39, blkID=30
+[PEM_AIC_LOG] [INFO] [0000012056] aic_done_callback (72):: Core 11 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012056] aic_done_callback (72):: Core 12 subcore 2 early_end 0 done
+[info] [0000012058] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=25, blkdim=39, blkID=25
+[info] [0000012058] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=22, blkdim=39, blkID=22
+[PEM_AIC_LOG] [INFO] [0000012057] aic_done_callback (72):: Core 5 subcore 2 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012057] aic_done_callback (72):: Core 6 subcore 1 early_end 0 done
+[info] [0000012059] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=11, blkdim=39, blkID=11
+[info] [0000012059] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=12, blkdim=39, blkID=12
+[PEM_AIC_LOG] [INFO] [0000012058] aic_done_callback (72):: Core 7 subcore 2 early_end 0 done
+[info] [0000012060] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=15, blkdim=39, blkID=15
+[PEM_AIC_LOG] [INFO] [0000012059] aic_done_callback (72):: Core 6 subcore 2 early_end 0 done
+[info] [0000012061] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=13, blkdim=39, blkID=13
+[PEM_AIC_LOG] [INFO] [0000012061] aic_done_callback (72):: Core 9 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012061] aic_done_callback (72):: Core 13 subcore 1 early_end 0 done
+[info] [0000012063] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=18, blkdim=39, blkID=18
+[info] [0000012063] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=26, blkdim=39, blkID=26
+[PEM_AIC_LOG] [INFO] [0000012063] aic_done_callback (72):: Core 9 subcore 2 early_end 0 done
+[info] [0000012065] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=19, blkdim=39, blkID=19
+[PEM_AIC_LOG] [INFO] [0000012066] aic_done_callback (72):: Core 12 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012066] aic_done_callback (72):: Core 18 subcore 2 early_end 0 done
+[info] [0000012068] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=24, blkdim=39, blkID=24
+[info] [0000012068] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=37, blkdim=39, blkID=37
+[PEM_AIC_LOG] [INFO] [0000012067] aic_done_callback (72):: Core 15 subcore 2 early_end 0 done
+[info] [0000012069] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=31, blkdim=39, blkID=31
+[PEM_AIC_LOG] [INFO] [0000012068] aic_done_callback (72):: Core 10 subcore 2 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012068] aic_done_callback (72):: Core 14 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012068] aic_done_callback (72):: Core 17 subcore 2 early_end 0 done
+[info] [0000012070] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=21, blkdim=39, blkID=21
+[info] [0000012070] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=28, blkdim=39, blkID=28
+[info] [0000012070] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=35, blkdim=39, blkID=35
+[PEM_AIC_LOG] [INFO] [0000012069] aic_done_callback (72):: Core 16 subcore 2 early_end 0 done
+[info] [0000012071] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=33, blkdim=39, blkID=33
+[PEM_AIC_LOG] [INFO] [0000012072] aic_done_callback (72):: Core 13 subcore 2 early_end 0 done
+[info] [0000012074] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=27, blkdim=39, blkID=27
+[PEM_AIC_LOG] [INFO] [0000012074] aic_done_callback (72):: Core 14 subcore 2 early_end 0 done
+[info] [0000012076] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=29, blkdim=39, blkID=29
+[PEM_AIC_LOG] [INFO] [0000012078] aic_done_callback (72):: Core 16 subcore 1 early_end 0 done
+[PEM_AIC_LOG] [INFO] [0000012078] aic_done_callback (72):: Core 17 subcore 1 early_end 0 done
+[info] [0000012080] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=32, blkdim=39, blkID=32
+[info] [0000012080] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=34, blkdim=39, blkID=34
+[PEM_AIC_LOG] [INFO] [0000012081] aic_done_callback (72):: Core 18 subcore 1 early_end 0 done
+[info] [0000012083] [block_end]             : AIV, task_id=0, contextID=0, threadID=0, coreID=36, blkdim=39, blkID=36
+[info] [0000012084] [context_end]         : AIV, stream_id=3, rtsq_id=3 task_id=0, contextID=0, threadID=0x0, thread_dim=0x1
+[INFO]  Kernel ZerosLike_5c5e58e043224cccf51a06108010ae13_high_performance_210000000 skipped: not selected via --kernel-name.
+[info] [0000012133] [context_start]       : AIV, stream_id=3, rtsq_id=3 task_id=1, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [0000012136] [block_start]           : AIV, task_id=1, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[PEM_AIC_LOG] [INFO] [0000012335] kickstart (316):: Core 0 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000013104] aic_done_callback (72):: Core 0 subcore 1 early_end 0 done
+[info] [0000013106] [block_end]             : AIV, task_id=1, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[info] [0000013107] [context_end]         : AIV, stream_id=3, rtsq_id=3 task_id=1, contextID=0, threadID=0x0, thread_dim=0x1
+[INFO]  Kernel ZerosLike_5c5e58e043224cccf51a06108010ae13_high_performance_210000000 skipped: not selected via --kernel-name.
+[info] [0000013133] [context_start]       : AIV, stream_id=3, rtsq_id=3 task_id=2, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [0000013136] [block_start]           : AIV, task_id=2, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[PEM_AIC_LOG] [INFO] [0000013335] kickstart (316):: Core 0 subcore 1 start pc 0x10d0d074 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000014098] aic_done_callback (72):: Core 0 subcore 1 early_end 0 done
+[info] [0000014100] [block_end]             : AIV, task_id=2, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[info] [0000014101] [context_end]         : AIV, stream_id=3, rtsq_id=3 task_id=2, contextID=0, threadID=0x0, thread_dim=0x1
+[INFO]  Kernel _ZN10ascend_ops18KdaFinalizeStage0113Stage01KernelILj12ELb0EEEvPhS2_S2_S2_S2_S2_S2_S2_S2_S2_S2_S2_fS2_S2_S2_S2_S2_S2_S2_N3KDA6Arch2217Stage01TilingDataENS4_16FinalizeTailArgsE skipped: not selected via --kernel-name.
+[info] [MCU_LOG] [INFO] [0000015685] ffts_isr (1636):: mcu_wrapper enqueued ffts_event, event=0
+[info] [0000015717] [context_start]       : AICMIX, stream_id=3, rtsq_id=3 task_id=3, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [0000015720] [block_start]           : AIC, task_id=3, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[info] [0000015721] [subblock_start]        : AIV, task_id=3, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0, blockRatio=2, subblkID=0
+[info] [0000015722] [subblock_start]        : AIV, task_id=3, contextID=0, threadID=0, coreID=1, blkdim=1, blkID=0, blockRatio=2, subblkID=1
+[PEM_AIC_LOG] [INFO] [0000015919] kickstart (316):: Core 0 subcore 0 start pc 0x12b4d744 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000015920] kickstart (316):: Core 0 subcore 1 start pc 0x12bc4728 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000015921] kickstart (316):: Core 0 subcore 2 start pc 0x12bc4728 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000018182] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=8
+
+[PEM_AIC_LOG] [INFO] [0000018183] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=8
+
+[PEM_AIC_LOG] [INFO] [0000028438] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=0
+
+[PEM_AIC_LOG] [INFO] [0000029061] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=9
+
+[PEM_AIC_LOG] [INFO] [0000029062] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=9
+
+[PEM_AIC_LOG] [INFO] [0000029066] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=8
+
+[PEM_AIC_LOG] [INFO] [0000029067] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=8
+
+[PEM_AIC_LOG] [INFO] [0000034145] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=4
+
+[PEM_AIC_LOG] [INFO] [0000034146] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=4
+
+[PEM_AIC_LOG] [INFO] [0000038729] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=0
+
+[PEM_AIC_LOG] [INFO] [0000039352] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=9
+
+[PEM_AIC_LOG] [INFO] [0000039353] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=9
+
+[PEM_AIC_LOG] [INFO] [0000039357] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=8
+
+[PEM_AIC_LOG] [INFO] [0000039357] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=8
+
+[PEM_AIC_LOG] [INFO] [0000045431] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=10
+
+[PEM_AIC_LOG] [INFO] [0000049654] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=5
+
+[PEM_AIC_LOG] [INFO] [0000049655] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=5
+
+[PEM_AIC_LOG] [INFO] [0000050903] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=6
+
+[PEM_AIC_LOG] [INFO] [0000050904] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=6
+
+[PEM_AIC_LOG] [INFO] [0000061952] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000064411] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000064412] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000064990] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000064991] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000066881] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000066882] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000067343] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000071979] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000071980] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000088829] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000089897] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000089898] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000091217] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000091218] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000092574] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000092575] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000093452] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000098069] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000098070] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000108399] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=12
+
+[PEM_AIC_LOG] [INFO] [0000118093] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=0
+
+[PEM_AIC_LOG] [INFO] [0000118716] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=9
+
+[PEM_AIC_LOG] [INFO] [0000118717] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=9
+
+[PEM_AIC_LOG] [INFO] [0000121950] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=11
+
+[PEM_AIC_LOG] [INFO] [0000121955] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=4
+
+[PEM_AIC_LOG] [INFO] [0000121956] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=4
+
+[PEM_AIC_LOG] [INFO] [0000125245] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=7
+
+[PEM_AIC_LOG] [INFO] [0000125246] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=7
+
+[PEM_AIC_LOG] [INFO] [0000142889] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000145348] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000145349] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000146485] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000146486] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000147796] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000149145] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000149146] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000152332] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000152333] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000169141] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000170210] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000170210] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000171582] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000171582] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000173590] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000173591] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000173831] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000178448] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000178449] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000188723] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=13
+
+[PEM_AIC_LOG] [INFO] [0000195510] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=10
+
+[PEM_AIC_LOG] [INFO] [0000199327] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=6
+
+[PEM_AIC_LOG] [INFO] [0000199328] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=6
+
+[PEM_AIC_LOG] [INFO] [0000216476] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000218934] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000218935] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000219602] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000219603] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000221463] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000222682] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000222683] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000226084] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000226085] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000242567] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000243635] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000243636] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000245044] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000245045] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000246481] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000246482] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000247045] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000251903] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000251904] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000262022] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=12
+
+[PEM_AIC_LOG] [INFO] [0000262886] aic_done_callback (72):: Core 0 subcore 0 early_end 0 done
+[info] [0000262888] [block_end]             : AIC, task_id=3, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[PEM_AIC_LOG] [INFO] [0000263368] aic_done_callback (72):: Core 0 subcore 1 early_end 0 done
+[info] [0000263370] [subblock_end]          : AIV, task_id=3, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0, blockRatio=2, subblkID=0
+[PEM_AIC_LOG] [INFO] [0000263736] aic_done_callback (72):: Core 0 subcore 2 early_end 0 done
+[info] [0000263738] [subblock_end]          : AIV, task_id=3, contextID=0, threadID=0, coreID=1, blkdim=1, blkID=0, blockRatio=2, subblkID=1
+[info] [0000263740] [context_end]         : AICMIX, stream_id=3, rtsq_id=3 task_id=3, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [MCU_LOG] [INFO] [0000263740] ffts_isr (1636):: mcu_wrapper enqueued ffts_event, event=1
+[INFO] <ProfInit> Start profiling on kernel: _ZN10ascend_ops18KdaFinalizeStage0113Stage12KernelEN3KDA6Arch2216FinalizeTailArgsENS2_17Stage01TilingDataE
+[INFO]  Extract 547 relations from kernel
+[WARN]  Kernel missed debug_line information. If you need code call stack, please recompile kernel with -g option
+[info] [0000265805] [context_start]       : AIV, stream_id=3, rtsq_id=3 task_id=4, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [0000265808] [block_start]           : AIV, task_id=4, contextID=0, threadID=0, coreID=0, blkdim=2, blkID=0
+[info] [0000265809] [block_start]           : AIV, task_id=4, contextID=0, threadID=0, coreID=1, blkdim=2, blkID=1
+[PEM_AIC_LOG] [INFO] [0000266007] kickstart (316):: Core 0 subcore 1 start pc 0x12b33000 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000266008] kickstart (316):: Core 0 subcore 2 start pc 0x12b33000 param_base 0x1022be00
+[PEM_AIC_LOG] [INFO] [0000268367] aic_done_callback (72):: Core 0 subcore 1 early_end 0 done
+[info] [0000268369] [block_end]             : AIV, task_id=4, contextID=0, threadID=0, coreID=0, blkdim=2, blkID=0
+[PEM_AIC_LOG] [INFO] [0000268659] aic_done_callback (72):: Core 0 subcore 2 early_end 0 done
+[info] [0000268661] [block_end]             : AIV, task_id=4, contextID=0, threadID=0, coreID=1, blkdim=2, blkID=1
+[info] [0000268662] [context_end]         : AIV, stream_id=3, rtsq_id=3 task_id=4, contextID=0, threadID=0x0, thread_dim=0x1
+DONE stage=12 H=2 T=192 varlen=False warmup=0 samples=1
+[info] [MCU_LOG] [INFO] [0000269136] stop (645):: mcu_wrapper is stopping...
+[info] [MCU_LOG] [INFO] [0000269137] main_loop (624):: mcu_wrapper loop is stopping...
+[info] [MCU_LOG] [INFO] [0000269151] stop (654):: mcu_wrapper loop joined successfully.
+[INFO] Model Stop Time: 2026-10-13 01:14:46
+Model RUN TIME: 100920 ms
+[INFO] Total tick: 269150
+[WARN]  Code call stack is empty
+[WARN]  Lack of code info of files
+[INFO]  Core operator results run in simulator as follow:
+core_name           duration_time(us)   running_time(us)    
+core0.veccore0      0.98                0.8                 
+[INFO] Model stopped successfully.
+[INFO]  Profiling running finished. All task success.
+[INFO]  Start parse dump file
+[INFO]  Profiling results saved in /data/wys/kda-finalize-a2-stage9-20261012/stage12/simulator-reduce-small-r4/OPPROF_20261013011256_IDUUSUQUEQHZZQED
+[INFO]  Profiling data parse finished.
+[INFO]  Op profiling finish. Welcome to next use.

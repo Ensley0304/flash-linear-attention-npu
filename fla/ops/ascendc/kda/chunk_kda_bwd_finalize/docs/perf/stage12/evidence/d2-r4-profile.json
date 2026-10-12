@@ -1,0 +1,489 @@
+[
+  {
+    "name": "d2-r4-profile-fixed",
+    "rc": 0,
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r4-profile-fixed/PROF_000001_20261013012722971_01363987MOGQJRHD/mindstudio_profiler_output/op_summary_20261013012730.csv",
+    "samples": 10,
+    "kernels": {
+      "Stage01Kernel": {
+        "Task Duration(us)": {
+          "min": 12207.024,
+          "median": 12224.9745,
+          "max": 12253.165
+        },
+        "aicore_time(us)": {
+          "min": 12145.967,
+          "median": 12164.506000000001,
+          "max": 12229.996
+        },
+        "aic_mac_time(us)": {
+          "min": 1383.235,
+          "median": 1383.371,
+          "max": 1383.62
+        },
+        "aic_mac_ratio": {
+          "min": 0.113,
+          "median": 0.114,
+          "max": 0.114
+        },
+        "aic_scalar_time(us)": {
+          "min": 3873.52,
+          "median": 3880.317,
+          "max": 3907.349
+        },
+        "aic_scalar_ratio": {
+          "min": 0.319,
+          "median": 0.319,
+          "max": 0.319
+        },
+        "aic_mte1_time(us)": {
+          "min": 2011.827,
+          "median": 2012.1835,
+          "max": 2012.74
+        },
+        "aic_mte1_ratio": {
+          "min": 0.165,
+          "median": 0.165,
+          "max": 0.166
+        },
+        "aic_mte2_time(us)": {
+          "min": 2591.267,
+          "median": 2612.9025,
+          "max": 2701.261
+        },
+        "aic_mte2_ratio": {
+          "min": 0.213,
+          "median": 0.215,
+          "max": 0.221
+        },
+        "aic_fixpipe_time(us)": {
+          "min": 2059.205,
+          "median": 2060.943,
+          "max": 2071.067
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.169,
+          "median": 0.169,
+          "max": 0.17
+        },
+        "aiv_time(us)": {
+          "min": 12145.29,
+          "median": 12163.813,
+          "max": 12229.305
+        },
+        "aiv_vec_time(us)": {
+          "min": 7655.759,
+          "median": 7655.8015,
+          "max": 7655.96
+        },
+        "aiv_vec_ratio": {
+          "min": 0.626,
+          "median": 0.629,
+          "max": 0.63
+        },
+        "aiv_scalar_time(us)": {
+          "min": 4966.086,
+          "median": 4971.460499999999,
+          "max": 4987.34
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.407,
+          "median": 0.409,
+          "max": 0.409
+        },
+        "aiv_mte2_time(us)": {
+          "min": 3522.819,
+          "median": 3548.691,
+          "max": 3650.26
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.29,
+          "median": 0.292,
+          "max": 0.298
+        },
+        "aiv_mte3_time(us)": {
+          "min": 2992.378,
+          "median": 2993.7445,
+          "max": 3003.762
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.246,
+          "median": 0.246,
+          "max": 0.247
+        }
+      },
+      "Stage12Kernel": {
+        "Task Duration(us)": {
+          "min": 17.38,
+          "median": 17.81,
+          "max": 18.521
+        },
+        "aicore_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mac_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mac_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_scalar_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_scalar_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte1_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte1_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte2_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte2_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_fixpipe_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aiv_time(us)": {
+          "min": 13.109,
+          "median": 13.378499999999999,
+          "max": 13.833
+        },
+        "aiv_vec_time(us)": {
+          "min": 4.695,
+          "median": 4.695,
+          "max": 4.695
+        },
+        "aiv_vec_ratio": {
+          "min": 0.339,
+          "median": 0.351,
+          "max": 0.358
+        },
+        "aiv_scalar_time(us)": {
+          "min": 3.185,
+          "median": 3.199,
+          "max": 3.213
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.231,
+          "median": 0.2395,
+          "max": 0.244
+        },
+        "aiv_mte2_time(us)": {
+          "min": 7.436,
+          "median": 7.5905000000000005,
+          "max": 7.865
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.565,
+          "median": 0.568,
+          "max": 0.572
+        },
+        "aiv_mte3_time(us)": {
+          "min": 0.351,
+          "median": 0.38,
+          "max": 0.432
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.027,
+          "median": 0.028,
+          "max": 0.031
+        }
+      }
+    },
+    "total_us": {
+      "min": 12225.284,
+      "median": 12243.415,
+      "max": 12270.545
+    },
+    "command": [
+      "msprof",
+      "--output=/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r4-profile-fixed",
+      "--ai-core=on",
+      "--aic-metrics=PipeUtilization",
+      "--task-time=on",
+      "--ascendcl=off",
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py",
+      "--library",
+      "stage12/r4-perf.so",
+      "--device",
+      "2",
+      "--stage",
+      "12"
+    ]
+  },
+  {
+    "name": "d2-r4-profile-varlen",
+    "rc": 0,
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r4-profile-varlen/PROF_000001_20261013012741101_01366391MJFJPDRJ/mindstudio_profiler_output/op_summary_20261013012749.csv",
+    "samples": 10,
+    "kernels": {
+      "Stage01Kernel": {
+        "Task Duration(us)": {
+          "min": 12402.528,
+          "median": 12416.738,
+          "max": 12438.048
+        },
+        "aicore_time(us)": {
+          "min": 12268.034,
+          "median": 12272.402,
+          "max": 12284.255
+        },
+        "aic_mac_time(us)": {
+          "min": 1402.438,
+          "median": 1402.4885,
+          "max": 1402.616
+        },
+        "aic_mac_ratio": {
+          "min": 0.114,
+          "median": 0.114,
+          "max": 0.114
+        },
+        "aic_scalar_time(us)": {
+          "min": 3929.62,
+          "median": 3933.4225,
+          "max": 3935.61
+        },
+        "aic_scalar_ratio": {
+          "min": 0.32,
+          "median": 0.32,
+          "max": 0.321
+        },
+        "aic_mte1_time(us)": {
+          "min": 2036.621,
+          "median": 2037.051,
+          "max": 2037.483
+        },
+        "aic_mte1_ratio": {
+          "min": 0.166,
+          "median": 0.166,
+          "max": 0.166
+        },
+        "aic_mte2_time(us)": {
+          "min": 2702.935,
+          "median": 2707.64,
+          "max": 2711.9
+        },
+        "aic_mte2_ratio": {
+          "min": 0.22,
+          "median": 0.221,
+          "max": 0.221
+        },
+        "aic_fixpipe_time(us)": {
+          "min": 2115.029,
+          "median": 2116.9565000000002,
+          "max": 2119.497
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.172,
+          "median": 0.172,
+          "max": 0.173
+        },
+        "aiv_time(us)": {
+          "min": 12267.334,
+          "median": 12271.716,
+          "max": 12283.557
+        },
+        "aiv_vec_time(us)": {
+          "min": 7718.823,
+          "median": 7718.957,
+          "max": 7719.041
+        },
+        "aiv_vec_ratio": {
+          "min": 0.628,
+          "median": 0.629,
+          "max": 0.629
+        },
+        "aiv_scalar_time(us)": {
+          "min": 5042.118,
+          "median": 5046.361999999999,
+          "max": 5048.195
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.411,
+          "median": 0.411,
+          "max": 0.412
+        },
+        "aiv_mte2_time(us)": {
+          "min": 3641.444,
+          "median": 3646.4635,
+          "max": 3653.252
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.297,
+          "median": 0.297,
+          "max": 0.298
+        },
+        "aiv_mte3_time(us)": {
+          "min": 3042.206,
+          "median": 3044.3630000000003,
+          "max": 3048.926
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.248,
+          "median": 0.248,
+          "max": 0.248
+        }
+      },
+      "Stage12Kernel": {
+        "Task Duration(us)": {
+          "min": 16.62,
+          "median": 16.8505,
+          "max": 17.28
+        },
+        "aicore_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mac_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mac_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_scalar_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_scalar_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte1_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte1_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte2_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_mte2_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_fixpipe_time(us)": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aic_fixpipe_ratio": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "aiv_time(us)": {
+          "min": 13.032,
+          "median": 13.189,
+          "max": 13.336
+        },
+        "aiv_vec_time(us)": {
+          "min": 4.805,
+          "median": 4.805,
+          "max": 4.805
+        },
+        "aiv_vec_ratio": {
+          "min": 0.36,
+          "median": 0.3645,
+          "max": 0.369
+        },
+        "aiv_scalar_time(us)": {
+          "min": 3.285,
+          "median": 3.311,
+          "max": 3.322
+        },
+        "aiv_scalar_ratio": {
+          "min": 0.249,
+          "median": 0.251,
+          "max": 0.255
+        },
+        "aiv_mte2_time(us)": {
+          "min": 7.604,
+          "median": 7.7385,
+          "max": 7.876
+        },
+        "aiv_mte2_ratio": {
+          "min": 0.581,
+          "median": 0.5865,
+          "max": 0.595
+        },
+        "aiv_mte3_time(us)": {
+          "min": 0.464,
+          "median": 0.5125,
+          "max": 0.602
+        },
+        "aiv_mte3_ratio": {
+          "min": 0.036,
+          "median": 0.039,
+          "max": 0.046
+        }
+      }
+    },
+    "total_us": {
+      "min": 12419.368,
+      "median": 12433.819,
+      "max": 12454.868
+    },
+    "command": [
+      "msprof",
+      "--output=/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r4-profile-varlen",
+      "--ai-core=on",
+      "--aic-metrics=PipeUtilization",
+      "--task-time=on",
+      "--ascendcl=off",
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py",
+      "--library",
+      "stage12/r4-perf.so",
+      "--device",
+      "2",
+      "--stage",
+      "12",
+      "--varlen"
+    ]
+  }
+]

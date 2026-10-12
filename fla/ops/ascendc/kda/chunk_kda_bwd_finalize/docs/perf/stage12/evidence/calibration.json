@@ -1,0 +1,18 @@
+{
+  "gate_scan_autograd": "PASS",
+  "beta_autograd": "PASS",
+  "stable_fp32": "PASS",
+  "rejected_elements": {
+    "zero": 8192,
+    "sign": 8192,
+    "forward_scan": 8191,
+    "missing_scan": 8064,
+    "saturated_sigmoid": 1,
+    "missing_lower_bound": 8192
+  },
+  "saturated_positive30": {
+    "reference": -3.3434637630923547e-12,
+    "stable": -3.343463743712971e-12,
+    "naive": -0.0
+  }
+}

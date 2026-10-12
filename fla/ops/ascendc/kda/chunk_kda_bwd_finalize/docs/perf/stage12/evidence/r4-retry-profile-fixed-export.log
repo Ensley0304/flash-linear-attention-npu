@@ -1,0 +1,15 @@
+[INFO] Start profiling....
+[INFO] Start export data in PROF_000001_20261013010533303_01233022OPLEAPRK.
+Tue 13 Oct 2026 01:08:17 [WARNING] [MSVP] [1250872] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:08:17 [INFO] [MSVP] [1250965] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:08:17 [INFO] [MSVP] [1250965] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:08:17 [INFO] [MSVP] [1250965] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0.
+Tue 13 Oct 2026 01:08:18 [WARNING] [MSVP] [1251202] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0.
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host"
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0.
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0"
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_common.py: Start exporting summary output_file.
+Tue 13 Oct 2026 01:08:18 [INFO] [MSVP] [1251462] msprof_common.py: End exporting summary output_file.The file is stored in the /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/mindstudio_profiler_output path.

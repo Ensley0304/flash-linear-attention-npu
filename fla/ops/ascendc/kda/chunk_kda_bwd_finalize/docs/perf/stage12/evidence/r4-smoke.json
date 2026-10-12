@@ -1,0 +1,29 @@
+[
+  {
+    "name": "r4-smoke-s11-smoke-cumulative-n0-m0-p0",
+    "rc": 0,
+    "seconds": 65.43275427818298,
+    "command": [
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py",
+      "--library",
+      "stage12/r4-capture.so",
+      "--device",
+      "3",
+      "--stage",
+      "11",
+      "--suite",
+      "smoke",
+      "--gate-mode",
+      "cumulative",
+      "--beta-mode",
+      "0",
+      "--cores",
+      "1",
+      "--repeat",
+      "2",
+      "--tail-golden-dir",
+      "stage12/r4-golden"
+    ]
+  }
+]

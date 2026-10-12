@@ -1,0 +1,18 @@
+[INFO] Start profiling....
+[INFO] Start export data in PROF_000001_20261013010101325_01203302GFDRRMQM.
+Tue 13 Oct 2026 01:04:02 [WARNING] [MSVP] [1223378] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:04:02 [INFO] [MSVP] [1223420] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:04:02 [INFO] [MSVP] [1223420] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:04:02 [INFO] [MSVP] [1223420] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/device_0.
+Tue 13 Oct 2026 01:04:03 [WARNING] [MSVP] [1223567] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/device_0.
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/host"
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/device_0.
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/device_0"
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_common.py: Start exporting summary output_file.
+Tue 13 Oct 2026 01:04:03 [INFO] [MSVP] [1223985] msprof_common.py: End exporting summary output_file.The file is stored in the /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20261013010101325_01203302GFDRRMQM done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-profile-varlen/PROF_000001_20261013010101325_01203302GFDRRMQM

@@ -1,0 +1,134 @@
+[
+  {
+    "stage": 11,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 0,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.7088639736175537,
+    "status": "PASS"
+  },
+  {
+    "stage": 11,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 1,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.2485675811767578,
+    "status": "PASS"
+  },
+  {
+    "stage": 11,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 2,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.2844102382659912,
+    "status": "PASS"
+  },
+  {
+    "stage": 11,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 0,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.3031585216522217,
+    "status": "PASS"
+  },
+  {
+    "stage": 11,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 1,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.5183722972869873,
+    "status": "PASS"
+  },
+  {
+    "stage": 11,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 2,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.4038352966308594,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 0,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.364119529724121,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 1,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.3571438789367676,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 2,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.3143682479858398,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 0,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.2718098163604736,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 1,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.2694664001464844,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "smoke",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 2,
+    "lower": -5.0,
+    "checks": 4,
+    "seconds": 1.2920713424682617,
+    "status": "PASS"
+  }
+]

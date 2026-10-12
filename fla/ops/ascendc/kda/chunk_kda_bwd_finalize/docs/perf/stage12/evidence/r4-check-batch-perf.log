@@ -1,0 +1,145 @@
+BEGIN 12 tails cumulative False 0 -5.0
+[W1013 01:13:21.285902150 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 5.576085567474365, 'status': 'PASS'}
+BEGIN 12 tails cumulative False 1 -5.0
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': False, 'beta': 1, 'lower': -5.0, 'checks': 22, 'seconds': 5.248128175735474, 'status': 'PASS'}
+BEGIN 12 tails cumulative False 2 -5.0
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': False, 'beta': 2, 'lower': -5.0, 'checks': 22, 'seconds': 5.166332960128784, 'status': 'PASS'}
+BEGIN 12 tails cumulative True 0 -5.0
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': True, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 5.020395994186401, 'status': 'PASS'}
+BEGIN 12 tails cumulative True 1 -5.0
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': True, 'beta': 1, 'lower': -5.0, 'checks': 22, 'seconds': 5.037729978561401, 'status': 'PASS'}
+BEGIN 12 tails cumulative True 2 -5.0
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS workspace stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': True, 'beta': 2, 'lower': -5.0, 'checks': 22, 'seconds': 4.984909534454346, 'status': 'PASS'}

@@ -1,0 +1,33 @@
+[INFO] Start profiling....
+[W1013 01:26:44.254844070 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+DONE stage=12 H=96 T=8192 varlen=False warmup=20 samples=10
+[INFO] Start export data in PROF_000001_20261013012644457_01358674JGKNPHLI.
+Tue 13 Oct 2026 01:26:51 [WARNING] [MSVP] [1361331] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:26:51 [INFO] [MSVP] [1361336] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/host" ...
+Tue 13 Oct 2026 01:26:51 [INFO] [MSVP] [1361336] msprof_common.py: It may take few minutes, please be patient ...
+Tue 13 Oct 2026 01:26:51 [INFO] [MSVP] [1361336] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/host" finished.
+Tue 13 Oct 2026 01:26:51 [INFO] [MSVP] [1361336] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2" ...
+Tue 13 Oct 2026 01:26:51 [INFO] [MSVP] [1361336] msprof_common.py: It may take few minutes, please be patient ...
+Tue 13 Oct 2026 01:26:52 [INFO] [MSVP] [1361336] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2" finished.
+Tue 13 Oct 2026 01:26:52 [INFO] [MSVP] [1361336] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2.
+Tue 13 Oct 2026 01:26:53 [WARNING] [MSVP] [1361717] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2.
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/host"
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2.
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/device_2"
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_common.py: Start exporting summary output_file.
+Tue 13 Oct 2026 01:26:53 [INFO] [MSVP] [1361724] msprof_common.py: End exporting summary output_file.The file is stored in the /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20261013012644457_01358674JGKNPHLI done.
+[INFO] Start query data in PROF_000001_20261013012644457_01358674JGKNPHLI.
+Tue 13 Oct 2026 01:26:54 [WARNING] [MSVP] [1361763] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID	
+
+NA      	         	host    	2026-10-13 01:26:44.756463	N/A     	N/A             	N/A               	-1     	
+
+NA      	2        	device_2	2026-10-13 01:26:44.761581	N/A     	N/A             	N/A               	-1     	
+
+[INFO] Query all data in PROF_000001_20261013012644457_01358674JGKNPHLI done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-r3-profile-fixed/PROF_000001_20261013012644457_01358674JGKNPHLI

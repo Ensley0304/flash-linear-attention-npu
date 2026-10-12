@@ -1,0 +1,30 @@
+[W1013 00:44:44.289037000 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+Traceback (most recent call last):
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py", line 621, in <module>
+    main()
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py", line 617, in main
+    check_case(args, *case)
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py", line 189, in check_case
+    check_stage11(inputs, q, beta, daqk, chunks, lengths is not None, capture, tail_cpu, tail_args, args)
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage11.py", line 100, in check_stage11
+    assert ((actual['ddt_bias_out'].double()-wanted_bias).abs() <= 3e-5*partial[:,:,:128].abs().sum(1)+2e-38).all(), 'Stage 12 bias'
+AssertionError: Stage 12 bias
+[ERROR] 2026-10-13-00:44:54 (PID:1096252, Device:3, RankID:-1) ERR99999 UNKNOWN applicaiton exception

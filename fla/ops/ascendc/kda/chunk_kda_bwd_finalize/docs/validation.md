@@ -1,5 +1,7 @@
 # A2/A3 Stage 0/1 开发验证
 
+> 以下按开发阶段保留历史记录；最新 Stage 11/12 结果见本文末尾。
+
 - 分支：`kda-finalize-a2`；首版基线：`aa9289eb`；双缓冲优化基线：`ecb0768b`。
 - 工程参考：`CHUNK_INDEPENDENT V1`；用户指定 PR #404，读取其 head `d246019c6f76e5d400ed7117e49b49c912eee1a0`。采用 Stage 顺序展开、集中地址常量、显式事件；不沿用 arch35 指令和直传路径。
 - A2 API 参考：当前仓库 `chunk_kda_fwd_prepare/op_kernel/arch22/` 的 ND→NZ、LoadData、Fixpipe 与事件写法。
@@ -224,3 +226,14 @@ r2 的 132 次采数版 tails、44 次性能版 tails、18 次前序 smoke 回�
 同期 Stage 0～9 → Stage 0～10：定长 7530.495 → 8498.790 μs，变长 7643.640 → 8604.525 μs；最大流水为 Vector 57.45% / 57.70%，未达到 80%。新增计算没有完全隐藏在前序流水中，前缀耗时增量约 0.96 ms，不能视为独立 Stage 10 耗时。
 
 实现、精度边界、原始 CSV、模型哈希和复现脚本见 [Stage 10 记录](perf/stage10/README.md)。仍缺 Stage 11～12，不代表完整 Finalize、ATK 或 A3 验收。
+
+
+## Stage 11/12：最终梯度与参数归约
+
+Stage 11 接入 dk/dBeta、dg 反向扫描、gate 链式求导和 chunk 局部和，输入/输出分别双缓冲；完整 8 行使用三步并行扫描。Stage 12 使用独立 AIV kernel 和 16 chunk 输入双缓冲，同 stream launch 保证全部 partial 就绪。保留 FP32 beta 有效值、稳定 gate 导数及可选 Q/K norm。
+
+448 次小规模检查及四组完整 8K 定长/变长 × norm 采数/性能版全部通过。新增阶段对照 FP64；前序采数、dq/dv 与同输入 Stage 10 截断执行逐位一致，性能版七个最终输出及 partial 与采数版逐位一致。Host、格式、源码身份、主 kernel 三 lane 与独立归约 AIV 模拟器检查通过。
+
+设备 2 同卡 msprof：完整 Stage 0～12 定长 12.243 ms、变长 12.434 ms，并行扫描较首版分别加速 1.94% / 2.30%；最大流水均为 Vector 62.9%，仍未达到 80%。完整结果计入两个 kernel，Stage 12 归约约 17～18 μs。
+
+实现、精度范围和原始证据见 [Stage 11/12 记录](perf/stage12/README.md)。当前为完整 Stage 的私有开发入口，公开 A2 接入、真实训练 dump 双标杆、ATK/A3 验收尚未完成。

@@ -1,0 +1,68 @@
+[
+  {
+    "stage": 12,
+    "suite": "tails",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 0,
+    "lower": -5.0,
+    "checks": 22,
+    "seconds": 5.576085567474365,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "tails",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 1,
+    "lower": -5.0,
+    "checks": 22,
+    "seconds": 5.248128175735474,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "tails",
+    "gate": "cumulative",
+    "norm": false,
+    "beta": 2,
+    "lower": -5.0,
+    "checks": 22,
+    "seconds": 5.166332960128784,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "tails",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 0,
+    "lower": -5.0,
+    "checks": 22,
+    "seconds": 5.020395994186401,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "tails",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 1,
+    "lower": -5.0,
+    "checks": 22,
+    "seconds": 5.037729978561401,
+    "status": "PASS"
+  },
+  {
+    "stage": 12,
+    "suite": "tails",
+    "gate": "cumulative",
+    "norm": true,
+    "beta": 2,
+    "lower": -5.0,
+    "checks": 22,
+    "seconds": 4.984909534454346,
+    "status": "PASS"
+  }
+]

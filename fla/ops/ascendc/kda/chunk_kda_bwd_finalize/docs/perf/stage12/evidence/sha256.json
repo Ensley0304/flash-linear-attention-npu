@@ -1,0 +1,21 @@
+{
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "7f39a5c2090d684f788c5c479b3b0cec0cfad3cd77aef5d15e59ba112d9d3775",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "9433bd5f279b9155d5f98824b0a59105aa956b0dfd2e87163170ae39f0863d22",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "d4324c9ed51a405dd8b03970a4df6ce0500e95d0c2940b84598ff8f6456f5e8e",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_gate.h": "c648b63303da2b9c0222ad199d78326aa9d19e421eeb8d0e8b4aef3ef625cfc3",
+  "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "2ad0c3a713571a6df5627b5204cdeb2b24cd1176433e21d3aef240760036a1ac",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage8.py": "ebc3904b68cabf38de8f056620a014b4596cc4e49ad775fed794772acfd28cff",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage7.py": "15228c7b5c8f57547be6c7949c91ee7f52dcdacc18db2784a7d17bb6e8be871e",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage11.py": "485195bd74f8355d665667f62dfd690bd65c11d60aec42096199f932cd0b125b",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "1113cc3361c4e99e9ac7a6838ed63fc6c340186607452df5190e73c3f7133ec2",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage10.py": "51d26d3aa6f907e4866c491f00f04124fd991fa415aed3b7fbfe61a07db3947e",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "d951b55f82524e6cfadbcfad7e28f61981ac03b75ef82234fc7f3c3842dfc97f",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage9.py": "33ed247cdd0addef97dd18f515b88f00442429f886b16bad53eaf91f4378a3ee",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "98e5985e5a2c1e11fd8bfeb85e119b29fe0ad52686f96b22a26e9bcc21ddc06c",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+  "stage12/r3-capture.so": "e3c3d2a4ad6762b45cdac8bda2f968023e18ba3c9a058ece53da3b840972e621",
+  "stage12/r3-perf.so": "ce55d967038f443da4c17ba3211816550f168b97f44144509d3fa1f0756a26cf",
+  "stage12/r4-capture.so": "90eb426cf07206604b6f59f7dd716aee8f64eb916690bcb214a87d4870f2eb83",
+  "stage12/r4-perf.so": "35c3120c89ad4cfe71ec516cf4668bb76b3176257f1543813cda2b8c25462c8d",
+  "stage10/r1-perf.so": "5caedf45b8225b94df6e87cc785ef7d257966f9bc737a596f0e1ebdd7c82cb83"
+}

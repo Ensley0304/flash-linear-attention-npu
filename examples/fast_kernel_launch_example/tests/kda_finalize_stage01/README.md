@@ -1,6 +1,6 @@
-# KDA Finalize A2/A3：Stage 0～10 开发验证
+# KDA Finalize A2/A3：Stage 0～12 开发验证
 
-仅验证 Stage 0～10，不代表完整 Finalize 已支持 A2/A3。公开 A5 入口不变，开发入口保留原名。
+A2 私有入口已覆盖 Stage 0～12；尚未接入公开接口，也未完成 A3/ATK 验收。公开 A5 入口不变，开发入口保留原名。
 
 ## 构建和运行
 
@@ -45,7 +45,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -I. \
 - 逐项对照 FP64/FP32 CPU 标杆，检查 NaN/Inf、capture 哨兵及真实 workspace 最后一代数据。
 - trace 记录实际 work/core/owner/head/chunk、槽位使用次数、block 数、子核数、GM 偏移及握手进度；奇数 head 的空 owner 仍参与同步。
 
-开发入口返回 `(capture, trace, workspace)`。当前 capture 每个 `(head,chunk)` 占 816 KiB，Stage 2 结果位于 160/192 KiB；真实 workspace 的对应偏移为 80/112 KiB。额外采数不用于性能评估。Stage 2 实际消费驻留 L1 的 dW，验证 L0C→L1 链路。
+开发入口返回 `(capture, trace, workspace)`。当前 capture 每个 `(head,chunk)` 占 928 KiB，Stage 2 结果位于 160/192 KiB；真实 workspace 的对应偏移为 80/112 KiB。额外采数不用于性能评估。Stage 2 实际消费驻留 L1 的 dW，验证 L0C→L1 链路。
 
 Stage 0/1 的容差不变。Stage 2 同时检查两层：以设备捕获的 BF16 dW/kE 做 FP64 矩阵乘，使用 `rtol=3e-4, atol=2e-6`；再与独立 CPU 全路径结果比较，传播既定 BF16 门槛 `E(x)=2e-5+8e-3|x|`：
 
@@ -142,6 +142,41 @@ Cube 每个 head 写完后独立发布 ready，两 AIV 按相同顺序消费两�
 
 `--stage 10` 不增加参数。计算两项转置 GEMM，每项保留 `Ah@Bh + Ah@Bl + Al@Bh`，六项在 FP32 L0C 累加后写回。两个 head 使用独立的 L0A/B/C 槽，qPos/bkPos 依次复用 Stage 8 的 L1 kNeg 区；与 Stage 9 重叠。
 
-capture 每 head/chunk 为 816 KiB，784 KiB 起保存两带 right_raw。workspace 大小不变，96 KiB 起的旧 kNeg 区保存最终 band 0 的 FP32 right_raw。两轮带间握手保证输入写完才读、结果写完才复用；Stage 11 尚未接入。
+Stage 10 的采数截止 816 KiB，784 KiB 起保存两带 right_raw。workspace 大小不变，96 KiB 起的旧 kNeg 区保存最终 band 0 的 FP32 right_raw。两轮带间握手保证输入写完才读、结果写完才复用；Stage 11 在第二轮握手后消费 right_raw。
 
-`check_stage10.py` 检查实际六项乘积、独立 FP64 居中公式、尾行零值、未计算带保护区及保留 workspace。局部门槛为 `3e-6 * Σ(abs(Ai) @ abs(Bi)) + 2e-38`；分带门槛沿用 Stage 8 的 `6e-5` 操作数传播预算。Stage 0～9 门槛不变。命令使用 `--stage 10`，覆盖 `--q-norm`、三种 gate 和 `--workspace-only`；此入口仍缺 Stage 11～12，不代表完整算子精度验收。
+`check_stage10.py` 检查实际六项乘积、独立 FP64 居中公式、尾行零值、未计算带保护区及保留 workspace。局部门槛为 `3e-6 * Σ(abs(Ai) @ abs(Bi)) + 2e-38`；分带门槛沿用 Stage 8 的 `6e-5` 操作数传播预算。Stage 0～9 门槛不变。命令使用 `--stage 10`，覆盖 `--q-norm`、三种 gate 和 `--workspace-only`；Stage 11/12 验证见下文。
+
+
+## Stage 11/12
+
+`--stage 11` 输出 dk、dG、dBeta 和 chunk 参数局部和；`--stage 12` 再启动同 stream 的 AIV 归约 kernel，输出 dALog/dDtBias。launch 边界保证所有 chunk 写完后再归约，不使用跨核原子累加。
+
+私有入口新增可选参数，Stage 11 起必须提供：
+
+| 参数 | dtype / shape |
+| --- | --- |
+| raw_g | FP32，与 k 相同 |
+| a_log、dt_bias | FP32 `[H]`、`[H,128]` |
+| k_rstd | 可选 FP32，与 q_rstd 成对，shape 为 k 去掉末维 |
+| dk_out | BF16，与 k 相同 |
+| dg_out、db_out | FP32，固定为 `[B,T,H,128]` / `[T,H,128]`，db 去掉末维 |
+| partial_out | FP32 `[H,Nc,136]`；128 个 bias 分量和 8 个 a_log 归约分量 |
+| da_log_out、ddt_bias_out | Stage 12 必填，FP32 `[H]`、`[H,128]` |
+| lower_bound、beta_mode | 默认 `-5`、`0`；beta_mode 为关闭/普通 sigmoid/allow_neg 的 0/1/2 |
+
+beta 使用前向保留的 FP32 有效值；融合 sigmoid 时不先转 BF16。dG 使用稳定的 sigmoid 导数，dk 最后才转 BF16。Stage 11 输入和输出分别双缓冲，逆序处理 8 行 tile；Stage 12 按 16 chunk 双缓冲读 partial。每 AIV UB 仍为 192 KiB，Stage 12 单独使用约 18 KiB；原 workspace 不扩容，partial 为独立张量。
+
+`check_stage11.py` 用 FP64 检查 dk/dBeta、反向扫描、gate 链式求导及局部和，再检查实际输出布局和 Stage 12 全局和。K/Q norm 用 `--q-norm` 成对开启；beta 用 `--beta-mode 0/1/2`。性能版必须与同 fixture 的采数版所有实际输出逐位比较：
+
+```bash
+python tests/kda_finalize_stage01/check_stage01.py \
+  --library capture.so --stage 12 --device 3 --cores 1 --suite tails \
+  --beta-mode 1 --q-norm --tail-golden-dir golden
+python tests/kda_finalize_stage01/check_stage01.py \
+  --library perf.so --stage 12 --device 3 --cores 1 --suite tails \
+  --beta-mode 1 --q-norm --tail-golden-dir golden --workspace-only
+```
+
+capture 新增偏移：816 KiB dk、848 KiB dBeta、856 KiB scan、888 KiB dG、920 KiB partial。Stage 0～10 偏移不变。
+
+Stage 12 性能统计须将每次 `Stage01Kernel` 与 `Stage12Kernel` 的 Task Duration 相加，再取中位数；两者的流水占比分别报告。精度、性能和复现脚本见 [本轮记录](../../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/perf/stage12/README.md)。

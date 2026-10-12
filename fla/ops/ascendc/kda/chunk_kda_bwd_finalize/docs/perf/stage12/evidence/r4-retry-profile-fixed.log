@@ -1,0 +1,57 @@
+[INFO] Start profiling....
+Traceback (most recent call last):
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py", line 85, in <module>
+    main()
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py", line 28, in main
+    torch.npu.set_device(args.device)
+  File "/data/miniconda3/envs/wys_gdn/lib/python3.10/site-packages/torch_npu/npu/utils.py", line 91, in set_device
+    torch_npu._C._npu_setDevice(device_id)
+RuntimeError: ExchangeDevice:../torch_npu/csrc/core/npu/sys_ctrl/npu_sys_ctrl.cpp:286 NPU function error: c10_npu::SetDevice(device), error code is 507033
+[ERROR] 2026-10-13-01:08:06 (PID:1233022, Device:0, RankID:-1) ERR00100 PTA call acl api failed
+[Error]: Failed to start the device. 
+        Rectify the fault based on the error information in the ascend log.
+[PID: 1233022] 2026-10-13-01:08:05.978.795 Inner_Error_Device_Subprocess_Startup_Timeout(E39007): Starting a subprocess on the device timed out.
+        Possible Cause: 1.Failed to start the subprocess. 2. The HDC link is faulty.
+        Solution: Obtain the device log and contact technical support at https://www.hiascend.com/support.
+TraceBack (most recent call last):
+        tsd client wait response fail, hostpid:1233022, receive device response data failed, check hdc service.[FUNC:WaitRsp][FILE:process_mode_manager.cpp][LINE:375]
+        Starting a subprocess on the device timed out.
+        TsdOpen failed. devId=3, tdt error=31.[FUNC:PrintfTsdError][FILE:runtime.cc][LINE:1835]
+        Check param failed, dev can not be NULL![FUNC:DeviceRetain][FILE:runtime.cc][LINE:2776]
+        Check param failed, dev can not be NULL![FUNC:PrimaryContextRetain][FILE:runtime.cc][LINE:2386]
+        Check param failed, ctx can not be NULL![FUNC:PrimaryContextRetain][FILE:runtime.cc][LINE:2417]
+        Check param failed, context can not be null.[FUNC:SetDevice][FILE:api_impl.cc][LINE:3274]
+        rtSetDevice execution failed, reason=device retain error[FUNC:FuncErrorReason][FILE:error_message_manage.cc][LINE:65]
+        open device 3 failed, runtime result = 507033.[FUNC:ReportCallError][FILE:log_inner.cpp][LINE:148]
+
+[WARNING] An exception has occurred in process App, return code: Operation not permitted.
+[INFO] Start export data in PROF_000001_20261013010533303_01233022OPLEAPRK.
+Tue 13 Oct 2026 01:08:13 [WARNING] [MSVP] [1250289] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:08:13 [INFO] [MSVP] [1250346] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host" ...
+Tue 13 Oct 2026 01:08:13 [INFO] [MSVP] [1250346] msprof_common.py: It may take few minutes, please be patient ...
+Tue 13 Oct 2026 01:08:13 [INFO] [MSVP] [1250346] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host" finished.
+Tue 13 Oct 2026 01:08:13 [INFO] [MSVP] [1250346] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0" ...
+Tue 13 Oct 2026 01:08:13 [INFO] [MSVP] [1250346] msprof_common.py: It may take few minutes, please be patient ...
+Tue 13 Oct 2026 01:08:13 [INFO] [MSVP] [1250346] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0" finished.
+Tue 13 Oct 2026 01:08:14 [INFO] [MSVP] [1250346] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0.
+Tue 13 Oct 2026 01:08:15 [WARNING] [MSVP] [1250579] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0.
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/host"
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0.
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/device_0"
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_common.py: Start exporting summary output_file.
+Tue 13 Oct 2026 01:08:15 [INFO] [MSVP] [1250619] msprof_common.py: End exporting summary output_file.The file is stored in the /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20261013010533303_01233022OPLEAPRK done.
+[INFO] Start query data in PROF_000001_20261013010533303_01233022OPLEAPRK.
+Tue 13 Oct 2026 01:08:16 [WARNING] [MSVP] [1250698] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID	
+
+NA      	         	host    	2026-10-13 01:08:07.193335	N/A     	N/A             	N/A               	-1     	
+
+NA      	0        	device_0	2026-10-13 01:08:07.199602	N/A     	N/A             	N/A               	-1     	
+
+[INFO] Query all data in PROF_000001_20261013010533303_01233022OPLEAPRK done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK

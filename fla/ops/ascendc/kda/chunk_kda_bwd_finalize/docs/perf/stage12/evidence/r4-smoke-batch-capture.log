@@ -1,0 +1,73 @@
+BEGIN 11 smoke cumulative False 0 -5.0
+[W1013 01:00:04.868113230 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 11, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 1.7088639736175537, 'status': 'PASS'}
+BEGIN 11 smoke cumulative False 1 -5.0
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 11, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 1, 'lower': -5.0, 'checks': 4, 'seconds': 1.2485675811767578, 'status': 'PASS'}
+BEGIN 11 smoke cumulative False 2 -5.0
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 11, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 2, 'lower': -5.0, 'checks': 4, 'seconds': 1.2844102382659912, 'status': 'PASS'}
+BEGIN 11 smoke cumulative True 0 -5.0
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 11, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 1.3031585216522217, 'status': 'PASS'}
+BEGIN 11 smoke cumulative True 1 -5.0
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 11, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 1, 'lower': -5.0, 'checks': 4, 'seconds': 1.5183722972869873, 'status': 'PASS'}
+BEGIN 11 smoke cumulative True 2 -5.0
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=11 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 11, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 2, 'lower': -5.0, 'checks': 4, 'seconds': 1.4038352966308594, 'status': 'PASS'}
+BEGIN 12 smoke cumulative False 0 -5.0
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 1.364119529724121, 'status': 'PASS'}
+BEGIN 12 smoke cumulative False 1 -5.0
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 1, 'lower': -5.0, 'checks': 4, 'seconds': 1.3571438789367676, 'status': 'PASS'}
+BEGIN 12 smoke cumulative False 2 -5.0
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 2, 'lower': -5.0, 'checks': 4, 'seconds': 1.3143682479858398, 'status': 'PASS'}
+BEGIN 12 smoke cumulative True 0 -5.0
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 1.2718098163604736, 'status': 'PASS'}
+BEGIN 12 smoke cumulative True 1 -5.0
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 1, 'lower': -5.0, 'checks': 4, 'seconds': 1.2694664001464844, 'status': 'PASS'}
+BEGIN 12 smoke cumulative True 2 -5.0
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 2, 'lower': -5.0, 'checks': 4, 'seconds': 1.2920713424682617, 'status': 'PASS'}

@@ -1,0 +1,313 @@
+BEGIN 12 tails cumulative False 0 -5.0
+[W1013 01:09:19.211836870 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 20.463320016860962, 'status': 'PASS'}
+BEGIN 12 tails cumulative False 1 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': False, 'beta': 1, 'lower': -5.0, 'checks': 22, 'seconds': 19.401304006576538, 'status': 'PASS'}
+BEGIN 12 tails cumulative False 2 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': False, 'beta': 2, 'lower': -5.0, 'checks': 22, 'seconds': 18.72062349319458, 'status': 'PASS'}
+BEGIN 12 tails cumulative True 0 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': True, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 19.563230752944946, 'status': 'PASS'}
+BEGIN 12 tails cumulative True 1 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': True, 'beta': 1, 'lower': -5.0, 'checks': 22, 'seconds': 20.183462858200073, 'status': 'PASS'}
+BEGIN 12 tails cumulative True 2 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'cumulative', 'norm': True, 'beta': 2, 'lower': -5.0, 'checks': 22, 'seconds': 19.533849477767944, 'status': 'PASS'}
+BEGIN 12 tails flat False 0 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=flat cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'flat', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 18.956740140914917, 'status': 'PASS'}
+BEGIN 12 tails flat True 0 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=flat cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=flat cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=flat cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'flat', 'norm': True, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 20.426884412765503, 'status': 'PASS'}
+BEGIN 12 tails extreme False 0 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=extreme cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'extreme', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 20.524348974227905, 'status': 'PASS'}
+BEGIN 12 tails extreme True 0 -5.0
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=96 T=65 varlen=False gate=extreme cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=extreme cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=289 varlen=True gate=extreme cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'tails', 'gate': 'extreme', 'norm': True, 'beta': 0, 'lower': -5.0, 'checks': 22, 'seconds': 42.975775480270386, 'status': 'PASS'}
+BEGIN 0 smoke cumulative False 0 -5.0
+PASS stage=0 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=0 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=0 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=0 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 0, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.10841727256774902, 'status': 'PASS'}
+BEGIN 1 smoke cumulative False 0 -5.0
+PASS stage=1 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=1 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=1 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=1 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 1, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.1179196834564209, 'status': 'PASS'}
+BEGIN 2 smoke cumulative False 0 -5.0
+PASS stage=2 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=2 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=2 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=2 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 2, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.14687085151672363, 'status': 'PASS'}
+BEGIN 3 smoke cumulative False 0 -5.0
+PASS stage=3 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=3 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=3 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=3 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 3, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.22486400604248047, 'status': 'PASS'}
+BEGIN 4 smoke cumulative False 0 -5.0
+PASS stage=4 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=4 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=4 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=4 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 4, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.30156564712524414, 'status': 'PASS'}
+BEGIN 5 smoke cumulative False 0 -5.0
+PASS stage=5 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=5 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=5 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=5 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 5, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.4358210563659668, 'status': 'PASS'}
+BEGIN 6 smoke cumulative False 0 -5.0
+PASS stage=6 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=6 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=6 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=6 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 6, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.48396897315979004, 'status': 'PASS'}
+BEGIN 7 smoke cumulative False 0 -5.0
+PASS stage=7 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=7 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=7 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=7 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 7, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.6979451179504395, 'status': 'PASS'}
+BEGIN 8 smoke cumulative False 0 -5.0
+PASS stage=8 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=8 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=8 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=8 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 8, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 0.8959102630615234, 'status': 'PASS'}
+BEGIN 9 smoke cumulative False 0 -5.0
+PASS stage=9 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=9 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=9 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=9 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 9, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 1.0156607627868652, 'status': 'PASS'}
+BEGIN 10 smoke cumulative False 0 -5.0
+PASS stage=10 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=10 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=10 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 10, 'suite': 'smoke', 'gate': 'cumulative', 'norm': False, 'beta': 0, 'lower': -5.0, 'checks': 4, 'seconds': 1.1402068138122559, 'status': 'PASS'}
+BEGIN 12 smoke cumulative True 2 -0.5
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=2
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=99 varlen=True gate=cumulative cores=1 repeat=2
+PASS_GROUP {'stage': 12, 'suite': 'smoke', 'gate': 'cumulative', 'norm': True, 'beta': 2, 'lower': -0.5, 'checks': 4, 'seconds': 1.2672128677368164, 'status': 'PASS'}

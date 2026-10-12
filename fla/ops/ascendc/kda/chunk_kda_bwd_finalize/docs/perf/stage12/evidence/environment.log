@@ -1,0 +1,33 @@
+ubuntu
+root
+/data/wys/kda-finalize-a2-stage9-20261012
+/data/miniconda3/envs/wys_gdn/bin/python
+2.7.1+cpu 2.7.1.post5
+clang-format version 21.1.8
+	Total Count                    : 8
+
+	NPU ID                         : 0
+	Chip Count                     : 1
+
+	NPU ID                         : 1
+	Chip Count                     : 1
+
+	NPU ID                         : 2
+	Chip Count                     : 1
+
+	NPU ID                         : 3
+	Chip Count                     : 1
+
+	NPU ID                         : 4
+	Chip Count                     : 1
+
+	NPU ID                         : 5
+	Chip Count                     : 1
+
+	NPU ID                         : 6
+	Chip Count                     : 1
+
+	NPU ID                         : 7
+	Chip Count                     : 1
+
+CANN=/data/wys/Ascend/cann_9.1.0_910b_0605/cann-9.1.0

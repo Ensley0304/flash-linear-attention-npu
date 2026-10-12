@@ -1,0 +1,33 @@
+[INFO] Start profiling....
+[W1013 01:31:59.620979050 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+DONE stage=10 H=96 T=8192 varlen=True warmup=20 samples=10
+[INFO] Start export data in PROF_000001_20261013013158870_01392528EIHRDRFF.
+Tue 13 Oct 2026 01:32:04 [WARNING] [MSVP] [1394121] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:32:04 [INFO] [MSVP] [1394127] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/host" ...
+Tue 13 Oct 2026 01:32:04 [INFO] [MSVP] [1394127] msprof_common.py: It may take few minutes, please be patient ...
+Tue 13 Oct 2026 01:32:05 [INFO] [MSVP] [1394127] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/host" finished.
+Tue 13 Oct 2026 01:32:05 [INFO] [MSVP] [1394127] msprof_common.py: Start analyzing data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2" ...
+Tue 13 Oct 2026 01:32:05 [INFO] [MSVP] [1394127] msprof_common.py: It may take few minutes, please be patient ...
+Tue 13 Oct 2026 01:32:05 [INFO] [MSVP] [1394127] msprof_common.py: Analysis data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2" finished.
+Tue 13 Oct 2026 01:32:05 [INFO] [MSVP] [1394127] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2.
+Tue 13 Oct 2026 01:32:06 [WARNING] [MSVP] [1394378] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/host" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_export.py: The data in "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2" has been analyzed. Parsing phase will be skipped.
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2.
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/host"
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_export.py: All collected data will be exported, path is: /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2.
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_export.py: There is no summary data to export for "/data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/device_2"
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_common.py: Start exporting summary output_file.
+Tue 13 Oct 2026 01:32:07 [INFO] [MSVP] [1394427] msprof_common.py: End exporting summary output_file.The file is stored in the /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF/mindstudio_profiler_output path.
+[INFO] Export all data in PROF_000001_20261013013158870_01392528EIHRDRFF done.
+[INFO] Start query data in PROF_000001_20261013013158870_01392528EIHRDRFF.
+Tue 13 Oct 2026 01:32:07 [WARNING] [MSVP] [1394575] msprof_entrance.py: Msprof analysis is parsing data as root, which may cause potential system security risks.
+Job Info	Device ID	Dir Name	Collection Time           	Model ID	Iteration Number	Top Time Iteration	Rank ID	
+
+NA      	         	host    	2026-10-13 01:31:59.131737	N/A     	N/A             	N/A               	-1     	
+
+NA      	2        	device_2	2026-10-13 01:31:59.136005	N/A     	N/A             	N/A               	-1     	
+
+[INFO] Query all data in PROF_000001_20261013013158870_01392528EIHRDRFF done.
+[INFO] Profiling finished.
+[INFO] Process profiling data complete. Data is saved in /data/wys/kda-finalize-a2-stage9-20261012/stage12/d2-baseline-clean-profile-varlen/PROF_000001_20261013013158870_01392528EIHRDRFF

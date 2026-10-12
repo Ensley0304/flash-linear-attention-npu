@@ -1,0 +1,22 @@
+[W1013 00:46:00.305624540 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS stage=12 B=1 H=3 T=1 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=16 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=31 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=32 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=33 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=63 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=64 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=1 H=3 T=129 varlen=False gate=cumulative cores=1 repeat=1
+PASS stage=12 B=2 H=3 T=65 varlen=False gate=cumulative cores=1 repeat=1
+Traceback (most recent call last):
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py", line 621, in <module>
+    main()
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py", line 617, in main
+    check_case(args, *case)
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py", line 189, in check_case
+    check_stage11(inputs, q, beta, daqk, chunks, lengths is not None, capture, tail_cpu, tail_args, args)
+  File "/data/wys/kda-finalize-a2-stage9-20261012/examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage11.py", line 103, in check_stage11
+    assert not len(bad), f'Stage 12 bias bad={bad[:8].tolist()} got={actual["ddt_bias_out"][bad[0,0],:8]} want={wanted_bias[bad[0,0],:8]}'
+AssertionError: Stage 12 bias bad=[[40, 0], [40, 1], [40, 2], [40, 3], [40, 4], [40, 5], [40, 6], [40, 7]] got=tensor([-0.0343,  0.0076, -0.0813,  0.0363,  0.0057, -0.0131, -0.0179, -0.0176]) want=tensor([-0.0338,  0.0110, -0.0700,  0.0167,  0.0115, -0.0110,  0.0062, -0.0086],
+       dtype=torch.float64)
+[ERROR] 2026-10-13-00:46:08 (PID:1103376, Device:3, RankID:-1) ERR99999 UNKNOWN applicaiton exception

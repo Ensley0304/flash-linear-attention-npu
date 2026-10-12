@@ -2,7 +2,7 @@
 
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
 
-本轮实现范围：Stage 0～10 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
+本轮实现范围：Stage 0～12 的 A2 独立开发验证入口，公开接口尚未接入；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
 
 硬件预算：L1 512 KiB，L0A/L0B 各 64 KiB，L0C 128 KiB，每个 AIV 的 UB 192 KiB。
 
@@ -188,7 +188,7 @@ right_raw = dAqk_strict_lower[:, s:e]ᵀ @ qPos
 
 Stage 10 开发入口沿用逆序 32 行带，与 Stage 9 重叠。每项计算 `Ah@Bh + Ah@Bl + Al@Bh`，六次 MMAD 在 FP32 L0C 中累加后一次写回。两个 head 分别使用 L0A/B/C 双槽；L1 保留 strict-lower，高低位 qPos、bkPos 依次复用 kNeg 的 32 KiB/head，仍为 512 KiB。
 
-每带的 `BAND_READY/BAND_LOADED` 使用两轮握手：第一轮传 kNeg；第二轮在第一轮消费完成后发布 qPos/bkPos，Cube 完成 right_raw 写回后释放。Stage 9 不等待第二轮计算，下一带等待。right_raw 复用已消费的 workspace kNeg 槽（96 KiB，FP32 32×128/带），未来由 Stage 11 消费；当前开发入口仅保留最后一带，采数区另存两带。workspace 大小不变。
+每带的 `BAND_READY/BAND_LOADED` 使用两轮握手：第一轮传 kNeg；第二轮在第一轮消费完成后发布 qPos/bkPos，Cube 完成 right_raw 写回后释放。Stage 9 不等待第二轮计算，下一带等待。right_raw 复用已消费的 workspace kNeg 槽（96 KiB，FP32 32×128/带），由 Stage 11 在第二轮握手后消费；workspace 仅保留最后一带，采数区另存两带。workspace 大小不变。
 
 ## Stage 11：Vector
 
@@ -248,6 +248,10 @@ partial_d_a_log      += Σ(t=s..e−1,k) d_g[t,k] × gate_input[t,k]
 d_a_log[h]     = Σchunk partial_d_a_log[chunk,h]
 d_dt_bias[h,k] = Σchunk partial_d_dt_bias[chunk,h,k]
 ```
+
+Stage 11/12 开发入口：Stage 11 在每带第二轮握手后消费 right_raw，使用逆序 8 行输入、输出双槽。完整 8 行用三步并行反向扫描，复用已失效的 left 区；尾 tile 保留逐行扫描。复用 q/k、beta、对角线及带内指数；suffix 和参数 partial 跨带驻留。gate 导数用 `exp(-abs(x))/(1+exp(-abs(x)))²`，避免 `1-sigmoid(x)` 的消减误差。beta sigmoid 因子在 chunk 入口用 FP32 计算一次。
+
+每 head/chunk 输出 136 个 FP32 partial（128 个 bias、8 个 a_log 分量），不使用原子加。Stage 12 在同一 stream 另启 AIV kernel，双槽预取 partial，按固定 chunk 顺序求和。此 kernel 边界提供全核同步；性能统计同时计入两个 kernel。开发接口的 dk 沿用输入布局，dG/dBeta 固定 BSND/TND；公开 A5 ABI 暂不变。
 
 ## 直接依赖
 

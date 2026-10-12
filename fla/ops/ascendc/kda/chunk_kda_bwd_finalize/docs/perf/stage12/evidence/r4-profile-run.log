@@ -1,0 +1,5 @@
+r4-profile-fixed {'min': 12330.466999999999, 'median': 12359.1205, 'max': 12405.296}
+Traceback (most recent call last):
+  File "/data/wys/kda-finalize-a2-stage9-20261012/stage12/run.py", line 70, in <module>
+    rows=list(csv.DictReader(paths[-1].open()))
+IndexError: list index out of range

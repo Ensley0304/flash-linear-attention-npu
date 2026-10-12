@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/data/wys/kda-finalize-a2-stage9-20261012/stage12/run.py", line 68, in <module>
+    with (out/(name+'-export.log')).open('w') as f:
+  File "/data/miniconda3/envs/wys_gdn/lib/python3.10/subprocess.py", line 526, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['msprof', '--export=on', '--output=/data/wys/kda-finalize-a2-stage9-20261012/stage12/r4-retry-profile-fixed/PROF_000001_20261013010533303_01233022OPLEAPRK']' died with <Signals.SIGKILL: 9>.

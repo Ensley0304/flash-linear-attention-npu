@@ -1,0 +1,5 @@
+IMPORT
+SET_DEVICE
+ALLOCATE
+[W1013 01:04:14.892501380 NPUCachingAllocator.cpp:196] Warning: The current CANN and Soc Version require processing for 32 padding size, with memory allocation. (function operator())
+PASS
