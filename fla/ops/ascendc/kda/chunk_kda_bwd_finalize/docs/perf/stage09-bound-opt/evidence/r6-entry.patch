@@ -1,0 +1,79 @@
+--- baseline-entry.cpp
++++ r6-entry.cpp
+@@ -75,0 +76 @@
++            const bool precomputed = LAST_STAGE >= 9 && work >= core + 2 * tiling.usedCoreNum;
+@@ -90 +91 @@
+-                if (firstHead + owner < tiling.heads) {
++                if (firstHead + owner < tiling.heads && !precomputed) {
+@@ -97,2 +98,4 @@
+-                    cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture, bank,
+-                                         LAST_STAGE >= 4 ? bank : 0);
++                    if (!precomputed) {
++                        cube.Stage0<CAPTURE, (LAST_STAGE >= 9)>(tiling, chunk, chunkIndex, firstHead + owner, owner,
++                                                                core, capture, bank, LAST_STAGE >= 4 ? bank : 0);
++                    }
+@@ -123 +126 @@
+-                    if (nextWork < workCount) {
++                    if (nextWork < workCount && !precomputed) {
+@@ -176,0 +180,32 @@
++                                if constexpr (LAST_STAGE >= 9) {
++                                    // S6 retired akk(n-1); compute S0(n+1) while Vector runs S7(n-1).
++                                    // S5_DONE(n-2), consumed at entry, protects the three-generation raw slot.
++                                    const int64_t nextWork = work + tiling.usedCoreNum;
++                                    if (nextWork < workCount) {
++                                        const int64_t nextChunkIndex = nextWork % tiling.chunks;
++                                        const int64_t nextHead = (nextWork / tiling.chunks) * HEADS_PER_WORK;
++                                        const ChunkInfo nextChunk = ResolveChunk(tiling, chunks, nextChunkIndex);
++                                        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
++                                            if (nextHead + owner < tiling.heads) {
++                                                cube.LoadStage0Inputs(tiling, nextChunk, nextChunkIndex,
++                                                                      nextHead + owner, owner, false, bank ^ 1);
++                                            }
++                                        }
++                                        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
++                                            if (nextHead + owner < tiling.heads) {
++                                                cube.Stage0<CAPTURE, true>(tiling, nextChunk, nextChunkIndex,
++                                                                           nextHead + owner, owner, core, capture,
++                                                                           bank ^ 1, bank ^ 1);
++                                                const int64_t following = nextWork + tiling.usedCoreNum;
++                                                const int64_t followingHead =
++                                                    (following / tiling.chunks) * HEADS_PER_WORK + owner;
++                                                if (following < workCount && followingHead < tiling.heads) {
++                                                    const int64_t followingChunk = following % tiling.chunks;
++                                                    cube.PreloadState(tiling,
++                                                                      ResolveChunk(tiling, chunks, followingChunk),
++                                                                      followingChunk, followingHead, owner);
++                                                }
++                                            }
++                                        }
++                                    }
++                                }
+@@ -289,2 +324,2 @@
+-                        vector.Stage3<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
+-                                               bank ^ 1);
++                        vector.Stage3<CAPTURE, (LAST_STAGE >= 9)>(tiling, chunk, previousChunk, previousHead, owner,
++                                                                  core, capture, bank ^ 1);
+@@ -296,2 +331,2 @@
+-                            vector.Stage5<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
+-                                                   bank ^ 1);
++                            vector.Stage5<CAPTURE, (LAST_STAGE >= 9)>(tiling, chunk, previousChunk, previousHead, owner,
++                                                                      core, capture, bank ^ 1);
+@@ -325 +360,2 @@
+-                        vector.Stage3<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
++                        vector.Stage3<CAPTURE, (LAST_STAGE >= 9)>(tiling, chunk, chunkIndex, head, owner, core, capture,
++                                                                  bank);
+@@ -331 +367,2 @@
+-                            vector.Stage5<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
++                            vector.Stage5<CAPTURE, (LAST_STAGE >= 9)>(tiling, chunk, chunkIndex, head, owner, core,
++                                                                      capture, bank);
+@@ -476,3 +513,3 @@
+-    const auto plan = optiling::BuildFinalizeStage01Plan(batch, heads, tokens, variable,
+-                                                         std::vector<int64_t>(cuSeqlens.begin(), cuSeqlens.end()),
+-                                                         coreLimit == 0 ? available : static_cast<uint32_t>(coreLimit));
++    const auto plan = optiling::BuildFinalizeStage01Plan(
++        batch, heads, tokens, variable, std::vector<int64_t>(cuSeqlens.begin(), cuSeqlens.end()),
++        coreLimit == 0 ? available : static_cast<uint32_t>(coreLimit), lastStage >= 9);
+@@ -616 +653,2 @@
+-    return {capture, trace, workspace};
++    // Return the stable diagnostic region; its view retains the full raw-ring storage.
++    return {capture, trace, workspace.narrow(0, 0, static_cast<int64_t>(tiling.usedCoreNum) * WS_CORE_BYTES)};

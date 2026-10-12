@@ -1,0 +1,4 @@
+r9-smoke-s9-smoke-cumulative-n0-p0 0 15.62
+r9-smoke-s9-smoke-cumulative-n1-p0 0 18.52
+r9-profile-fixed {'min': 7538.275, 'median': 7580.2615000000005, 'max': 7620.067} {'min': 0.69, 'median': 0.692, 'max': 0.693}
+r9-profile-varlen {'min': 7692.377, 'median': 7707.279, 'max': 7718.961} {'min': 0.69, 'median': 0.691, 'max': 0.692}

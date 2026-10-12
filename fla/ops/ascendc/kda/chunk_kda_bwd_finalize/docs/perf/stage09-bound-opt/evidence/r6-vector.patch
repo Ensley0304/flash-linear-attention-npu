@@ -1,0 +1,30 @@
+--- baseline-vector.h
++++ r6-vector.h
+@@ -207 +207 @@
+-    template <bool CAPTURE = false>
++    template <bool CAPTURE = false, bool LOOKAHEAD = false>
+@@ -221,2 +221,9 @@
+-        dvB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DV_B));
+-        zV.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_ZV));
++        uint64_t rawBase = base;
++        if constexpr (LOOKAHEAD) {
++            const uint64_t step = (head / HEADS_PER_WORK * tiling.chunks + chunkIndex) / tiling.usedCoreNum;
++            rawBase = static_cast<uint64_t>(tiling.usedCoreNum) * WS_CORE_BYTES +
++                      static_cast<uint64_t>(core) * WS_RAW_CORE_BYTES + owner * WS_RAW_HEAD_BYTES +
++                      (step % 3) * WS_RAW_BANK_BYTES;
++        }
++        dvB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + rawBase + WS_DV_B));
++        zV.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + rawBase + WS_ZV));
+@@ -356 +363 @@
+-    template <bool CAPTURE = false>
++    template <bool CAPTURE = false, bool LOOKAHEAD = false>
+@@ -369 +376,8 @@
+-        state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DK_STATE_RAW));
++        uint64_t rawBase = base;
++        if constexpr (LOOKAHEAD) {
++            const uint64_t step = (head / HEADS_PER_WORK * tiling.chunks + chunkIndex) / tiling.usedCoreNum;
++            rawBase = static_cast<uint64_t>(tiling.usedCoreNum) * WS_CORE_BYTES +
++                      static_cast<uint64_t>(core) * WS_RAW_CORE_BYTES + owner * WS_RAW_HEAD_BYTES +
++                      (step % 3) * WS_RAW_BANK_BYTES;
++        }
++        state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + rawBase + WS_DK_STATE_RAW));

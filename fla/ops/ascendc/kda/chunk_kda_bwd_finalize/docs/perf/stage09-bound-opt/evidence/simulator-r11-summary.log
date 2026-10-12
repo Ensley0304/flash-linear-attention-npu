@@ -1,0 +1,6 @@
+trace: /data/wys/kda-finalize-a2-stage9-20261012/bound-opt/simulator-r11/OPPROF_20261012223109_EIZDUZYKJWVICHNQ/simulator/trace.json
+core                     events     max_end_us
+core0.cubecore0           14041         85.861
+core0.veccore0            37603         85.141
+core0.veccore1            37525         85.638
+lane check: PASS (mix)

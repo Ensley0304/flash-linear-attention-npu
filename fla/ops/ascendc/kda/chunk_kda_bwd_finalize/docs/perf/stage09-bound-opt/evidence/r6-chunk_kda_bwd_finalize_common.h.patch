@@ -1,0 +1,7 @@
+--- baseline/chunk_kda_bwd_finalize_common.h
++++ r6/chunk_kda_bwd_finalize_common.h
+@@ -49,0 +50,4 @@
++// Stage 0 lookahead has three raw generations, separate from postprocessing.
++constexpr uint32_t WS_RAW_BANK_BYTES = 80 * 1024;
++constexpr uint32_t WS_RAW_HEAD_BYTES = 3 * WS_RAW_BANK_BYTES;
++constexpr uint32_t WS_RAW_CORE_BYTES = HEADS_PER_WORK * WS_RAW_HEAD_BYTES;

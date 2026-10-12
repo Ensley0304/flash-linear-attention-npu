@@ -1,0 +1,9 @@
+{
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "8ac281b3840aad8947e0ee8e646f8fc31bbc812e611e33030d006dbd824c6a7f",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "3fc57cd9566ff6cfb75789195f0d83a70998c8c1ae3137f7c90e0568e74b407a",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "6186304fef5df7ad9808bca6d73931f2c7d096bbb93c97072d43671d7bfaba14",
+  "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_stage01_tiling.h": "7a22ff2277c9bd572d9f87eaaf79bff10c3cc533ffc3bf5442596d8969f2ad53",
+  "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "02af1cd66752b08698a63a6057878fd8c1fc16b62a191c229c95b83ec35e73cf",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/test_tiling.cpp": "27b18b42a77a433577f8a390c2fe649c3682785bbe40c8972e8566cc49ea32d9",
+  "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage9.py": "33ed247cdd0addef97dd18f515b88f00442429f886b16bad53eaf91f4378a3ee"
+}

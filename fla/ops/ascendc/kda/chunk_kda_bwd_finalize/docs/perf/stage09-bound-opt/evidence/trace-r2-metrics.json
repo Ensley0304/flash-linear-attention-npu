@@ -1,0 +1,29 @@
+{
+  "source": "/data/wys/kda-finalize-a2-stage9-20261012/stage9/simulator-r2/OPPROF_20261012170852_OCQSYMIQPEKBWNZI/simulator/trace.json",
+  "lanes": {
+    "core0.cubecore0": {
+      "max_end_us": 92.61833258741535,
+      "vector_union_us": 0,
+      "cross_wait_union_us": 59.74888896942139,
+      "cross_wait_not_covered_by_vector_us": 59.74888896942139,
+      "movemask_instructions": 0,
+      "scalar_instructions": 12205
+    },
+    "core0.veccore0": {
+      "max_end_us": 91.93666907423176,
+      "vector_union_us": 52.60668663796969,
+      "cross_wait_union_us": 5.694444462656975,
+      "cross_wait_not_covered_by_vector_us": 2.391096380306408,
+      "movemask_instructions": 2327,
+      "scalar_instructions": 27168
+    },
+    "core0.veccore1": {
+      "max_end_us": 92.39499732130207,
+      "vector_union_us": 52.62016751826741,
+      "cross_wait_union_us": 5.8066666424274445,
+      "cross_wait_not_covered_by_vector_us": 2.0116085815243423,
+      "movemask_instructions": 2327,
+      "scalar_instructions": 27114
+    }
+  }
+}

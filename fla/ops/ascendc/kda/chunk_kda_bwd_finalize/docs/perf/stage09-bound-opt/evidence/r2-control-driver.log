@@ -1,0 +1,2 @@
+r2-control-profile-fixed {'min': 7675.214, 'median': 7691.0965, 'max': 7710.82} {'min': 0.679, 'median': 0.6805000000000001, 'max': 0.682}
+r2-control-profile-varlen {'min': 7839.398, 'median': 7879.473, 'max': 7890.945} {'min': 0.675, 'median': 0.676, 'max': 0.677}

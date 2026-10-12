@@ -1,0 +1,261 @@
+[
+  {
+    "name": "r11-profile-fixed",
+    "rc": -9,
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/bound-opt/r11-profile-fixed/PROF_000001_20261012223018001_00089507ICGJCNCI/mindstudio_profiler_output/op_summary_20261012223027.csv",
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 7477.567,
+        "median": 7487.598,
+        "max": 7499.47
+      },
+      "aicore_time(us)": {
+        "min": 7388.69,
+        "median": 7394.7395,
+        "max": 7409.802
+      },
+      "aic_mac_time(us)": {
+        "min": 951.946,
+        "median": 952.004,
+        "max": 952.053
+      },
+      "aic_mac_ratio": {
+        "min": 0.128,
+        "median": 0.129,
+        "max": 0.129
+      },
+      "aic_scalar_time(us)": {
+        "min": 2819.472,
+        "median": 2821.6855,
+        "max": 2825.284
+      },
+      "aic_scalar_ratio": {
+        "min": 0.381,
+        "median": 0.382,
+        "max": 0.382
+      },
+      "aic_mte1_time(us)": {
+        "min": 1321.662,
+        "median": 1321.8665,
+        "max": 1322.036
+      },
+      "aic_mte1_ratio": {
+        "min": 0.178,
+        "median": 0.179,
+        "max": 0.179
+      },
+      "aic_mte2_time(us)": {
+        "min": 2074.549,
+        "median": 2079.0755,
+        "max": 2087.406
+      },
+      "aic_mte2_ratio": {
+        "min": 0.281,
+        "median": 0.281,
+        "max": 0.282
+      },
+      "aic_fixpipe_time(us)": {
+        "min": 1805.862,
+        "median": 1807.075,
+        "max": 1809.592
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.244,
+        "median": 0.244,
+        "max": 0.245
+      },
+      "aiv_time(us)": {
+        "min": 7387.685,
+        "median": 7393.7495,
+        "max": 7408.81
+      },
+      "aiv_vec_time(us)": {
+        "min": 4856.866,
+        "median": 4856.9005,
+        "max": 4856.966
+      },
+      "aiv_vec_ratio": {
+        "min": 0.656,
+        "median": 0.657,
+        "max": 0.657
+      },
+      "aiv_scalar_time(us)": {
+        "min": 3470.31,
+        "median": 3475.462,
+        "max": 3478.723
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.468,
+        "median": 0.47,
+        "max": 0.471
+      },
+      "aiv_mte2_time(us)": {
+        "min": 2548.951,
+        "median": 2553.09,
+        "max": 2562.36
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.345,
+        "median": 0.345,
+        "max": 0.346
+      },
+      "aiv_mte3_time(us)": {
+        "min": 2362.933,
+        "median": 2363.943,
+        "max": 2364.757
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.319,
+        "median": 0.32,
+        "max": 0.32
+      }
+    },
+    "command": [
+      "msprof",
+      "--output=/data/wys/kda-finalize-a2-stage9-20261012/bound-opt/r11-profile-fixed",
+      "--ai-core=on",
+      "--aic-metrics=PipeUtilization",
+      "--task-time=on",
+      "--ascendcl=off",
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py",
+      "--library",
+      "bound-opt/r11-perf.so",
+      "--device",
+      "3",
+      "--stage",
+      "9"
+    ]
+  },
+  {
+    "name": "r11-profile-varlen",
+    "rc": 0,
+    "source": "/data/wys/kda-finalize-a2-stage9-20261012/bound-opt/r11-profile-varlen/PROF_000001_20261012223039057_00093791JQKBOQHP/mindstudio_profiler_output/op_summary_20261012223049.csv",
+    "samples": 10,
+    "metrics": {
+      "Task Duration(us)": {
+        "min": 7561.659,
+        "median": 7570.1595,
+        "max": 7584.722
+      },
+      "aicore_time(us)": {
+        "min": 7468.382,
+        "median": 7474.106,
+        "max": 7482.194
+      },
+      "aic_mac_time(us)": {
+        "min": 967.498,
+        "median": 967.5409999999999,
+        "max": 967.613
+      },
+      "aic_mac_ratio": {
+        "min": 0.129,
+        "median": 0.129,
+        "max": 0.13
+      },
+      "aic_scalar_time(us)": {
+        "min": 2878.476,
+        "median": 2880.0434999999998,
+        "max": 2881.662
+      },
+      "aic_scalar_ratio": {
+        "min": 0.385,
+        "median": 0.385,
+        "max": 0.386
+      },
+      "aic_mte1_time(us)": {
+        "min": 1341.324,
+        "median": 1341.476,
+        "max": 1341.627
+      },
+      "aic_mte1_ratio": {
+        "min": 0.179,
+        "median": 0.1795,
+        "max": 0.18
+      },
+      "aic_mte2_time(us)": {
+        "min": 2180.429,
+        "median": 2183.065,
+        "max": 2187.265
+      },
+      "aic_mte2_ratio": {
+        "min": 0.292,
+        "median": 0.292,
+        "max": 0.293
+      },
+      "aic_fixpipe_time(us)": {
+        "min": 1853.447,
+        "median": 1854.807,
+        "max": 1855.92
+      },
+      "aic_fixpipe_ratio": {
+        "min": 0.248,
+        "median": 0.248,
+        "max": 0.248
+      },
+      "aiv_time(us)": {
+        "min": 7467.685,
+        "median": 7473.3994999999995,
+        "max": 7481.489
+      },
+      "aiv_vec_time(us)": {
+        "min": 4919.36,
+        "median": 4919.4025,
+        "max": 4919.424
+      },
+      "aiv_vec_ratio": {
+        "min": 0.658,
+        "median": 0.658,
+        "max": 0.659
+      },
+      "aiv_scalar_time(us)": {
+        "min": 3591.509,
+        "median": 3592.2435,
+        "max": 3593.26
+      },
+      "aiv_scalar_ratio": {
+        "min": 0.48,
+        "median": 0.481,
+        "max": 0.481
+      },
+      "aiv_mte2_time(us)": {
+        "min": 2629.759,
+        "median": 2632.3050000000003,
+        "max": 2636.054
+      },
+      "aiv_mte2_ratio": {
+        "min": 0.352,
+        "median": 0.352,
+        "max": 0.353
+      },
+      "aiv_mte3_time(us)": {
+        "min": 2390.811,
+        "median": 2391.9105,
+        "max": 2393.195
+      },
+      "aiv_mte3_ratio": {
+        "min": 0.32,
+        "median": 0.32,
+        "max": 0.32
+      }
+    },
+    "command": [
+      "msprof",
+      "--output=/data/wys/kda-finalize-a2-stage9-20261012/bound-opt/r11-profile-varlen",
+      "--ai-core=on",
+      "--aic-metrics=PipeUtilization",
+      "--task-time=on",
+      "--ascendcl=off",
+      "python",
+      "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py",
+      "--library",
+      "bound-opt/r11-perf.so",
+      "--device",
+      "3",
+      "--stage",
+      "9",
+      "--varlen"
+    ]
+  }
+]

@@ -1,0 +1,43 @@
+--- baseline-vector.h
++++ r4-vector.h
+@@ -537 +537,2 @@
+-    template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false>
++    template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false,
++              bool FULL_CHUNK = false>
+@@ -544 +545 @@
+-        const uint32_t rows = chunk.validRows;
++        const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : chunk.validRows;
+@@ -603,2 +604,3 @@
+-        // Chunk-wide strict lower matrices are generated once. Output planes are hi
+-        // then lo.
++// Chunk-wide strict lower matrices are generated once. Output planes are hi
++// then lo.
++#pragma unroll
+@@ -658,3 +660,4 @@
+-        // The partial harness captures both bands; its reusable workspace retains
+-        // band s=0. Stage 8/10 must consume each band before the next iteration
+-        // overwrites these slots.
++// The partial harness captures both bands; its reusable workspace retains
++// band s=0. Stage 8/10 must consume each band before the next iteration
++// overwrites these slots.
++#pragma unroll
+@@ -668 +671,2 @@
+-            // qPos and bkPos use the same positive exponent in each tile.
++// qPos and bkPos use the same positive exponent in each tile.
++#pragma unroll
+@@ -669,0 +674 @@
++#pragma unroll
+@@ -671,0 +677 @@
++#pragma unroll
+@@ -776 +782,2 @@
+-                    Stage9<CAPTURE, Q_NORM>(tiling, chunk, chunkIndex, head, owner, core, capture, bank, start, end);
++                    Stage9<CAPTURE, Q_NORM, FULL_CHUNK>(tiling, chunk, chunkIndex, head, owner, core, capture, bank,
++                                                        start, end);
+@@ -797 +804 @@
+-    template <bool CAPTURE, bool Q_NORM>
++    template <bool CAPTURE, bool Q_NORM, bool FULL_CHUNK = false>
+@@ -847,0 +855 @@
++#pragma unroll
+@@ -851 +859 @@
+-            const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
++            const uint32_t active = FULL_CHUNK ? ROWS : (first < end ? (end - first < ROWS ? end - first : ROWS) : 0);

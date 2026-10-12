@@ -1,0 +1,29 @@
+{
+  "source": "/data/wys/kda-finalize-a2-stage9-20261012/bound-opt/simulator-r11/OPPROF_20261012223109_EIZDUZYKJWVICHNQ/simulator/trace.json",
+  "lanes": {
+    "core0.cubecore0": {
+      "max_end_us": 85.86110755079426,
+      "vector_union_us": 0,
+      "cross_wait_union_us": 57.674999713897705,
+      "cross_wait_not_covered_by_vector_us": 57.674999713897705,
+      "movemask_instructions": 0,
+      "scalar_instructions": 12205
+    },
+    "core0.veccore0": {
+      "max_end_us": 85.14055701368488,
+      "vector_union_us": 49.39674199838191,
+      "cross_wait_union_us": 5.3816665560007095,
+      "cross_wait_not_covered_by_vector_us": 2.35388466832228,
+      "movemask_instructions": 2195,
+      "scalar_instructions": 27650
+    },
+    "core0.veccore1": {
+      "max_end_us": 85.63777991407551,
+      "vector_union_us": 49.35627150675282,
+      "cross_wait_union_us": 4.545555625110865,
+      "cross_wait_not_covered_by_vector_us": 2.240514197619632,
+      "movemask_instructions": 2195,
+      "scalar_instructions": 27614
+    }
+  }
+}

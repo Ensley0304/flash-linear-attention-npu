@@ -1,0 +1,21 @@
+r11-check-s9-tails-cumulative-n0-p0 0 30.93
+r11-check-s9-tails-flat-n0-p0 0 46.34
+r11-check-s9-tails-extreme-n0-p0 0 30.09
+r11-check-s9-tails-cumulative-n1-p0 0 30.05
+r11-check-s9-tails-flat-n1-p0 0 38.5
+r11-check-s9-tails-extreme-n1-p0 0 34.86
+r11-check-s0-smoke-cumulative-n0-p0 0 14.74
+r11-check-s1-smoke-cumulative-n0-p0 0 19.25
+r11-check-s2-smoke-cumulative-n0-p0 0 19.7
+r11-check-s3-smoke-cumulative-n0-p0 0 31.85
+r11-check-s4-smoke-cumulative-n0-p0 0 15.14
+r11-check-s5-smoke-cumulative-n0-p0 0 14.74
+r11-check-s6-smoke-cumulative-n0-p0 0 16.01
+r11-check-s7-smoke-cumulative-n0-p0 0 15.66
+r11-check-s8-smoke-cumulative-n0-p0 0 17.15
+r11-check-s9-tails-cumulative-n0-p1 0 20.75
+r11-check-s9-tails-cumulative-n1-p1 0 37.37
+r2-final-profile-fixed {'min': 7683.375, 'median': 7711.3095, 'max': 7740.884} {'min': 0.676, 'median': 0.677, 'max': 0.678}
+r2-final-profile-varlen {'min': 7794.851, 'median': 7805.1925, 'max': 7826.316} {'min': 0.678, 'median': 0.678, 'max': 0.679}
+r11-final-profile-fixed {'min': 7445.362, 'median': 7483.4974999999995, 'max': 7521.453} {'min': 0.652, 'median': 0.654, 'max': 0.656}
+r11-final-profile-varlen {'min': 7572.58, 'median': 7591.6630000000005, 'max': 7617.047} {'min': 0.651, 'median': 0.652, 'max': 0.653}

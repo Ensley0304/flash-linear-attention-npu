@@ -142,6 +142,8 @@ bkPos[t, :] = beta[t] × k[t, :] ⊙ 2^(gk[t, :] − center) (s ≤ t < valid_ro
 
 Stage 7 开发入口：16 行 tile，strict-lower 输入及高低位输出均双缓冲；q/k/原始 gk 每 chunk 搬入一次，qPos/bkPos 共用同 tile 的正向指数。对角线、center、带内指数保留 UB，只有采数版导出。等待 Stage 6 的 `S6_READY[bank]`（FIX，flag 6/7）。Gather 索引初始化一次，驻留 UB 84.75 KiB；进入、退出均经 `V_MTE2` 保护 UB 复用。截断到 Stage 7 时捕获两带，workspace 留 band 0，末带写完即释放；执行到 Stage 8 时增加下述带间消费握手及独立 L1 区。Stage 10 尚未接入。
 
+Stage 7 输出按实际产出顺序交替使用双槽。带内全零 tile 直接清零高低位两份输出；完整有效 tile 不预先清零临时量，尾 tile 保留清零和原精度转换。
+
 ## Stage 8：Cube
 
 ```text
@@ -174,6 +176,8 @@ dg = dg_base + q ⊙ dq_local
 启用 Q L2Norm backward：
     dq = (dq_pre − q ⊙ Σk(dq_pre ⊙ q)) ⊙ q_rstd
 ```
+
+Stage 9 保持 16 行输入、输出双槽：先搬入已就绪的 dq_base/dg_base，再等待同 head 的 Stage 8 raw；q/k 转换和对角线广播提前到输入等待之前。UB/GM 布局、ready 通知次数与带尾排空规则不变。
 
 ## Stage 10：Cube
 

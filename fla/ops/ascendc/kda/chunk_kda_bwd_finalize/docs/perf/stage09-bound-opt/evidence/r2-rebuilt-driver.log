@@ -1,0 +1,2 @@
+r2-rebuilt-profile-fixed {'min': 7691.637, 'median': 7724.2715, 'max': 7739.143} {'min': 0.675, 'median': 0.676, 'max': 0.677}
+r2-rebuilt-profile-varlen {'min': 7783.609, 'median': 7799.082, 'max': 7829.456} {'min': 0.677, 'median': 0.678, 'max': 0.679}

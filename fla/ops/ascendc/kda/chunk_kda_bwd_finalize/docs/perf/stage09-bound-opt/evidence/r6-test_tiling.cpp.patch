@@ -1,0 +1,8 @@
+--- baseline/test_tiling.cpp
++++ r6/test_tiling.cpp
+@@ -21,0 +22,5 @@
++    const auto lookahead = BuildFinalizeStage01Plan(1, 96, 8192, false, {}, 24, true);
++    assert(lookahead.workspaceBytes == 24 * 1760 * 1024);
++    assert(lookahead.captureBytes == model.captureBytes && lookahead.traceBytes == model.traceBytes);
++    const auto lookaheadTail = BuildFinalizeStage01Plan(1, 1, 1, false, {}, 24, true);
++    assert(lookaheadTail.tiling.usedCoreNum == 1 && lookaheadTail.workspaceBytes == 1760 * 1024);

@@ -1,0 +1,60 @@
+[PEM_AIC_LOG] [INFO] [0000127317] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=6
+
+[PEM_AIC_LOG] [INFO] [0000143322] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000145789] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000145790] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000146431] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000146432] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000148335] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000148336] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000153759] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=1
+
+[PEM_AIC_LOG] [INFO] [0000154834] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000154834] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=2
+
+[PEM_AIC_LOG] [INFO] [0000156201] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000156202] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=3
+
+[PEM_AIC_LOG] [INFO] [0000157502] set_flag (503):: Core 0 subcore 1 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000157503] set_flag (503):: Core 0 subcore 2 FFTS->AIC set flag, flag_id=14
+
+[PEM_AIC_LOG] [INFO] [0000160843] aic_done_callback (72):: Core 0 subcore 1 early_end 0 done
+[info] [0000160845] [subblock_end]          : AIV, task_id=0, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0, blockRatio=2, subblkID=0
+[PEM_AIC_LOG] [INFO] [0000160925] set_flag (503):: Core 0 subcore 0 FFTS->AIC set flag, flag_id=12
+
+[PEM_AIC_LOG] [INFO] [0000161735] aic_done_callback (72):: Core 0 subcore 2 early_end 0 done
+[info] [0000161737] [subblock_end]          : AIV, task_id=0, contextID=0, threadID=0, coreID=1, blkdim=1, blkID=0, blockRatio=2, subblkID=1
+[PEM_AIC_LOG] [INFO] [0000161794] aic_done_callback (72):: Core 0 subcore 0 early_end 0 done
+[info] [0000161796] [block_end]             : AIC, task_id=0, contextID=0, threadID=0, coreID=0, blkdim=1, blkID=0
+[info] [0000161797] [context_end]         : AICMIX, stream_id=3, rtsq_id=3 task_id=0, contextID=0, threadID=0x0, thread_dim=0x1
+[info] [MCU_LOG] [INFO] [0000161797] ffts_isr (1636):: mcu_wrapper enqueued ffts_event, event=1
+DONE stage=9 H=2 T=192 varlen=False warmup=0 samples=1
+[info] [MCU_LOG] [INFO] [0000162721] stop (645):: mcu_wrapper is stopping...
+[info] [MCU_LOG] [INFO] [0000162721] main_loop (624):: mcu_wrapper loop is stopping...
+[info] [MCU_LOG] [INFO] [0000162845] stop (654):: mcu_wrapper loop joined successfully.
+[INFO] Model Stop Time: 2026-10-12 22:29:18
+Model RUN TIME: 154818 ms
+[INFO] Total tick: 162844
+[INFO] Model stopped successfully.
+[WARN]  Code call stack is empty
+[WARN]  Lack of code info of files
+[INFO]  Core operator results run in simulator as follow:
+core_name           duration_time(us)   running_time(us)
+core0.cubecore0     86.1                86.05
+core0.veccore0      85.38               84.45
+core0.veccore1      85.88               85.09
+[INFO]  Profiling running finished. All task success.
+[INFO]  Start parse dump file
+[INFO]  Profiling results saved in /data/wys/kda-finalize-a2-stage9-20261012/bound-opt/simulator-r9/OPPROF_20261012222633_DEWABIKAPOZRCLCZ
+[INFO]  Profiling data parse finished.
+[INFO]  Op profiling finish. Welcome to next use.

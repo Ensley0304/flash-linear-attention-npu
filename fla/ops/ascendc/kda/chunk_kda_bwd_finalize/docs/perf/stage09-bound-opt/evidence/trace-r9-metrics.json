@@ -1,0 +1,29 @@
+{
+  "source": "/data/wys/kda-finalize-a2-stage9-20261012/bound-opt/simulator-r9/OPPROF_20261012222633_DEWABIKAPOZRCLCZ/simulator/trace.json",
+  "lanes": {
+    "core0.cubecore0": {
+      "max_end_us": 89.62999793165363,
+      "vector_union_us": 0,
+      "cross_wait_union_us": 57.50388789176941,
+      "cross_wait_not_covered_by_vector_us": 57.50388789176941,
+      "movemask_instructions": 0,
+      "scalar_instructions": 12205
+    },
+    "core0.veccore0": {
+      "max_end_us": 88.91166754835285,
+      "vector_union_us": 52.75621461006813,
+      "cross_wait_union_us": 3.900000035762787,
+      "cross_wait_not_covered_by_vector_us": 1.6988822061102837,
+      "movemask_instructions": 2375,
+      "scalar_instructions": 27690
+    },
+    "core0.veccore1": {
+      "max_end_us": 89.40667029493488,
+      "vector_union_us": 52.79070498631336,
+      "cross_wait_union_us": 3.6777777299284935,
+      "cross_wait_not_covered_by_vector_us": 1.5344312379602343,
+      "movemask_instructions": 2375,
+      "scalar_instructions": 27654
+    }
+  }
+}

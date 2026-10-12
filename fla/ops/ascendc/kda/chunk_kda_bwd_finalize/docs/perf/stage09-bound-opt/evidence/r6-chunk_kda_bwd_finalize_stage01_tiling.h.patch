@@ -1,0 +1,10 @@
+--- baseline/chunk_kda_bwd_finalize_stage01_tiling.h
++++ r6/chunk_kda_bwd_finalize_stage01_tiling.h
+@@ -26 +26,2 @@
+-                                                    const std::vector<int64_t> &cuSeqlens, uint32_t availableCores)
++                                                    const std::vector<int64_t> &cuSeqlens, uint32_t availableCores,
++                                                    bool lookahead = false)
+@@ -64 +65,2 @@
+-    plan.workspaceBytes = static_cast<uint64_t>(plan.tiling.usedCoreNum) * WS_CORE_BYTES;
++    plan.workspaceBytes = static_cast<uint64_t>(plan.tiling.usedCoreNum) *
++                          (WS_CORE_BYTES + (lookahead ? WS_RAW_CORE_BYTES : 0));

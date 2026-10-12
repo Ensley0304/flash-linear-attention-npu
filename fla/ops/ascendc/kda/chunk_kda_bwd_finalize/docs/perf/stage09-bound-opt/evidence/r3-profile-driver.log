@@ -1,0 +1,2 @@
+r3-profile-fixed {'min': 7756.566, 'median': 7790.7505, 'max': 7826.156} {'min': 0.692, 'median': 0.694, 'max': 0.695}
+r3-profile-varlen {'min': 7984.378, 'median': 8014.782499999999, 'max': 8031.285} {'min': 0.685, 'median': 0.686, 'max': 0.686}

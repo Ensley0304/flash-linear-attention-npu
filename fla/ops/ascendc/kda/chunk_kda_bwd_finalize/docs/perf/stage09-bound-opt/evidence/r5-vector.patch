@@ -1,0 +1,33 @@
+--- baseline-vector.h
++++ r5-vector.h
+@@ -537 +537,2 @@
+-    template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false>
++    template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false,
++              bool FULL_CHUNK = false>
+@@ -544 +545 @@
+-        const uint32_t rows = chunk.validRows;
++        const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : chunk.validRows;
+@@ -608 +609,2 @@
+-            const uint32_t active = rows > first ? (rows - first < ROWS ? rows - first : ROWS) : 0;
++            const uint32_t active =
++                FULL_CHUNK ? ROWS : (rows > first ? (rows - first < ROWS ? rows - first : ROWS) : 0);
+@@ -677,3 +679,4 @@
+-                        const uint32_t active = first < limit && (matrix == 0 || first >= start) ?
+-                                                    (limit - first < ROWS ? limit - first : ROWS) :
+-                                                    0;
++                        const uint32_t active =
++                            first < limit && (matrix == 0 || first >= start) ?
++                                (FULL_CHUNK ? ROWS : (limit - first < ROWS ? limit - first : ROWS)) :
++                                0;
+@@ -776 +779,2 @@
+-                    Stage9<CAPTURE, Q_NORM>(tiling, chunk, chunkIndex, head, owner, core, capture, bank, start, end);
++                    Stage9<CAPTURE, Q_NORM, FULL_CHUNK>(tiling, chunk, chunkIndex, head, owner, core, capture, bank,
++                                                        start, end);
+@@ -797 +801 @@
+-    template <bool CAPTURE, bool Q_NORM>
++    template <bool CAPTURE, bool Q_NORM, bool FULL_CHUNK = false>
+@@ -847,0 +852 @@
++#pragma unroll
+@@ -851 +856 @@
+-            const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
++            const uint32_t active = FULL_CHUNK ? ROWS : (first < end ? (end - first < ROWS ? end - first : ROWS) : 0);

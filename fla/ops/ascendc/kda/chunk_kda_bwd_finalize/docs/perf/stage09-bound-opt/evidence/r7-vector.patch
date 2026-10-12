@@ -1,0 +1,7 @@
+--- baseline-vector.h
++++ r7-vector.h
+@@ -909 +908,0 @@
+-            AscendC::DataCopy(dqBase[first * HEAD_DIM], dq, ELEMENTS);
+@@ -914,0 +914,2 @@
++                // FP32 dq is diagnostic only; Stage 11 consumes dg, not dq.
++                AscendC::DataCopy(dqBase[first * HEAD_DIM], dq, ELEMENTS);

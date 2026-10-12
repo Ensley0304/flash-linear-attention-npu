@@ -197,3 +197,18 @@ r3 完成 228 次 CPU 标杆检查；最终 r5 新增 70 次检查，四组完�
 - 优化参考：cannbot-skills PR 1069 对应本地参考提交 4950cbd7 的 double_buffer_design / ub_resident_design；先做片上复用及双槽，再根据实测选择广播或 tile 优化。
 
 r2 的 132 次采数版 tails、44 次性能版 tails、18 次前序 smoke 回归通过；四组完整 8K 模型的 Stage 9 精度和版本一致性检查通过。最终定长/变长耗时 7717.991 / 7836.817 μs，最大流水为 Vector 67.70% / 67.85%，90% 目标未达。原始 CSV、源码哈希、模型输出哈希及完整三 lane 模拟器摘要见[十阶段验证记录](perf/stage0123456789/README.md)。工作目录已集中到 `/data/wys/kda-finalize-a2-stage9-20261012`。
+
+## Stage 0～9 bound 优化（2026-10-12）
+
+按用户计划独立测试跨带缓冲、完整 chunk 特化和跨 work 提前计算，均未获得稳定收益。后续保留 r11：Stage 7 输出交替用槽、跳过全零 tile 的高低位拆分；Stage 9 提前 base 搬入和 q/k 转换。192 KiB UB、GM/L1 布局、全部双缓冲、精度门槛和残差项不变。共享 mask 的 repeat 实验也已因回退撤销。
+
+| B=1/H=96/T=8192/K=V=128 | 原基线 | 最终 r11 | 变化 |
+| --- | ---: | ---: | ---: |
+| 定长耗时 | 7711.310 μs | 7483.497 μs | −2.95% |
+| 变长耗时 | 7805.193 μs | 7591.663 μs | −2.73% |
+| 定长最大流水占比 | Vector 67.7% | Vector 65.4% | 未到 80% |
+| 变长最大流水占比 | Vector 67.8% | Vector 65.2% | 未到 80% |
+
+最终版本通过 132 次 Stage 9 tails、36 次 Stage 0～8 smoke、44 次性能库 tails；四组完整 8K 采数/性能版与已验证原基线输出逐位一致。Host 检查与三 lane 模拟器通过。去掉无效 Vector 计算后耗时和占比同时下降；本轮有实际加速，但 bound 目标仍未完成。
+
+全部候选、同步/布局说明、精度范围、原始 msprof 和复现脚本见[本轮记录](perf/stage09-bound-opt/README.md)。仍为部分 Stage 开发验证，不代表完整 Finalize、ATK 或 A3 验收。

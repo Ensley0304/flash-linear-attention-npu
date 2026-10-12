@@ -1,0 +1,22 @@
+--- baseline-entry.cpp
++++ r4-entry.cpp
+@@ -303,2 +303,7 @@
+-                                vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM>(
+-                                    tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
++                                if (chunk.validRows == CHUNK_SIZE) {
++                                    vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, true>(
++                                        tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
++                                } else {
++                                    vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM>(
++                                        tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
++                                }
+@@ -337,2 +342,7 @@
+-                                vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM>(
+-                                    tiling, chunk, chunkIndex, head, owner, core, capture, bank);
++                                if (chunk.validRows == CHUNK_SIZE) {
++                                    vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, true>(
++                                        tiling, chunk, chunkIndex, head, owner, core, capture, bank);
++                                } else {
++                                    vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM>(
++                                        tiling, chunk, chunkIndex, head, owner, core, capture, bank);
++                                }

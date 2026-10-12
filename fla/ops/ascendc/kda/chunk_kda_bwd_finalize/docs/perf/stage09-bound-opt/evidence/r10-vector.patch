@@ -1,0 +1,66 @@
+--- baseline-vector.h
++++ r10-vector.h
+@@ -29,0 +30 @@
++            stage9Free_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
+@@ -31,0 +33 @@
++            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
+@@ -657,0 +660,5 @@
++        // The band scratch reuses the strict-lower output region.
++        for (uint32_t slot = 0; slot < 2; ++slot) {
++            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++        }
+@@ -661,0 +669,6 @@
++            // Stage 9 keeps dq/dg at [96,112), [120,136), packed dq at [136,144).
++            // Its raw slots [88,96), [112,120) are free once Vector finishes.
++            // The operand dies after Mul and shares storage with reconstruction.
++            auto value = ub_[88 * 1024].ReinterpretCast<float>();
++            auto operand = ub_[112 * 1024].ReinterpretCast<float>();
++            auto rebuilt = operand;
+@@ -680 +693 @@
+-                        auto output = ub_[120 * 1024 + slot * 8 * 1024].ReinterpretCast<bfloat16_t>();
++                        auto output = ub_[(slot == 0 ? 152 : 184) * 1024].ReinterpretCast<bfloat16_t>();
+@@ -785,0 +799,4 @@
++            if constexpr (FINALIZE_Q) {
++                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
++                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
++            }
+@@ -818,2 +835,3 @@
+-        // Two 24 KiB slots hold raw/dq/dg; bases are updated after their last read.
+-        // BF16 outputs: [136,144); q/k scratch: [144,160); product: [184,192) KiB.
++        // Inputs: [88,112), [112,136); dq/dg stay in their original slots.
++        // BF16 outputs: [136,144); no extra UB copies are needed.
++        // Stage 7 band scratch and outputs do not overlap these output slots.
+@@ -832,0 +851,2 @@
++            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
++            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+@@ -846 +865,0 @@
+-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+@@ -858 +876,0 @@
+-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+@@ -896,2 +913,0 @@
+-                AscendC::PipeBarrier<PIPE_V>();
+-                AscendC::Cast(packed, dq, AscendC::RoundMode::CAST_RINT, active * HEAD_DIM);
+@@ -904,2 +920,3 @@
+-            // No third tile in this band. Next Stage 9 bridges output completion
+-            // to MTE2 before these in-place input/output slots are loaded again.
++            AscendC::PipeBarrier<PIPE_V>();
++            AscendC::Cast(packed, dq, AscendC::RoundMode::CAST_RINT, ELEMENTS);
++            // The next Stage 9 waits for these outputs before reloading inputs.
+@@ -918,10 +935 @@
+-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+-        }
+-        // Stage 7 remaps these regions on the next band; retire both writers first.
+-        for (uint32_t slot = 0; slot < 2; ++slot) {
+-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+-        }
+-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[0]);
+-        for (uint32_t slot = 0; slot < 2; ++slot) {
+-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
+@@ -935,0 +944,2 @@
++            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
++            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(stage9Free_[slot]);
+@@ -970,0 +981 @@
++    AscendC::TEventID stage9Free_[2];

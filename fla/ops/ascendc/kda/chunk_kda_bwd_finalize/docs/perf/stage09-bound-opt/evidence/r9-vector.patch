@@ -1,0 +1,52 @@
+--- baseline-vector.h
++++ r9-vector.h
+@@ -617 +617,3 @@
+-                auto output = ub_[120 * 1024 + slot * 8 * 1024].ReinterpretCast<bfloat16_t>();
++                // Alternate by output matrix, independently of the input tile slot.
++                const uint32_t outputSlot = matrix;
++                auto output = ub_[120 * 1024 + outputSlot * 8 * 1024].ReinterpretCast<bfloat16_t>();
+@@ -621 +623 @@
+-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
+@@ -630,2 +632,2 @@
+-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
++                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
++                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
+@@ -644 +646 @@
+-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
+@@ -675 +677,2 @@
+-                        const uint32_t slot = (3 * tile + matrix) & 1;
++                        // kNeg alternates across tiles; qPos/bkPos alternate within each tile.
++                        const uint32_t slot = CONSUME_BANDS && phase == 1 ? matrix - 1 : (3 * tile + matrix) & 1;
+@@ -772,4 +774,0 @@
+-                    AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_READY);
+-                    if (owner != 0) {
+-                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
+-                    }
+@@ -842 +841 @@
+-            AscendC::DataCopy(input, raw[first * HEAD_DIM], ELEMENTS);
++            // Both bases are from Stage 5; prefetch them before waiting for Cube.
+@@ -844,0 +844,9 @@
++        }
++        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_READY);
++        if (owner != 0) {
++            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
++        }
++        for (uint32_t slot = 0; slot < 2; ++slot) {
++            auto input = ub_[(88 + slot * 24) * 1024].ReinterpretCast<float>();
++            const uint32_t first = start + slot * ROWS;
++            AscendC::DataCopy(input, raw[first * HEAD_DIM], ELEMENTS);
+@@ -857,2 +865 @@
+-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++            // Resident q/k/diagonal are independent of the three GM inputs.
+@@ -861,0 +869,5 @@
++                AscendC::Brcb(rowScale, diag[first], 2, {1, 8});
++            }
++            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
++            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
++            if (active != 0) {
+@@ -863 +874,0 @@
+-                AscendC::Brcb(rowScale, diag[first], 2, {1, 8});
