@@ -1,0 +1,187 @@
+{
+  "baseline_commit": "674e3066",
+  "target_max_pipeline_ratio": 0.9,
+  "candidates": [
+    {
+      "candidate": "r9",
+      "change": "FP32 MulAddDst with negative beta",
+      "adopted": false,
+      "tail_pass_count": 22,
+      "profiles": [
+        {
+          "case": "fixed",
+          "raw_csv": "stage5/r9-profile-fixed/PROF_000001_20261012110049960_02925820GHAJNRGR/mindstudio_profiler_output/op_summary_20261012110057.csv",
+          "collector_exit_code": 0,
+          "target_rows": 30,
+          "samples": 10,
+          "median": {
+            "Task Duration(us)": 2989.1395,
+            "aic_mac_ratio": 0.165,
+            "aic_scalar_ratio": 0.2765,
+            "aic_mte1_ratio": 0.19,
+            "aic_mte2_ratio": 0.554,
+            "aic_fixpipe_ratio": 0.379,
+            "aiv_vec_ratio": 0.7435,
+            "aiv_scalar_ratio": 0.736,
+            "aiv_mte2_ratio": 0.635,
+            "aiv_mte3_ratio": 0.232
+          },
+          "duration_min_us": 2968.96,
+          "duration_max_us": 3002.48
+        },
+        {
+          "case": "varlen",
+          "raw_csv": "stage5/r9-profile-varlen/PROF_000001_20261012110107773_02929522QQJEAAPJ/mindstudio_profiler_output/op_summary_20261012110547.csv",
+          "collector_exit_code": 137,
+          "target_rows": 30,
+          "samples": 10,
+          "median": {
+            "Task Duration(us)": 3060.7110000000002,
+            "aic_mac_ratio": 0.164,
+            "aic_scalar_ratio": 0.275,
+            "aic_mte1_ratio": 0.19,
+            "aic_mte2_ratio": 0.559,
+            "aic_fixpipe_ratio": 0.377,
+            "aiv_vec_ratio": 0.7415,
+            "aiv_scalar_ratio": 0.727,
+            "aiv_mte2_ratio": 0.6445000000000001,
+            "aiv_mte3_ratio": 0.231
+          },
+          "duration_min_us": 3048.621,
+          "duration_max_us": 3081.821,
+          "export_exit_code": 0
+        }
+      ],
+      "sources": {
+        "kda_finalize_stage01.cpp": "401849e91a3c03b319c2efa84ef4a4144937382297b730d37e598c488ecaded8",
+        "chunk_kda_bwd_finalize_common.h": "41db9df1a98303d61743440cc2639226e8568bc29170c6e609fad01e05eceab3",
+        "chunk_kda_bwd_finalize_cube.h": "841af11121877e1073040919ccf8143b408e6b9c8c3bfaba9e71c26e66f602f0",
+        "chunk_kda_bwd_finalize_vector.h": "bd2cc9c791ec760a76d44b26ffd38aec4e310e460f7a9668a4180a6cb0087aa1"
+      },
+      "libraries": {
+        "capture": "67ab5f764d051210be5e220ee533f0f50c9fa7bb486d43ecac553d7249c780c9",
+        "perf": "55b7e83aa1eb9caf6dbaa19ae3c15be8fcafa7e293cb278f6fa50bab8d164b22"
+      }
+    },
+    {
+      "candidate": "r10",
+      "change": "Full-chunk specialization for Vector stages",
+      "adopted": false,
+      "tail_pass_count": 22,
+      "profiles": [
+        {
+          "case": "fixed",
+          "raw_csv": "stage5/r10-profile-fixed/PROF_000001_20261012110814360_03024810QKRCJHKR/mindstudio_profiler_output/op_summary_20261012110821.csv",
+          "collector_exit_code": 0,
+          "target_rows": 30,
+          "samples": 10,
+          "median": {
+            "Task Duration(us)": 3123.842,
+            "aic_mac_ratio": 0.157,
+            "aic_scalar_ratio": 0.2645,
+            "aic_mte1_ratio": 0.182,
+            "aic_mte2_ratio": 0.5285,
+            "aic_fixpipe_ratio": 0.357,
+            "aiv_vec_ratio": 0.7244999999999999,
+            "aiv_scalar_ratio": 0.669,
+            "aiv_mte2_ratio": 0.6154999999999999,
+            "aiv_mte3_ratio": 0.215
+          },
+          "duration_min_us": 3083.981,
+          "duration_max_us": 3133.043
+        },
+        {
+          "case": "varlen",
+          "raw_csv": "stage5/r10-profile-varlen/PROF_000001_20261012110832482_03027762LOKBIOCN/mindstudio_profiler_output/op_summary_20261012110928.csv",
+          "collector_exit_code": 137,
+          "target_rows": 30,
+          "samples": 10,
+          "median": {
+            "Task Duration(us)": 3216.084,
+            "aic_mac_ratio": 0.156,
+            "aic_scalar_ratio": 0.263,
+            "aic_mte1_ratio": 0.18,
+            "aic_mte2_ratio": 0.534,
+            "aic_fixpipe_ratio": 0.3575,
+            "aiv_vec_ratio": 0.72,
+            "aiv_scalar_ratio": 0.6675,
+            "aiv_mte2_ratio": 0.62,
+            "aiv_mte3_ratio": 0.2175
+          },
+          "duration_min_us": 3190.464,
+          "duration_max_us": 3224.324,
+          "export_exit_code": 0
+        }
+      ],
+      "sources": {
+        "kda_finalize_stage01.cpp": "52d72dcb5d99176180cc8ae02980b829ef517fb328bd78d74edefc4f4f5144f7",
+        "chunk_kda_bwd_finalize_common.h": "41db9df1a98303d61743440cc2639226e8568bc29170c6e609fad01e05eceab3",
+        "chunk_kda_bwd_finalize_cube.h": "841af11121877e1073040919ccf8143b408e6b9c8c3bfaba9e71c26e66f602f0",
+        "chunk_kda_bwd_finalize_vector.h": "9352ba564309c0a8f7ddef2969b47e1fcb9c087b6f60bbea5c63463eb9670fca"
+      },
+      "libraries": {
+        "capture": "f4060456827aaf8a65b79a86031073a519ce1eac115874d1e228a4f1533e79c8",
+        "perf": "0948d36c7bd786103def4a3c1a7f3a0b2d2ead82866f1274dc88ed005c00db56"
+      }
+    },
+    {
+      "candidate": "r11",
+      "change": "Scalar event fields instead of dynamically indexed member arrays",
+      "adopted": false,
+      "tail_pass_count": 22,
+      "profiles": [
+        {
+          "case": "fixed",
+          "raw_csv": "stage5/r11-profile-fixed/PROF_000001_20261012111147140_03066232OJQKPPMA/mindstudio_profiler_output/op_summary_20261012111154.csv",
+          "collector_exit_code": 0,
+          "target_rows": 30,
+          "samples": 10,
+          "median": {
+            "Task Duration(us)": 2988.5699999999997,
+            "aic_mac_ratio": 0.165,
+            "aic_scalar_ratio": 0.2725,
+            "aic_mte1_ratio": 0.19,
+            "aic_mte2_ratio": 0.5415000000000001,
+            "aic_fixpipe_ratio": 0.3625,
+            "aiv_vec_ratio": 0.758,
+            "aiv_scalar_ratio": 0.695,
+            "aiv_mte2_ratio": 0.5994999999999999,
+            "aiv_mte3_ratio": 0.2235
+          },
+          "duration_min_us": 2985.719,
+          "duration_max_us": 2995.599
+        },
+        {
+          "case": "varlen",
+          "raw_csv": "stage5/r11-profile-varlen/PROF_000001_20261012111205169_03070953FLMMPQMO/mindstudio_profiler_output/op_summary_20261012111213.csv",
+          "collector_exit_code": 0,
+          "target_rows": 30,
+          "samples": 10,
+          "median": {
+            "Task Duration(us)": 3063.091,
+            "aic_mac_ratio": 0.164,
+            "aic_scalar_ratio": 0.272,
+            "aic_mte1_ratio": 0.1895,
+            "aic_mte2_ratio": 0.5465,
+            "aic_fixpipe_ratio": 0.358,
+            "aiv_vec_ratio": 0.756,
+            "aiv_scalar_ratio": 0.6944999999999999,
+            "aiv_mte2_ratio": 0.6134999999999999,
+            "aiv_mte3_ratio": 0.221
+          },
+          "duration_min_us": 3057.521,
+          "duration_max_us": 3066.682
+        }
+      ],
+      "sources": {
+        "kda_finalize_stage01.cpp": "401849e91a3c03b319c2efa84ef4a4144937382297b730d37e598c488ecaded8",
+        "chunk_kda_bwd_finalize_vector.h": "27bf47656c7a001c01e959946fd9a13b97c1264cbe3c1810535cbacc6c4fac2d"
+      },
+      "libraries": {
+        "capture": "7e1e7c3050b6b3f2a6eef69f33eb88c520ede533d8e9b4e19711563df64efaf4",
+        "perf": "1d70c665e4ea637b1b2a155d67a6bded7f19e91a9b56648d40bbd5b283c9e44e"
+      }
+    }
+  ],
+  "note": "Tail checks only; candidates are not the fully validated production baseline."
+}
