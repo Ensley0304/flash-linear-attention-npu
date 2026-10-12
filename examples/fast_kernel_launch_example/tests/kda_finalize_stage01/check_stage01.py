@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private Stage 0-5 checks; not an end-to-end Finalize accuracy claim."""
+"""Private Stage 0-6 checks; not an end-to-end Finalize accuracy claim."""
 import argparse
 import os
 import signal
@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch_npu  # noqa: F401
 
-CAPTURE_BYTES = 360 * 1024
+CAPTURE_BYTES = 384 * 1024
 OFFSETS = {
     "dk_state_raw": (0, torch.float32, (64, 128)),
     "dv_b": (32 * 1024, torch.float32, (64, 128)),
@@ -149,6 +149,8 @@ def check_case(args, batch, heads, tokens, lengths=None):
         capture, trace, workspace = capture.cpu(), trace.cpu(), workspace.cpu()
         if args.stage >= 3:
             check_stage3(inputs, beta, chunks, lengths is not None, capture, workspace, dv_out.cpu(), args.workspace_only, expected)
+        if args.stage >= 6:
+            check_stage6(inputs, beta, chunks, lengths is not None, capture, workspace, args, expected)
         if args.stage >= 5:
             check_stage5(inputs, q, dq_raw, beta, chunks, lengths is not None, capture, workspace, args, expected)
         if args.stage >= 4 and not args.workspace_only:
@@ -184,7 +186,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
             print(f"PASS workspace stage={args.stage} B={batch} H={heads} T={tokens} "
                   f"varlen={lengths is not None} gate={args.gate_mode} cores={used_cores} repeat={iteration + 1}", flush=True)
             continue
-        names = list(OFFSETS)[:(4, 8, 10, 10, 10, 10)[args.stage]]
+        names = list(OFFSETS)[:(4, 8, 10, 10, 10, 10, 10)[args.stage]]
         # Batch comparisons keep the full 8K check practical without sampling or
         # changing the per-element tolerance / independent CPU reference.
         for name in names:
@@ -274,7 +276,9 @@ def check_case(args, batch, heads, tokens, lengths=None):
                 assert (record[(128 if args.stage >= 2 else 80) * 1024:144 * 1024] == 0x5A).all(), "workspace guard overwritten"
                 if args.stage >= 5:
                     assert (record[200 * 1024 + 256:208 * 1024] == 0x5A).all(), "Stage 5 workspace guard"
-                    assert (record[208 * 1024 + 512:] == 0x5A).all(), "Stage 5 workspace guard"
+                    assert (record[208 * 1024 + 512:216 * 1024 if args.stage >= 6 else record.numel()] == 0x5A).all(), "Stage 5 workspace guard"
+                    if args.stage >= 6:
+                        assert (record[232 * 1024:] == 0x5A).all(), "Stage 6 workspace guard"
                 else:
                     assert (record[(168 if args.stage >= 3 else 160) * 1024:] == 0x5A).all(), "workspace guard overwritten"
         if args.cores == 1 and works > 1:
@@ -472,12 +476,63 @@ def check_stage5(inputs, q, dq_raw, beta, chunks, variable, capture, workspace, 
                 assert ((got - full[name]).abs() <= budgets[name] + 2e-6 + 3e-4 * full[name].abs()).all(), f'Stage 5 full {name}'
                 assert torch.count_nonzero(got[rows:]) == 0, f'{name} tail'
     if not args.workspace_only:
-        assert (capture[:, :, 352 * 1024 + 256:] == 0xA5).all(), 'Stage 5 capture guard'
+        assert (capture[:, :, 352 * 1024 + 256:360 * 1024 if args.stage >= 6 else CAPTURE_BYTES] == 0xA5).all(), 'Stage 5 capture guard'
+
+
+def check_stage6(inputs, beta, chunks, variable, capture, workspace, args, expected):
+    """Check the real NZ L1 consumer and propagate the unchanged Stage 4 budget."""
+    heads = inputs[0].shape[-3]
+    cores = workspace.numel() // (1024 * 1024)
+    retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
+                (2 * core + owner) * 512 * 1024 + ((work // cores) & 1) * 256 * 1024
+                for core, work in workspace_works(heads, len(chunks), cores, 6) for owner in range(2)
+                if work // len(chunks) * 2 + owner < heads}
+    for head in range(heads):
+        actual, full, budgets, local = [], [], [], []
+        for c, (sequence, _, start, rows) in enumerate(chunks):
+            if args.workspace_only and (head, c) not in retained:
+                continue
+            a = torch.zeros((64, 64), dtype=torch.float64)
+            src = inputs[3][head] if variable else inputs[3][sequence, head]
+            a[:rows, :rows] = src[start:start + rows, :rows].double()
+            b = torch.zeros(64, dtype=torch.float64)
+            b[:rows] = (beta[head] if variable else beta[sequence, head])[start:start + rows].double()
+            ref = expected[head][c] if expected is not None else reference(inputs, chunks, head, c, variable)
+            zb_ref = torch.tril((ref['zV'].double() - ref['zW'].double()) * b[None, :], -1).float().bfloat16().double()
+            zb_budget = torch.tril((ref['zW_budget'].double() + 2e-6 + 3e-4 * ref['zV'].double().abs()) * b[None, :], -1)
+            zb_budget += 2e-5 + 8e-3 * zb_ref.abs()
+            tza = (zb_ref @ a.T).float().bfloat16().double()
+            tza_budget = zb_budget @ a.abs().T + 2e-5 + 8e-3 * tza.abs()
+            full.append((a.T @ tza).float())
+            budgets.append((a.abs().T @ tza_budget).float())
+            if args.workspace_only:
+                offset = retained[head, c] + 216 * 1024
+                got = workspace[offset:offset + 16 * 1024].clone().view(torch.float32).reshape(64, 64)
+            else:
+                record = capture[head, c]
+                got = record[360 * 1024:376 * 1024].clone().view(torch.float32).reshape(64, 64)
+                saved_tza = record[224 * 1024:232 * 1024].clone().view(torch.bfloat16).reshape(64, 64).double()
+                local.append((a.T @ saved_tza).float())
+                if (head, c) in retained:
+                    offset = retained[head, c] + 216 * 1024
+                    torch.testing.assert_close(workspace[offset:offset + 16 * 1024].clone().view(torch.float32).reshape(64, 64),
+                                               got, rtol=0, atol=0, msg='Stage 6 workspace/capture')
+            actual.append(got)
+            assert torch.count_nonzero(got[rows:]) == 0 and torch.count_nonzero(got[:, rows:]) == 0, 'dAkk_raw tail'
+        if not actual:
+            continue
+        got, wanted = torch.stack(actual), torch.stack(full)
+        assert torch.isfinite(got).all(), 'Stage 6 nonfinite'
+        if not args.workspace_only:
+            torch.testing.assert_close(got, torch.stack(local), rtol=3e-4, atol=2e-6, msg='Stage 6 local GEMM')
+        assert ((got - wanted).abs() <= torch.stack(budgets) + 2e-6 + 3e-4 * wanted.abs()).all(), 'Stage 6 full dAkk_raw'
+    if not args.workspace_only:
+        assert (capture[:, :, 376 * 1024:] == 0xA5).all(), 'Stage 6 capture guard'
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5), default=0)
+    parser.add_argument("--stage", type=int, choices=(0, 1, 2, 3, 4, 5, 6), default=0)
     parser.add_argument("--scale", type=float, default=128 ** -.5)
     parser.add_argument("--device", type=int, default=1)
     parser.add_argument("--cores", type=int, default=1)

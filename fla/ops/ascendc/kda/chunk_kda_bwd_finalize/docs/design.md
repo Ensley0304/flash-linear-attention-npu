@@ -2,7 +2,7 @@
 
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
 
-本轮实现范围：Stage 0～2 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
+本轮实现范围：Stage 0～6 及独立开发验证入口。其余 Stage 为后续实现计划；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
 
 硬件预算：L1 512 KiB，L0A/L0B 各 64 KiB，L0C 128 KiB，每个 AIV 的 UB 192 KiB。
 
@@ -109,6 +109,12 @@ dAkk_raw = akkᵀ @ Tza
 ```
 
 等待 Tza 写入完成后读取；末次 L1→L0 搬运完成后释放。
+
+A2 七阶段入口先完成两 head 的 Stage 4，再按 head 执行 Stage 6，与 Vector Stage 5 并行。akk/Tza 保持原两代 L1 地址；Stage 4 经 FIX_MTE1 发布 Tza，Stage 6 搬完两个操作数才释放 akk。后续同槽 MMAD/Fixpipe 按既有 L0 双缓冲事件排序，保护 Tza 的末次读取。使用 BF16×BF16、FP32 累加，dAkk_raw 以 FP32 ND 写入每代 GM 槽 `[216,232) KiB`，不与 Stage 5 写回重叠。总 L1/UB/workspace 不增加；测试 capture 新增 `[360,376) KiB`，每条记录扩至 384 KiB。
+
+性能假设：每 head 新增一次 64³ GEMM（0.524 MFLOPs）和 16 KiB 写回；目标定长 case 合计新增约 6.44 GFLOPs、192 MiB GM 写回，没有新增 GM 输入。当前 Stage 5 以 Vector 为主，Stage 6 有机会隐藏在其计算中；最大流水占比能否提高以实测为准，不以新增工作量直接宣称加速。
+
+后续 Stage 7 读取 dAkk_raw 时须等待独立的 Fixpipe 完成通知，不能将 S5_DONE 当作 Stage 6 ready。
 
 ## Stage 7：Vector
 

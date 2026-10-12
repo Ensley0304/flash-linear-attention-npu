@@ -145,3 +145,16 @@ Stage 0 每 head 最后一次 L1 读取后，提前装载下一 work 的五个�
 2026-10-12 `/data` 满盘导致两次 msprof 空输出，已排除；工作副本复制至 A2 的 `/root/ensley-kda-finalize-a2-stage5-20261012`，原目录与文件保留。所有异常采集日志保留，不能用工具退出码或 benchmark 的 DONE 单独认定性能数据有效。
 
 完整三 lane 模拟器确认 42 次生产 MMAD，两个 AIV 的 Stage 5 均与 MTE2、MTE3 及 Cube Stage 4 重叠。数据与复现方式见[六阶段开发记录](perf/stage012345/README.md)。这仍是部分 Stage 的开发验证，不能代替完整七输出、ATK 双标杆或 A3 验收；90% 性能目标仍待完成。
+
+## Stage 6：七阶段流水（精度通过，最大流水占比未提升）
+
+新增 `dAkk_raw=akk.T@Tza`，BF16×BF16、FP32 累加，实际消费两代 NZ L1 的 Tza。Stage 4 复用已消费的 dW ready 事件发布 Tza，Stage 6 末次 L1 读取后才释放 akk。双 head 沿用 L0 双槽，与 Stage 5 并行；结果写到每代 workspace `[216,232) KiB`，总量不变。capture 扩至 384 KiB。
+
+184 次设备检查全部通过，覆盖 Stage 0～5 回归、Stage 6 单核/多核尾块、两种 gate 的完整 8K 定长/变长以及性能库。局部 FP64 和独立全路径门槛沿用既定规则；校准拒绝全零、减半、错误转置、串 head 和串代。Host tiling、clang-format、源码哈希检查通过。完整模拟器含 48 次生产 MMAD，两个 AIV 的 Stage 5 均与 Stage 6 实际重叠。
+
+| 模型 case | 轮次 / 状态 | 触发证据或预计关键路径 | 结构决策或候选与唯一主要变量 | 精度结果 | 性能前后值 | 瓶颈变化 | 依据或结论 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 定长 8K | Stage 6 功能接入 | Stage 5 Vector 最大 | L1 驻留与双槽接入 Stage 6 | 通过 | 3009.25 → 3042.35 μs | Vector 75.40% → 74.55% | 新增计算大部分重叠，90% 未达到 |
+| 变长 8K | Stage 6 功能接入 | Stage 5 Vector 最大 | 同上 | 通过 | 3084.79 → 3116.44 μs | Vector 75.15% → 74.40% | 同上 |
+
+定长采集分析/导出时异常退出，原始数据离线导出成功且两次完整结果一致；变长最终采集正常退出。详细对照、辅助截断测量和日志身份见[七阶段开发记录](perf/stage0123456/README.md)。本轮不代表完整 Finalize、ATK 或 A3 验收。

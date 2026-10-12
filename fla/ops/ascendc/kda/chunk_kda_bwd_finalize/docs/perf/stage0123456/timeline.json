@@ -1,0 +1,73 @@
+{
+  "source": "stage6/simulator-r0/OPPROF_20261012113141_UTIFDBSLBGZTQPFQ/simulator/trace.json",
+  "complete": true,
+  "production_mmad_count": 48,
+  "lanes": {
+    "core0.cubecore0": {
+      "instruction_counts": {
+        "MOV_SPR_XN": 37,
+        "MOV_OUT_TO_L1_MULTI_ND2NZ": 48,
+        "MMAD": 48,
+        "BAR": 36,
+        "FIX_L0C_TO_DST": 48,
+        "SET_CROSS_CORE": 8
+      }
+    },
+    "core0.veccore0": {
+      "instruction_counts": {
+        "MOVEMASK": 798,
+        "MOVEV": 70,
+        "BAR": 235,
+        "MOV_OUT_TO_UB": 138,
+        "VCONV": 78,
+        "VMUL": 171,
+        "VCADD": 60,
+        "VADD": 93,
+        "VMULS": 45,
+        "VEXP": 33,
+        "MOV_UB_TO_OUT": 60,
+        "SET_CROSS_CORE": 9,
+        "MOV_SPR_XN": 3,
+        "MOV_SRC_TO_DST_ALIGN": 3,
+        "VBRCB": 6,
+        "VSUB": 78
+      },
+      "first_stage5_interval_us": [
+        19.240554809570312,
+        23.44944477081299
+      ],
+      "stage5_vector_mte2_overlap_us": 1.6705525228753686,
+      "stage5_vector_mte3_overlap_us": 1.0772223379462957,
+      "stage5_vector_stage4_mmad_overlap_us": 0.09166510961949825,
+      "stage5_vector_stage6_mmad_overlap_us": 0.0916654160246253
+    },
+    "core0.veccore1": {
+      "instruction_counts": {
+        "MOVEMASK": 798,
+        "MOVEV": 70,
+        "BAR": 235,
+        "MOV_OUT_TO_UB": 138,
+        "VCONV": 78,
+        "VMUL": 171,
+        "VCADD": 60,
+        "VADD": 93,
+        "VMULS": 45,
+        "VEXP": 33,
+        "MOV_UB_TO_OUT": 60,
+        "SET_CROSS_CORE": 9,
+        "MOV_SPR_XN": 3,
+        "MOV_SRC_TO_DST_ALIGN": 3,
+        "VBRCB": 6,
+        "VSUB": 78
+      },
+      "first_stage5_interval_us": [
+        19.482778549194336,
+        24.063888728618622
+      ],
+      "stage5_vector_mte2_overlap_us": 1.4905590303242207,
+      "stage5_vector_mte3_overlap_us": 1.5644488167017698,
+      "stage5_vector_stage4_mmad_overlap_us": 0.09111086092889309,
+      "stage5_vector_stage6_mmad_overlap_us": 0.09333404898643494
+    }
+  }
+}

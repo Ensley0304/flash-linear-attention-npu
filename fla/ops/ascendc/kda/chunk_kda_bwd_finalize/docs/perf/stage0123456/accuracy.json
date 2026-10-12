@@ -1,0 +1,19 @@
+{
+  "device_checks": {
+    "r0-tails": 22,
+    "r0-tails-flat": 22,
+    "r0-stage0": 22,
+    "r0-stage1": 22,
+    "r0-stage2": 22,
+    "r0-stage3": 22,
+    "r0-stage4": 22,
+    "r0-stage5": 22,
+    "r0-model-cumulative": 2,
+    "r0-model-flat": 2,
+    "r0-perf-cumulative": 2,
+    "r0-perf-flat": 2
+  },
+  "total": 184,
+  "passed": true,
+  "scope": "Private Stage 0-6; not full Finalize, ATK or A3 acceptance"
+}

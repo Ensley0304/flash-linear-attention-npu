@@ -27,7 +27,7 @@ constexpr bool CAPTURE = KDA_FINALIZE_STAGE01_CAPTURE != 0;
 
 using namespace KDA::Arch22;
 
-// Stage 0-5 harness: two GM generations overlap Stage 3 with the next Cube work.
+// Stage 0-6 harness: two GM generations overlap Stage 3 with the next Cube work.
 // Later stages must retain exp2_gk/rH or defer this release until their last UB read.
 constexpr uint16_t VECTOR_RELEASE = 9;
 constexpr uint16_t VECTOR_ACK = 10;
@@ -156,8 +156,16 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         }
                         for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                             if (readyHead + owner < tiling.heads) {
-                                cube.Stage4<CAPTURE>(tiling, readyWork % tiling.chunks, readyHead + owner, owner,
-                                                     readyBank, capture);
+                                cube.Stage4<CAPTURE, (LAST_STAGE >= 6)>(tiling, readyWork % tiling.chunks,
+                                                                        readyHead + owner, owner, readyBank, capture);
+                            }
+                        }
+                        if constexpr (LAST_STAGE >= 6) {
+                            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                                if (readyHead + owner < tiling.heads) {
+                                    cube.Stage6<CAPTURE>(tiling, readyWork % tiling.chunks, readyHead + owner, owner,
+                                                         core, readyBank, capture);
+                                }
                             }
                         }
                     }
@@ -175,8 +183,16 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         }
                         for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                             if (readyHead + owner < tiling.heads) {
-                                cube.Stage4<CAPTURE>(tiling, readyWork % tiling.chunks, readyHead + owner, owner,
-                                                     readyBank, capture);
+                                cube.Stage4<CAPTURE, (LAST_STAGE >= 6)>(tiling, readyWork % tiling.chunks,
+                                                                        readyHead + owner, owner, readyBank, capture);
+                            }
+                        }
+                        if constexpr (LAST_STAGE >= 6) {
+                            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                                if (readyHead + owner < tiling.heads) {
+                                    cube.Stage6<CAPTURE>(tiling, readyWork % tiling.chunks, readyHead + owner, owner,
+                                                         core, readyBank, capture);
+                                }
                             }
                         }
                     }
@@ -326,7 +342,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
            const c10::optional<at::Tensor> &dv, const c10::optional<at::Tensor> &q,
            const c10::optional<at::Tensor> &dqRaw, double scale)
 {
-    TORCH_CHECK(lastStage >= 0 && lastStage <= 5, "last_stage must be 0, 1, 2, 3, 4 or 5");
+    TORCH_CHECK(lastStage >= 0 && lastStage <= 6, "last_stage must be 0, 1, 2, 3, 4, 5 or 6");
     TORCH_CHECK(k.device().type() == c10::DeviceType::PrivateUse1, "expected NPU inputs");
     c10::DeviceGuard guard(k.device());
     TORCH_CHECK(k.dim() == 3 || k.dim() == 4, "expected [B,H,T,128] or [H,T,128]");
@@ -334,7 +350,7 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
     const int64_t batch = variable ? 1 : k.size(0);
     const int64_t heads = k.size(k.dim() - 3);
     const int64_t tokens = k.size(k.dim() - 2);
-    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-5 requires K=V=128");
+    TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-6 requires K=V=128");
     for (const auto *tensor : {&k, &v, &vNew, &h, &dh, &dvScan, &akk}) {
         TORCH_CHECK(tensor->device() == k.device() && tensor->is_contiguous() && tensor->scalar_type() == at::kBFloat16,
                     "expected contiguous BF16 inputs on one device");
@@ -438,8 +454,16 @@ RunStage01(const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk, const
                 (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
                 static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
                 (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
-        } else {
+        } else if (lastStage == 5) {
             Stage01Kernel<5><<<tiling.usedCoreNum, nullptr, stream>>>(
+                (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
+                (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
+                (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),
+                (GM_ADDR)(q ? q->data_ptr() : nullptr), (GM_ADDR)(dqRaw ? dqRaw->data_ptr() : nullptr),
+                static_cast<float>(scale), (GM_ADDR)chunkMetadata.data_ptr(), (GM_ADDR)workspace.data_ptr(),
+                (GM_ADDR)capture.data_ptr(), (GM_ADDR)trace.data_ptr(), tiling);
+        } else {
+            Stage01Kernel<6><<<tiling.usedCoreNum, nullptr, stream>>>(
                 (GM_ADDR)k.data_ptr(), (GM_ADDR)v.data_ptr(), (GM_ADDR)gk.data_ptr(), (GM_ADDR)akk.data_ptr(),
                 (GM_ADDR)vNew.data_ptr(), (GM_ADDR)h.data_ptr(), (GM_ADDR)dh.data_ptr(), (GM_ADDR)dvScan.data_ptr(),
                 (GM_ADDR)(beta ? beta->data_ptr() : nullptr), (GM_ADDR)(dv ? dv->data_ptr() : nullptr),

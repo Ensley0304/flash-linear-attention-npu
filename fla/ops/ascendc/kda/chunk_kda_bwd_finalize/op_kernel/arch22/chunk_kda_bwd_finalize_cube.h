@@ -239,7 +239,7 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
     }
 
-    template <bool CAPTURE = false>
+    template <bool CAPTURE = false, bool RETAIN_AKK = false>
     __aicore__ inline void Stage4(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
                                   uint32_t bank, GM_ADDR capture = nullptr)
     {
@@ -281,7 +281,40 @@ public:
             AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot, check, fix);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
         }
+        if constexpr (RETAIN_AKK) {
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
+        } else {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner + 2 * bank]);
+        }
+    }
+
+    template <bool CAPTURE = false>
+    __aicore__ inline void Stage6(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
+                                  uint32_t core, uint32_t bank, GM_ADDR capture = nullptr)
+    {
+        auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
+        // dAkk_raw = akk^T @ Tza. Both BF16 operands remain in their NZ L1 slots.
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(dwReady_[owner]);
+        LoadOperands<true, false>(l1[L1_AKK + bank * L1_AKK_BANK_STRIDE].ReinterpretCast<bfloat16_t>(),
+                                  l1[L1_TZA + bank * L1_TZA_BANK_STRIDE].ReinterpretCast<bfloat16_t>(), CHUNK_SIZE,
+                                  CHUNK_SIZE, CHUNK_SIZE, owner);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(akkFree_[owner + 2 * bank]);
+        auto dAkk = Multiply(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, owner);
+        const uint64_t base =
+            static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES;
+        AscendC::GlobalTensor<float> output;
+        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DAKK_RAW));
+        auto fix = AscendC::FixpipeParamsV220(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, false);
+        fix.quantPre = QuantMode_t::NoQuant;
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output, dAkk, fix);
+        if constexpr (CAPTURE) {
+            AscendC::GlobalTensor<float> snapshot;
+            snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES + CAPTURE_DAKK_RAW));
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot, dAkk, fix);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
     }
 
     __aicore__ inline void ReleaseAkk(uint32_t owner)

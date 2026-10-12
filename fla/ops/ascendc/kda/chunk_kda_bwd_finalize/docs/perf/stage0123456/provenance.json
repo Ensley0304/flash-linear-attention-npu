@@ -1,0 +1,26 @@
+{
+  "base_commit": "2936be7f",
+  "server": "a2-server",
+  "hostname": "ubuntu",
+  "device": 1,
+  "soc": "Ascend910B3",
+  "cann": "9.1",
+  "torch": "2.7.1+cpu",
+  "torch_npu": "2.7.1.post5",
+  "sources": {
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_vector.h": "3c3f07268e2eedf6c5bbc5c2910ee198f18704edeaaf616f3b8c38cc928790c8",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_common.h": "da15b27e81a4dcd88df5a06aaddaa349b1afa6e4aa645395cba78090a671aa18",
+    "fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/chunk_kda_bwd_finalize_cube.h": "d2b81a941e8e787f8151d8fe1d5a528060b17b35283f32926f25423df5161ded",
+    "examples/fast_kernel_launch_example/csrc/kda_finalize_stage01/ascend910b/kda_finalize_stage01.cpp": "e436af6fb7a0749749a2fbfbaa6a21c39d46f51fca838253d28c3589e0880b43",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/check_stage01.py": "d9ba17fbe246052bdad5a4f6e3720472151fb46b1d3a3c7dc3954db90f9525bb",
+    "examples/fast_kernel_launch_example/tests/kda_finalize_stage01/bench_stage01.py": "29b08856416056db7d578309d54d58b3230069e6a89beaf8435cf2a8092721c0"
+  },
+  "libraries": {
+    "r0-capture.so": "6bff7a706e0936acd407af52c1900fd7631ec3dfcf4fb3b7d106a0373984cd9b",
+    "r0-perf.so": "2031f59b31f03034db8fa73a849ac50ad804ac2af50136f5b25e450c2da8f7b6"
+  },
+  "stage5_baseline_library": {
+    "path": "/root/ensley-kda-finalize-a2-stage5-20261012/stage5/final-perf.so",
+    "sha256": "afb583c72c699c3820ae1a59de7f811e06e5ebc8b7b620bd9c14cc30437fa91a"
+  }
+}
