@@ -115,6 +115,49 @@ class GdnBoundaryTests(BoundaryChecks, unittest.TestCase):
     kind = "gdn"
 
 
+class GdnGvaTests(unittest.TestCase):
+    def test_arguments(self):
+        self.assertEqual(chunk_gdn_cp.parse_args(["--heads", "3"]).value_heads, 3)
+        self.assertEqual(chunk_gdn_cp.parse_args(["--heads", "2", "--value-heads", "6"]).value_heads, 6)
+        for hv in (0, 3, 10, 130):
+            with self.subTest(hv=hv), self.assertRaises(SystemExit):
+                chunk_gdn_cp.parse_args(["--heads", "2", "--value-heads", str(hv)])
+
+    def test_grouped_reference_and_terminal_boundary(self):
+        """逐 value head 独立计算，核对共享 Q/K 的梯度求和及不同 head 的边界。"""
+        torch.set_num_threads(1)
+        for ratio in (2, 3, 4):
+            with self.subTest(ratio=ratio):
+                x = chunk_gdn_cp.make_inputs(128, 2, 43, 2 * ratio)
+                actual, states, dstates = chunk_gdn_cp.recurrent_reference(x, 128 ** -0.5, 64)
+                expected = {n: torch.zeros_like(t) for n, t in actual.items()}
+                for hv in range(2 * ratio):
+                    hk = hv // ratio
+                    one = {n: t[:, hk:hk + 1] if n in ("q", "k") else t[:, hv:hv + 1]
+                           for n, t in x.items()}
+                    result, hs, dhs = chunk_gdn_cp.recurrent_reference(one, 128 ** -0.5, 64)
+                    for name, value in result.items():
+                        h = hk if name in ("dq", "dk") else hv
+                        expected[name][:, h:h + 1] += value
+                    torch.testing.assert_close(states[1][:, hv:hv + 1], hs[1])
+                    torch.testing.assert_close(dstates[1][:, hv:hv + 1], dhs[1])
+                for name in actual:
+                    torch.testing.assert_close(actual[name], expected[name], rtol=1e-5, atol=1e-6)
+                # 组内贡献必须求和而不是平均；此错误应被当前精度判据拒绝。
+                self.assertFalse(chunk_gdn_cp.metric(actual["dk"] / ratio, expected["dk"], 0.008)[0])
+                dht = dstates[1].bfloat16()
+                qe, ke, we, doe, dve, ge = chunk_gdn_cp.append_terminal_boundary(
+                    x["q"], x["k"], torch.zeros_like(x["v"]), x["do"],
+                    torch.zeros_like(x["v"]), x["g"], dht, 128 ** -0.5)
+                for hv in range(2 * ratio):
+                    injected = qe[:, hv // ratio, -128:].float().transpose(-1, -2) @ doe[:, hv, -128:].float()
+                    torch.testing.assert_close(injected * (128 ** -0.5), dht[:, hv].float(),
+                                               rtol=0.004, atol=0.0001)
+                self.assertEqual(tuple(we.shape), (1, 2 * ratio, 256, 128))
+                for tail in (ke, we, dve, ge):
+                    self.assertEqual(tail[:, :, -128:].count_nonzero().item(), 0)
+
+
 class KdaArch22BackwardTests(unittest.TestCase):
     def test_split_backward_matches_recurrence_with_boundary_loss(self):
         """独立逐词元参考验证 A2/A3 拆分反向，包含非零首末状态和共享参数梯度。"""
