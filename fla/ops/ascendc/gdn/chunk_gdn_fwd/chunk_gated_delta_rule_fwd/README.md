@@ -4,7 +4,9 @@
 
 `ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。仅当 `useExp2=false`、
 `useQkL2norm=false`、`useGateInKernel=false`、不启用 beta sigmoid、`allowNegEigval=false`、不请求分块状态 h、
-`stateVFirst=false` 且 layout 为 `BNSD/NTD` 时使用原 Phase6 kernel，A 可按需输出；任意条件不满足时，
+`stateVFirst=false` 时使用 Phase6 kernel，A 可按需输出。A2/A3 共用 DAV_2201 路由，
+支持 `BNSD/NTD/BSND/TND`，sequence-major QKV 由融合 kernel 原生加载；
+A5 的 Phase6 路径仍使用 `BNSD/NTD`。任意条件不满足时，
 A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，三个阶段统一使用
 调用方传入的 `useExp2`。
 新路径不支持的参数组合由 `ChunkGatedDeltaRuleFwdPrepare` 报错。当前实现支持定长和变长序列、GVA、可选初始状态
@@ -69,8 +71,9 @@ q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变；关闭时 q_hat/k_hat
 h 的 shape 为 dense `[B,NT,Hv,K,V]`，带 cu_seqlens 的 packed 为 `[1,total_NT,Hv,K,V]`；
 `state_v_first=True` 时末两维为 `[V,K]`。A5 prepare 路径导出遵循此契约，旧融合路径仍不导出 h。
 
-`g/beta` 固定以 BSN 输入，在 ACLNN 内转为 BNS；任一输入为 FP32 时，
-另一个先提升为 FP32。两个输入均为主 dtype 时保留该 dtype，后续分支支持范围不变。
+`g/beta` 固定以 BSN 输入。A2/A3 在 ACLNN 内将两者提升为 FP32，
+raw g 保持 BSN 供融合 cumsum 使用，beta 转为 BNS。A5 保留原转换规则：
+任一输入为 FP32 时另一个提升为 FP32；两者均为主 dtype 时保留该 dtype。
 Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 `use_gate_in_kernel=False`，非空 a_log/dt_bias 或启用 gate 均报错。
 
@@ -78,7 +81,7 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 | 名称 | 当前支持范围 | 说明 |
 | --- | --- | --- |
-| `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
+| `layout` | A2/A3 和 A5 新路径支持 `BNSD/BSND/NTD/TND`；A5 Phase6 路径支持 `BNSD/NTD` | q/k/v 的输入布局；A2/A3 原生加载并直接输出 BSND，A5 新路径将 sequence-major QKV 转为 head-first |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `64`、`128` | 分块大小 |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
@@ -95,6 +98,9 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 - A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
+
+A2/A3 的布局、内部属性和调度说明见 [接口合同](docs/api.md) 与
+[设计说明](docs/design.md)。各项验证范围与未完成门禁见 [验证记录](docs/validation.md)。
 
 ## 验证
 

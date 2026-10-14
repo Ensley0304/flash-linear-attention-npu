@@ -5,9 +5,11 @@
 
 ## 支持范围
 
-- `q/k`：`[B,Hk,T,128]`，BF16/FP16。
-- `v`：`[B,Hv,T,V]`，BF16/FP16，`V=128/256`，`Hv % Hk == 0`。
-- `g/beta`：`[B,T,Hv]`；`g` 为 FP32，`beta` 与 q/k/v 同 dtype。
+- 冻结 500 条矩阵的 `q/k`：`[B,Hk,T,128]`，BF16/FP16；`v`：`[B,Hv,T,V]`，
+  `V=128/256`，`Hv % Hk == 0`。
+- 冻结矩阵的 `g/beta`：`[B,T,Hv]`；`g` 为 FP32，`beta` 与 q/k/v 同 dtype。
+  A2/A3 接口另支持 native BSND/TND QKV 与四种 g/beta 主 dtype/FP32 组合，
+  使用独立 public layout 回归补充覆盖；不改变既有冻结矩阵、随机输入或精度阈值。
 - `chunk_size`：64 或 128。
 - 支持定长、变长、GVA、可选初始状态和可选最终状态。
 - SoC：A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
@@ -43,8 +45,10 @@ A5 模型 shape 分别来源于 `推理model.csv` 和 `训练model.csv`，原文
 
 | TilingKey | 选择条件 | 普通/边界用例 | SoC | 实际选择证据 |
 | --- | --- | --- | --- | --- |
-| 1 | `V=128`，未进入 A5 推理模型特化 | MSS 0、2、4 | A2/A3/A5 | 本 PR 硬件门禁补录 |
-| 2 | `V=256` | MSS 1、3、5 | A2/A3/A5 | 本 PR 硬件门禁补录 |
+| 1 | `V=128`，legacy raw g 布局，未进入 A5 推理模型特化 | MSS 0、2、4 | A2/A3/A5 | 实际选择以 profiling/MSS 报告为准 |
+| 2 | `V=256`，legacy raw g 布局 | MSS 1、3、5 | A2/A3/A5 | 实际选择以 profiling/MSS 报告为准 |
+| 3 | `V=128`，prepared raw g 为 BSN | MSS 0、2、4 | A2/A3 DAV_2201 | 本次移植新增；实际选择待硬件报告 |
+| 4 | `V=256`，prepared raw g 为 BSN | MSS 1、3、5 | A2/A3 DAV_2201 | 本次移植新增；实际选择待硬件报告 |
 | 301 | A5 性能 case 0 的推理模式，初态为 BF16/FP32 | MSS 尚未覆盖 | A5 | 原模型 shape 已实测命中；MSS 待补 |
 
 ## 执行
@@ -59,6 +63,15 @@ python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
 `layout=BNSD`、`useExp2=false`、`allowNegEigval=false`、`stateVFirst=false`，且
 `aLog/dtBias` 与扩展中间输出为空；`finalStateOutOptional` 是否为空决定是否输出 final state。
 尚未实现的扩展组合会显式返回参数错误，不会静默忽略。
+
+A2/A3 布局、gate dtype、状态和存储视图回归使用公开入口：
+
+```bash
+python torch_custom/fla_npu/test/test_gdn_phase6_native_layout.py --npu --device 0 --output native-layout.json
+```
+
+默认运行仅检查测试定义；只有显式 `--npu` 的实机报告才代表功能验证。
+该回归不代替 ATK 双标杆、MSS、确定性和性能验收。
 
 正式 500 条双标杆精度使用可恢复分片入口；默认每 25 条启动一个 fresh ATK 进程，避免
 六算子 benchmark 长进程状态累积：
