@@ -58,3 +58,22 @@ Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M�
 
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。
+
+### BF16 raw_g 的片上转换
+
+按设计规则 V2 核对受影响的 Finalize Stage11；任务映射、TilingKey 1–4、
+跨核同步和其他 Stage 保持原实现。Recompute 已按 GateType 支持 BF16/FP32。
+V2 直接传递原始 raw_g，Finalize 通过注册生成的 DTYPE_RAW_G 编译两个类型分支。
+Stage11 每行加载 128 个 raw_g 元素；BF16 在寄存器中扩展为两组 FP32，
+保持原有 bias 加法、sigmoid、逆向扫描和参数归约的顺序，输出类型不变。
+
+Stage11 的 raw_g 位于 UB[176,208) KiB，FP32 占 32 KiB，BF16 只占
+[176,192) KiB 的 16 KiB；一次搬运 validRows×128 个元素。
+原有 dg 驻留于 UB[216,248) KiB，bias/log/da/db 分别从 160/161/162/163 KiB 起始，
+与 raw_g 不重叠。raw_g 由 MTE2 写入、Stage11 VF 最后读取，沿用
+stage7Mte3ToMte2_ 与 mte2ToV_[0] 的复用/消费事件；不增加缓冲、workspace 或事件。
+BF16→FP32 是精确扩展，不改变输入量化值；保留 FP32 分支作为同值回归对照。
+
+模型 case [1,96,8192,128] 的 raw_g 为 192 MiB，移除外部转换避免
+192 MiB 读取及 384 MiB 写回，并避免全量 FP32 临时张量；两个消费者各自
+加载 BF16 并在片上转换。净性能收益以同环境的反向 kernel 时长之和实测为准。
