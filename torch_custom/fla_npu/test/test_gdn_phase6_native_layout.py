@@ -49,6 +49,7 @@ class Case:
     final_state: bool
     state_dtype: str = "fp32"
     cu_seqlens: tuple[int, ...] | None = None
+    expected_empty_rejection: bool = False
 
     @property
     def sequences(self) -> int:
@@ -73,7 +74,7 @@ CASES = (
     Case("fp16_varlen_gva_v256_bt64", "fp16", 1, 65, 2, 4, 256, 64,
          False, True, "fp32", (0, 1, 65)),
     Case("bf16_varlen_empty_sequences", "bf16", 1, 130, 2, 4, 128, 64,
-         True, True, "fp32", (0, 0, 3, 3, 130)),
+         True, True, "fp32", (0, 0, 3, 3, 130), True),
 )
 VARIANTS = (
     Variant("bnsd_public_public", "BNSD", "public", "public"),
@@ -89,7 +90,7 @@ VARIANTS = (
 
 
 def _variants(case: Case) -> tuple[Variant, ...]:
-    # 空序列只验证同输入布局/view 等价与状态有限值，不另加数学标杆。
+    # 9.1 与冻结 main 的 Phase6 不支持空序列，验证明确的 tiling 拒绝合同。
     if case.cu_seqlens is not None and any(a == b for a, b in
                                           zip(case.cu_seqlens, case.cu_seqlens[1:])):
         return tuple(replace(v, gate_dtype="fp32", beta_dtype="fp32") for v in VARIANTS[:8])
@@ -264,6 +265,8 @@ def _execute(case: Case, seed: int, variant: Variant, frozen, operator, torch, d
                            initial_state=inputs["initial_state"], layout=variant.layout,
                            **record["attributes"])
         torch.npu.synchronize()
+        if case.expected_empty_rejection:
+            raise AssertionError("Phase6 空序列未按已声明的支持边界拒绝")
         if len(outputs) != 10:
             raise AssertionError(f"公共返回应有10项，实际为{len(outputs)}")
         contract = {"o_present": outputs[0] is not None,
@@ -298,7 +301,14 @@ def _execute(case: Case, seed: int, variant: Variant, frozen, operator, torch, d
         record["errors"].extend(name for name, passed in contract.items() if not passed)
         record["status"] = "passed" if not record["errors"] else "failed"
     except Exception as exc:
-        record["errors"].append(f"{type(exc).__name__}: {exc}")
+        detail = f"{type(exc).__name__}: {exc}"
+        if (case.expected_empty_rejection and isinstance(exc, RuntimeError) and
+                "aclnnStatus=169112" in detail and "Check seqlens data failed" in detail and
+                "should be larger than" in detail):
+            record.update(status="passed", result="expected_empty_sequence_rejection",
+                          expected_error_detail=detail)
+        else:
+            record["errors"].append(detail)
         record["traceback"] = traceback.format_exc()
     record["elapsed_seconds"] = round(time.monotonic() - start, 6)
     return record, snapshots
@@ -348,7 +358,10 @@ def _run_npu(report: dict[str, Any], args) -> None:
             failed = 0
             for variant in _variants(case):
                 record, actual = _execute(case, seed, variant, frozen, operator, torch, device)
-                if actual is not None and reference is not None:
+                if case.expected_empty_rejection:
+                    if record.get("result") != "expected_empty_sequence_rejection":
+                        record["errors"].append("empty_sequence_rejection_contract_missing")
+                elif actual is not None and reference is not None:
                     comparisons = {}
                     for index, name in enumerate(OUTPUT_NAMES):
                         expected = reference[index] if index < 2 or variant.export_intermediates else None

@@ -46,6 +46,9 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 `BSND/TND=[B,T,H,D]`。`Hv` 必须能被 `Hk` 整除。变长模式使用物理 `B=1`，`cuSeqlensOptional` 必须从 0 开始、
 以 `T` 结束且单调不降。
 
+A2/A3 Phase6 当前不支持空序列：相邻 `cu_seqlens` 边界必须严格递增。
+元数据校验虽允许相等，内部 tiling 会拒绝此组合；不要用重复边界作为占位。
+
 ## 输出
 
 | 名称 | 必选性 | Shape/Dtype | 说明 |

@@ -13,8 +13,9 @@ K=128，V=128/256，chunk_size=64/128，Hv 必须是 Hk 的正整数倍。
 输出 O 固定为 `[B,T,Hv,V]`，不随输入布局改变。
 
 `cuSeqlensOptional` 与 `chunkIndicesOptional` 同时省略时为 dense；变长时同时提供，
-物理 B=1，cu 从 0 单调不降到 T，允许空序列沿用原有处理；索引按 sequence-major 顺序列出每条序列的
-`(sequence, local_chunk)`，扁平化为 int64 数组。空序列和非法边界保持原校验行为。
+物理 B=1，cu 从 0 到 T；A2/A3 Phase6 的相邻边界必须严格递增，不支持空序列。
+元数据校验允许相等，但内部 WU tiling 会拒绝空序列，保持发布基线及冻结 main 的已有边界。
+索引按 sequence-major 顺序列出每条序列的 `(sequence, local_chunk)`，扁平化为 int64 数组。
 
 初始状态可选，`stateVFirst=false` 时为 `[N,Hv,K,V]`；最终状态是否输出仍由
 `finalStateOutOptional` 是否为空决定。可选中间输出、Q/K hats/rstd、beta_eff、A 和 H
