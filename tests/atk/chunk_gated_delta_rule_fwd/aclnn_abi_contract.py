@@ -28,7 +28,6 @@ PREPARE_KERNEL = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare/"
     "op_kernel/arch35/chunk_gated_delta_rule_fwd_prepare.h"
 )
-PREPARE_VF = PREPARE_KERNEL.with_name("chunk_gated_delta_rule_fwd_prepare_vf.h")
 FWD_O_TILING = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/"
     "op_host/chunk_fwd_o_tiling_processor.h"
@@ -188,21 +187,8 @@ def main() -> None:
         prepare_kernel,
     ) is None:
         raise SystemExit("prepare kernel 缺少 useExp2 对应的累计缩放选择")
-    # A5 Prepare 已将指数转换迁到具名 VF 模板，检查模式透传和条件换底，
-    # 不再要求 wrapper 中存在旧版的两个三目表达式。
-    prepare_vf = PREPARE_VF.read_text(encoding="utf-8")
-    for name, template_prefix in (("GateLowerLVF", ""), ("ScaleRowsBetaExp2gVF", "InDtype,")):
-        dispatch = (r"if\s*\(useExp2\s*!=\s*0\)\s*\{\s*" + name + r"<\s*" +
-                    template_prefix + r"\s*true\s*>\(.*?;\s*\}\s*else\s*\{\s*" +
-                    name + r"<\s*" + template_prefix + r"\s*false\s*>\(")
-        if re.search(dispatch, prepare_kernel, re.DOTALL) is None:
-            raise SystemExit(f"prepare kernel 未完整透传 useExp2 到 {name}")
-        function = re.search(r"__aicore__\s+inline\s+void\s+" + name + r"\s*\(.*?\n\}",
-                             prepare_vf, re.DOTALL)
-        if function is None or re.search(
-            r"if constexpr\s*\(UseExp2\)\s*\{[^}]*Muls\([^;]*kGdnLn2", function.group(),
-        ) is None:
-            raise SystemExit(f"prepare VF {name} 缺少条件指数换底")
+    if len(re.findall(r"useExp2\s*!=\s*0\s*\?\s*kGdnLn2\s*:\s*1\.0f", prepare_kernel)) != 2:
+        raise SystemExit("prepare kernel 缺少非 exp2 模式的局部指数换底选择")
     if implementation.count("params.useExp2") < 4:
         raise SystemExit("大融合新路径未完整透传 useExp2")
 

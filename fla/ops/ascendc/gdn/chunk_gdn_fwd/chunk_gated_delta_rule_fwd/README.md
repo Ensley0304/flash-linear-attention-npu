@@ -102,9 +102,6 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
 
-A2/A3 的布局、内部属性和调度说明见 [接口合同](docs/api.md) 与
-[设计说明](docs/design.md)。各项验证范围与未完成门禁见 [验证记录](docs/validation.md)。
-
 ## 验证
 
 ATK 用例和执行说明位于
