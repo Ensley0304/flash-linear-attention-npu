@@ -17,9 +17,9 @@ A2/A3 将 Prepare 和反向 Finalize 展开为独立小算子，普通 GDN 阶�
 自然对数门控，仅 CP 预处理使用转换后的 log2 门控。
 
 运行（需要包含 CP 和对应 GDN 小算子的本机架构算子包）：
-    torchrun --standalone --nproc_per_node=2 examples/chunk_gdn_cp.py --accuracy-check
-    python examples/chunk_gdn_cp.py --device 0 --accuracy-check
-    torchrun --standalone --nproc_per_node=2 examples/chunk_gdn_cp.py --heads 2 --value-heads 6 --accuracy-check
+    torchrun --standalone --nproc_per_node=2 examples/cp/chunk_gdn_cp.py --accuracy-check
+    python examples/cp/chunk_gdn_cp.py --device 0 --accuracy-check
+    torchrun --standalone --nproc_per_node=2 examples/cp/chunk_gdn_cp.py --heads 2 --value-heads 6 --accuracy-check
 """
 from __future__ import annotations
 

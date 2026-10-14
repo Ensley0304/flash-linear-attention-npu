@@ -16,8 +16,8 @@ A2/A3 的反向 Prepare/WY/门控回代使用 PyTorch NPU 运算，块内梯度�
 chunk_kda_bwd_intra；A5 保留独立的融合反向阶段。两条路径均复用前向中间量。
 
 运行（需要包含 CP 及对应 KDA 小算子的本机架构算子包）：
-    torchrun --standalone --nproc_per_node=2 examples/chunk_kda_cp.py --accuracy-check
-    python examples/chunk_kda_cp.py --device 0 --accuracy-check
+    torchrun --standalone --nproc_per_node=2 examples/cp/chunk_kda_cp.py --accuracy-check
+    python examples/cp/chunk_kda_cp.py --device 0 --accuracy-check
 """
 from __future__ import annotations
 

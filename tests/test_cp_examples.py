@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples" / "cp"))
 import chunk_kda_cp
 import chunk_gdn_cp
 
