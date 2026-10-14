@@ -12,7 +12,7 @@ Python wrapper 和公开 ACLNN 头文件保持发布分支版本。
 迁移后调用图为 public host → 同一 ChunkGatedDeltaRuleFwd L0 → arch22 Stage P/ABC/H/O。
 A5 原 Prepare → H → O 调用图保留。新增可选私有属性以默认历史布局保持旧 L0 调用兼容。
 
-性能验证使用已有陈曦五个模型 case：T=3072/438/355/6144/836，Hk=8、Hv=24、K=V=128、
+性能验证使用已有五个模型 case：T=3072/438/355/6144/836，Hk=8、Hv=24、K=V=128、
 BT64、BF16。相同冻结输入在发布基线与候选上按同卡 ABBA 顺序采集 msprof Task Duration(us)，
 并单列 native 布局回归。单 kernel 时间与整个调用的 Cast/Transpose/Copy 时间分别统计。
 T=6144/836 按原测试约定使用两条均匀序列，其余一条；这属于合成边界，不声称还原客户原始边界。
