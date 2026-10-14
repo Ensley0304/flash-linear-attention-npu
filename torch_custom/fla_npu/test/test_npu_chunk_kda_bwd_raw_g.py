@@ -7,7 +7,8 @@ import pytest
 import torch
 
 pytest.importorskip("torch_npu")
-from fla_npu.ops.ascendc import chunk_kda_bwd, chunk_kda_fwd
+from fla_npu.ops.ascendc import chunk_kda_bwd
+from test_npu_chunk_kda_a5_staging import _chunked_reference
 
 
 @pytest.mark.parametrize("beta_dtype", [torch.bfloat16, torch.float32])
@@ -81,14 +82,19 @@ def check_raw_g_equivalence(seed, saved, packed, norm, beta_dtype, heads=8, toke
     indices = tuple(x for i, (a, b) in enumerate(zip(cu, cu[1:]))
                     for c in range(math.ceil((b - a) / 64)) for x in (i, c)) if packed else None
     scale = dim ** -0.5
-    fwd = chunk_kda_fwd(
-        q, k, v, raw, beta, scale, layout="BSND", safe_gate=True,
-        lower_bound=-5.0, use_gate_in_kernel=True, A_log=a_log,
-        dt_bias=bias.flatten(), disable_recompute=True,
-        cu_seqlens=cu, chunk_indices=indices,
+    # Prepare saved tensors using the existing independent CPU forward
+    # reference, so this backward regression needs only the backward OPP.
+    spans = cu if packed else (0, tokens)
+    gate = -5.0 * torch.sigmoid(raw.cpu().float() + bias.cpu())
+    fwd = _chunked_reference(
+        q, k, v, gate, beta, torch.zeros(len(spans) - 1, heads, dim, dim), spans,
     )
-    torch.npu.synchronize()
     _, _, gk, aqk, akk, w, _, qg, kg, v_new, h, _ = fwd
+    # The CPU helper exports V-first states; the optimized backward is K-first.
+    h = h.transpose(-1, -2).contiguous()
+    gk, aqk, akk, w, qg, kg, v_new, h = (
+        x.npu() for x in (gk, aqk, akk, w, qg, kg, v_new, h)
+    )
 
     def head_first(x):
         x = x.transpose(1, 2).contiguous()
