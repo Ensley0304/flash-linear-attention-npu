@@ -1,6 +1,11 @@
 # Finalize 接口
 
-A2/A3 扩展为已确认的设计契约；当前开发提交实现 Stage 0～10，尚未接入完整公开接口。现有 A5 调用保持不变。
+A2/A3 扩展为已确认的设计契约；当前 A2 开发入口实现 Stage 0～12，尚未接入完整公开接口。现有 A5 调用保持不变。
+
+A2 私有入口新增尾部参数 `output_layout=""`：空字符串按输入 rank 选择 BNSD/NTD；
+显式支持定长 BNSD/BSND、变长 NTD/TND，校验调用方提供的 dq/dk/dv 形状。
+三者由 Stage 3/9/11 原生写回，dG/dBeta 固定 BSND/TND。
+当前开发入口 beta、a_log 使用 FP32，Q/K rstd 成对提供，beta_mode 为 0/1/2。
 
 ## 现有 A5 L0 接口
 

@@ -275,8 +275,13 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             if constexpr (LAST_STAGE >= 1) {
                 if (head < tiling.heads) {
                     const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
-                    vector.Stage1<CAPTURE, (LAST_STAGE >= 5)>(tiling, chunk, chunkIndex, head, owner, core, capture,
-                                                              bank);
+                    if (chunk.validRows == CHUNK_SIZE) {
+                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5), true>(tiling, chunk, chunkIndex, head, owner, core,
+                                                                        capture, bank);
+                    } else {
+                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5)>(tiling, chunk, chunkIndex, head, owner, core, capture,
+                                                                  bank);
+                    }
                 }
             }
             // The absent owner in an odd-head work also closes the collective.
@@ -291,15 +296,25 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S02_READY + (bank ^ 1));
                     if (previousHead < tiling.heads) {
                         const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
-                        vector.Stage3<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
-                                               bank ^ 1);
+                        if (chunk.validRows == CHUNK_SIZE) {
+                            vector.Stage3<CAPTURE, true>(tiling, chunk, previousChunk, previousHead, owner, core,
+                                                         capture, bank ^ 1);
+                        } else {
+                            vector.Stage3<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
+                                                   bank ^ 1);
+                        }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK + (bank ^ 1));
                     if constexpr (LAST_STAGE >= 5) {
                         if (previousHead < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
-                            vector.Stage5<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
-                                                   bank ^ 1);
+                            if (chunk.validRows == CHUNK_SIZE) {
+                                vector.Stage5<CAPTURE, true>(tiling, chunk, previousChunk, previousHead, owner, core,
+                                                             capture, bank ^ 1);
+                            } else {
+                                vector.Stage5<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
+                                                       bank ^ 1);
+                            }
                         }
                         if constexpr (LAST_STAGE >= 7) {
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S6_READY + (bank ^ 1));
@@ -321,6 +336,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
                                     }
                                     if constexpr (LAST_STAGE >= 10) {
+                                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(S10_FIRST_READY);
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
                                     }
                                 }
@@ -334,13 +350,22 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S02_READY + bank);
                     if (head < tiling.heads) {
                         const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
-                        vector.Stage3<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                        if (chunk.validRows == CHUNK_SIZE) {
+                            vector.Stage3<CAPTURE, true>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                        } else {
+                            vector.Stage3<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                        }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK + bank);
                     if constexpr (LAST_STAGE >= 5) {
                         if (head < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
-                            vector.Stage5<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                            if (chunk.validRows == CHUNK_SIZE) {
+                                vector.Stage5<CAPTURE, true>(tiling, chunk, chunkIndex, head, owner, core, capture,
+                                                             bank);
+                            } else {
+                                vector.Stage5<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                            }
                         }
                         if constexpr (LAST_STAGE >= 7) {
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S6_READY + bank);
@@ -362,6 +387,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
                                     }
                                     if constexpr (LAST_STAGE >= 10) {
+                                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(S10_FIRST_READY);
                                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
                                     }
                                 }
@@ -436,7 +462,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> RunStage01(
     const c10::optional<at::Tensor> &dtBias, const c10::optional<at::Tensor> &kRstd,
     const c10::optional<at::Tensor> &dk, const c10::optional<at::Tensor> &dg, const c10::optional<at::Tensor> &db,
     const c10::optional<at::Tensor> &partial, const c10::optional<at::Tensor> &dALog,
-    const c10::optional<at::Tensor> &dDtBias, double lowerBound, int64_t betaMode)
+    const c10::optional<at::Tensor> &dDtBias, double lowerBound, int64_t betaMode, std::string outputLayout)
 {
     TORCH_CHECK(lastStage >= 0 && lastStage <= 12, "last_stage must be in [0, 12]");
     TORCH_CHECK(k.device().type() == c10::DeviceType::PrivateUse1, "expected NPU inputs");
@@ -446,6 +472,18 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> RunStage01(
     const int64_t batch = variable ? 1 : k.size(0);
     const int64_t heads = k.size(k.dim() - 3);
     const int64_t tokens = k.size(k.dim() - 2);
+    if (outputLayout.empty()) {
+        outputLayout = variable ? "NTD" : "BNSD";
+    }
+    TORCH_CHECK(variable ? (outputLayout == "NTD" || outputLayout == "TND") :
+                           (outputLayout == "BNSD" || outputLayout == "BSND"),
+                "invalid output_layout");
+    const bool tokenMajor = outputLayout == "BSND" || outputLayout == "TND";
+    auto outputShape = k.sizes().vec();
+    if (tokenMajor) {
+        std::swap(outputShape[outputShape.size() - 3], outputShape[outputShape.size() - 2]);
+    }
+    TORCH_CHECK(heads <= UINT32_MAX / (HEAD_DIM * sizeof(float)), "head stride exceeds DMA limit");
     TORCH_CHECK(k.size(-1) == HEAD_DIM, "Stage 0-7 requires K=V=128");
     for (const auto *tensor : {&k, &v, &vNew, &h, &dh, &dvScan, &akk}) {
         TORCH_CHECK(tensor->device() == k.device() && tensor->is_contiguous() && tensor->scalar_type() == at::kBFloat16,
@@ -464,8 +502,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> RunStage01(
                         beta->sizes() == at::IntArrayRef(betaShape),
                     "beta must be contiguous FP32 [B,H,T] or [H,T]");
         TORCH_CHECK(dv->device() == k.device() && dv->is_contiguous() && dv->scalar_type() == at::kBFloat16 &&
-                        dv->sizes() == k.sizes(),
-                    "dv_out must be contiguous BF16 with k's shape");
+                        dv->sizes() == at::IntArrayRef(outputShape),
+                    "dv_out must be contiguous BF16 with output_layout shape");
     }
     if (lastStage >= 5) {
         TORCH_CHECK(q.has_value() && dqRaw.has_value(), "Stage 5 requires q and dq_raw");
@@ -488,8 +526,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> RunStage01(
     }
     if (lastStage >= 9) {
         TORCH_CHECK(dq.has_value() && dq->device() == k.device() && dq->is_contiguous() &&
-                        dq->scalar_type() == at::kBFloat16 && dq->sizes() == k.sizes(),
-                    "Stage 9 requires contiguous BF16 dq_out with k's shape/device");
+                        dq->scalar_type() == at::kBFloat16 && dq->sizes() == at::IntArrayRef(outputShape),
+                    "Stage 9 requires contiguous BF16 dq_out with output_layout shape/device");
         if (qRstd.has_value()) {
             auto shape = k.sizes().vec();
             shape.pop_back();
@@ -505,7 +543,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> RunStage01(
     const auto plan = optiling::BuildFinalizeStage01Plan(batch, heads, tokens, variable,
                                                          std::vector<int64_t>(cuSeqlens.begin(), cuSeqlens.end()),
                                                          coreLimit == 0 ? available : static_cast<uint32_t>(coreLimit));
-    const auto tiling = plan.tiling;
+    auto tiling = plan.tiling;
+    tiling.outputTokenMajor = tokenMajor;
     const std::vector<int64_t> stateShape =
         variable ? std::vector<int64_t>{tiling.chunks, heads, HEAD_DIM, HEAD_DIM} :
                    std::vector<int64_t>{batch, tiling.chunks / batch, heads, HEAD_DIM, HEAD_DIM};
@@ -531,7 +570,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> RunStage01(
         check(rawG, at::kFloat, k.sizes(), "raw_g");
         check(aLog, at::kFloat, headShape, "a_log");
         check(dtBias, at::kFloat, biasShape, "dt_bias");
-        check(dk, at::kBFloat16, k.sizes(), "dk_out");
+        check(dk, at::kBFloat16, outputShape, "dk_out");
         check(dg, at::kFloat, gateShape, "dg_out");
         check(db, at::kFloat, betaShape, "db_out");
         check(partial, at::kFloat, partialShape, "partial_out");
@@ -769,7 +808,7 @@ TORCH_LIBRARY_FRAGMENT(ascend_ops, m)
           "Tensor? raw_g=None, Tensor? a_log=None, Tensor? dt_bias=None, Tensor? k_rstd=None, "
           "Tensor(c!)? dk_out=None, Tensor(d!)? dg_out=None, Tensor(e!)? db_out=None, "
           "Tensor(f!)? partial_out=None, Tensor(g!)? da_log_out=None, Tensor(h!)? ddt_bias_out=None, "
-          "float lower_bound=-5.0, int beta_mode=0) -> "
+          "float lower_bound=-5.0, int beta_mode=0, str output_layout='') -> "
           "(Tensor, Tensor, "
           "Tensor)");
 }

@@ -7,9 +7,9 @@ from check_stage7 import read
 def check_stage10(inputs, q, beta, daqk, chunks, variable, capture, workspace, args):
     from check_stage01 import workspace_works
     heads = inputs[0].shape[-3]
-    cores = workspace.numel() // (1280 * 1024)
+    cores = workspace.numel() // (1472 * 1024)
     retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
-                (2 * core + owner) * 640 * 1024 + ((work // cores) & 1) * 320 * 1024
+                (2 * core + owner) * 736 * 1024 + ((work // cores) & 1) * 368 * 1024
                 for core, work in workspace_works(heads, len(chunks), cores, 10) for owner in range(2)
                 if work // len(chunks) * 2 + owner < heads}
     for head in range(heads):

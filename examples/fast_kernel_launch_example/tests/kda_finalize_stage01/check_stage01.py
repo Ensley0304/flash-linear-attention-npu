@@ -210,7 +210,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                 assert (capture[:, :, 256 * 1024:] == 0xA5).all(), "unused Stage 5 capture guard"
         if args.workspace_only:
             assert capture.numel() == 1, "workspace-only requires a capture-disabled build"
-            used_cores = workspace.numel() // (1280 * 1024)
+            used_cores = workspace.numel() // (1472 * 1024)
             works = ((heads + 1) // 2) * len(chunks)
             for core, work in workspace_works(heads, len(chunks), used_cores, args.stage):
                 c = work % len(chunks)
@@ -219,7 +219,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                     if head >= heads:
                         continue
                     wanted = reference(inputs, chunks, head, c, lengths is not None)
-                    base = (2 * core + owner) * 640 * 1024 + ((work // used_cores) & 1) * 320 * 1024 * (args.stage >= 3)
+                    base = (2 * core + owner) * 736 * 1024 + ((work // used_cores) & 1) * 368 * 1024 * (args.stage >= 3)
                     record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
                     if args.stage >= 7:
                         continue
@@ -308,7 +308,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                 assert record[11] in (used_cores, 2 * used_cores), record
                 assert record[12:15] == [
                     2, 2 * (work % used_cores) + owner,
-                    (2 * (work % used_cores) + owner) * 640 * 1024 + ((work // used_cores) & 1) * 320 * 1024 * (args.stage >= 3),
+                    (2 * (work % used_cores) + owner) * 736 * 1024 + ((work // used_cores) & 1) * 368 * 1024 * (args.stage >= 3),
                 ], record
         # Read the actual reusable slots, not just the extra capture writes.
         for core, work in workspace_works(heads, len(chunks), used_cores, args.stage):
@@ -317,7 +317,7 @@ def check_case(args, batch, heads, tokens, lengths=None):
                 head = (work // len(chunks)) * 2 + owner
                 if head >= heads:
                     continue
-                base = (2 * core + owner) * 640 * 1024 + ((work // used_cores) & 1) * 320 * 1024 * (args.stage >= 3)
+                base = (2 * core + owner) * 736 * 1024 + ((work // used_cores) & 1) * 368 * 1024 * (args.stage >= 3)
                 record = workspace[base:base + (256 if args.stage >= 3 else 512) * 1024]
                 if args.stage >= 7:
                     continue
@@ -397,7 +397,7 @@ def check_stage3(inputs, beta, chunks, variable, capture, workspace, dv, workspa
             torch.testing.assert_close(got, torch.stack(local_zb), rtol=8e-3, atol=2e-5, msg='Stage 3 local Zb')
             torch.testing.assert_close(torch.stack(actual_db), torch.stack(local_db), rtol=3e-4, atol=2e-6, msg='Stage 3 local db_v')
             torch.testing.assert_close(torch.stack(actual_db), torch.stack(db_refs), rtol=3e-4, atol=2e-6, msg='Stage 3 full db_v')
-    cores = workspace.numel() // (1280 * 1024)
+    cores = workspace.numel() // (1472 * 1024)
     works = ((heads + 1) // 2) * len(chunks)
     for core, work in workspace_works(heads, len(chunks), cores, 3):
         c = work % len(chunks)
@@ -405,7 +405,7 @@ def check_stage3(inputs, beta, chunks, variable, capture, workspace, dv, workspa
             head = (work // len(chunks)) * 2 + owner
             if head >= heads:
                 continue
-            base = (2 * core + owner) * 640 * 1024 + ((work // cores) & 1) * 320 * 1024 + 160 * 1024
+            base = (2 * core + owner) * 736 * 1024 + ((work // cores) & 1) * 368 * 1024 + 160 * 1024
             actual = workspace[base:base + 8192].clone().view(torch.bfloat16).reshape(64, 64)
             if not workspace_only:
                 wanted = capture[head, c, 208 * 1024:216 * 1024].clone().view(torch.bfloat16).reshape(64, 64)
@@ -480,9 +480,9 @@ def check_stage5(inputs, q, dq_raw, beta, chunks, variable, capture, workspace, 
     cap_offsets = (256, 288, 320, 352)
     ws_offsets = (32, 0, 168, 200)
     heads = inputs[0].shape[-3]
-    cores = workspace.numel() // (1280 * 1024)
+    cores = workspace.numel() // (1472 * 1024)
     retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
-                (2 * core + owner) * 640 * 1024 + ((work // cores) & 1) * 320 * 1024
+                (2 * core + owner) * 736 * 1024 + ((work // cores) & 1) * 368 * 1024
                 for core, work in workspace_works(heads, len(chunks), cores, 5) for owner in range(2)
                 if work // len(chunks) * 2 + owner < heads}
     for head in range(heads):
@@ -539,9 +539,9 @@ def check_stage5(inputs, q, dq_raw, beta, chunks, variable, capture, workspace, 
 def check_stage6(inputs, beta, chunks, variable, capture, workspace, args, expected):
     """Check the real NZ L1 consumer and propagate the unchanged Stage 4 budget."""
     heads = inputs[0].shape[-3]
-    cores = workspace.numel() // (1280 * 1024)
+    cores = workspace.numel() // (1472 * 1024)
     retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
-                (2 * core + owner) * 640 * 1024 + ((work // cores) & 1) * 320 * 1024
+                (2 * core + owner) * 736 * 1024 + ((work // cores) & 1) * 368 * 1024
                 for core, work in workspace_works(heads, len(chunks), cores, 6) for owner in range(2)
                 if work // len(chunks) * 2 + owner < heads}
     for head in range(heads):

@@ -7,9 +7,9 @@ from check_stage7 import read
 def check_stage8(inputs, daqk, chunks, variable, capture, workspace, args):
     from check_stage01 import workspace_works
     heads = inputs[0].shape[-3]
-    cores = workspace.numel() // (1280 * 1024)
+    cores = workspace.numel() // (1472 * 1024)
     retained = {(work // len(chunks) * 2 + owner, work % len(chunks)):
-                (2 * core + owner) * 640 * 1024 + ((work // cores) & 1) * 320 * 1024
+                (2 * core + owner) * 736 * 1024 + ((work // cores) & 1) * 368 * 1024
                 for core, work in workspace_works(heads, len(chunks), cores, 8) for owner in range(2)
                 if work // len(chunks) * 2 + owner < heads}
     for head in range(heads):
@@ -40,7 +40,7 @@ def check_stage8(inputs, daqk, chunks, variable, capture, workspace, args):
                     got = read(record, offset + start * 128 * 4, (32, 128)).double()
                     assert torch.isfinite(got).all(), name + ' nonfinite'
                     ah, al = matrices[matrix][:, start:start + 32].unbind(0)
-                    if not args.workspace_only:
+                    if not args.workspace_only and matrix == 1:
                         local = ah @ bh + ah @ bl + al @ bh
                         budget = 2e-6 * (ah.abs() @ bh.abs() + ah.abs() @ bl.abs() + al.abs() @ bh.abs()) + 2e-38
                         assert ((got - local).abs() <= budget).all(), name + ' three-term GEMM'

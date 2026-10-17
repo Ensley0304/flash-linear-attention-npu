@@ -44,7 +44,7 @@ constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 
 // Two generations are used only by the Stage 0-7 development scheduler.
-constexpr uint32_t WS_BANK_BYTES = 320 * 1024;
+constexpr uint32_t WS_BANK_BYTES = 368 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 2 * WS_BANK_BYTES;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
 constexpr uint32_t WS_DK_STATE_RAW = 0;
@@ -74,10 +74,13 @@ constexpr uint32_t L1_STAGE8 = 384 * 1024;
 constexpr uint32_t L1_STAGE8_HEAD_BYTES = 64 * 1024;
 constexpr uint32_t WS_DQ_LOCAL = 256 * 1024;
 constexpr uint32_t WS_LEFT = 288 * 1024;
+constexpr uint32_t WS_DAQK_FP32 = 320 * 1024;
+constexpr uint32_t WS_KNEG_FP32 = 336 * 1024;
 constexpr uint16_t BAND_READY = 1;
 constexpr uint16_t BAND_LOADED = 2;
 constexpr uint16_t S8_READY = 3;
 constexpr uint16_t S8_SECOND_READY = 14;
+constexpr uint16_t S10_FIRST_READY = 15;
 
 constexpr uint16_t KE_READY = 0;
 constexpr uint16_t WORK_OPEN = 8;
@@ -98,6 +101,7 @@ struct Stage01TilingData {
     int64_t chunks;
     uint32_t usedCoreNum;
     uint32_t isVariable;
+    uint32_t outputTokenMajor = 0;
 };
 
 struct FinalizeTailArgs {
@@ -156,13 +160,15 @@ constexpr uint32_t CAPTURE_GATE = 888 * 1024;
 constexpr uint32_t CAPTURE_PARTIAL = 920 * 1024;
 static_assert(CAPTURE_PARTIAL + PARTIAL_FLOATS * 4 <= CAPTURE_BYTES);
 static_assert(CAPTURE_BANDS + 2 * CAPTURE_BAND_BYTES == CAPTURE_DQ_LOCAL);
-static_assert(WS_LEFT + 32 * 1024 == WS_BANK_BYTES);
+static_assert(WS_LEFT + 32 * 1024 == WS_DAQK_FP32);
+static_assert(WS_DAQK_FP32 + 16 * 1024 == WS_KNEG_FP32);
+static_assert(WS_KNEG_FP32 + 32 * 1024 == WS_BANK_BYTES);
 
 static_assert(WS_RH + HEAD_DIM * 4 <= WS_DAKK_RAW);
 static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_BANK_BYTES);
 static_assert(CAPTURE_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= CAPTURE_BYTES);
 static_assert(sizeof(ChunkInfo) == 32);
-static_assert(sizeof(Stage01TilingData) == 40);
+static_assert(sizeof(Stage01TilingData) == 48);
 static_assert(L1_V + CHUNK_SIZE * HEAD_DIM * 2 <= L1_HEAD_BYTES);
 static_assert(L1_BYTES <= 512 * 1024);
 static_assert(2 * L0_AB_SLOT_BYTES == 64 * 1024);

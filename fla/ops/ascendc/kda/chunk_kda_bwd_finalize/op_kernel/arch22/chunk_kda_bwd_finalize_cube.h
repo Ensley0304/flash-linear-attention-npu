@@ -333,10 +333,10 @@ public:
                     reinterpret_cast<__gm__ bfloat16_t *>(workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES +
                                                           owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
-                // Two strict-lower matrices, each with high and residual planes,
-                // retained across bands.
+                // Only dAkk is used here. Stage 10 loads its own BF16 dAqk;
+                // dq below uses FP32 dAqk, so skip the unused BF16 copy.
                 if (start == ((chunk.validRows - 1) / 32) * 32) {
-                    for (uint32_t plane = 0; plane < 4; ++plane) {
+                    for (uint32_t plane = 2; plane < 4; ++plane) {
                         CopyToL1(l1[plane * 8192].ReinterpretCast<bfloat16_t>(),
                                  input[WS_DAQK_LOWER / 2 + plane * 4096], 64, 64, 64, 64);
                     }
@@ -347,9 +347,10 @@ public:
                 }
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
             }
-            // Vector prepares the next band while the current operands are consumed
-            // from L1.
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(BAND_LOADED);
+            if constexpr (FINALIZE_Q) {
+                // Stage 9 also waits for S8_READY, protecting the FP32 GM inputs.
+                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(BAND_LOADED);
+            }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner >= tiling.heads) {
                     if constexpr (FINALIZE_Q) {
@@ -359,19 +360,30 @@ public:
                 }
                 auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
-                // dq_local_raw = dAqk_lower[s:e,:] @ kNeg; left_raw = dAkk_lower[s:e,:]
-                // @ kNeg. Each result accumulates Ah@Bh + Ah@Bl + Al@Bh in FP32,
-                // without intermediate Fixpipe.
+                // left_raw keeps three residual products. dq uses the original
+                // FP32 operands, since two BF16 planes lose rounding-boundary bits.
+                auto a = l1[16384].ReinterpretCast<bfloat16_t>();
+                auto b = l1[32768].ReinterpretCast<bfloat16_t>();
+                LoadOperands<false, false, true>(a[start * 16], b, 32, 128, 64, 1, 64);
                 for (uint32_t term = 0; term < 3; ++term) {
-                    for (uint32_t matrix = 0; matrix < 2; ++matrix) {
-                        auto a = l1[matrix * 16384 + (term == 2 ? 8192 : 0)].ReinterpretCast<bfloat16_t>();
-                        auto b = l1[32768 + (term == 1 ? 16384 : 0)].ReinterpretCast<bfloat16_t>();
-                        LoadOperands<false, false>(a[start * 16], b, 32, 128, 64, matrix, 64);
-                    }
-                    for (uint32_t matrix = 0; matrix < 2; ++matrix) {
-                        Multiply(32, 128, 64, matrix, term == 0, term == 2);
-                    }
+                    Multiply<bfloat16_t, true>(32, 128, 64, 1, term == 0, term == 2, term);
                 }
+                // Reuse this head's L1 after left has consumed its operands.
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                AscendC::GlobalTensor<float> fp32Input;
+                fp32Input.SetGlobalBuffer(
+                    reinterpret_cast<__gm__ float *>(workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES +
+                                                     owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES));
+                auto aFp32 = l1.ReinterpretCast<float>();
+                auto bFp32 = l1[32768].ReinterpretCast<float>();
+                CopyToL1(aFp32, fp32Input[WS_DAQK_FP32 / 4], 64, 64, 64, 64);
+                CopyToL1(bFp32, fp32Input[WS_KNEG_FP32 / 4], 64, 128, 64, 128);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+                LoadDqFp32(aFp32[start * 8], bFp32);
+                AscendC::SetHF32Mode(false);
+                Multiply<float>(32, 128, 64, 0);
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
                 auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
                 fix.quantPre = QuantMode_t::NoQuant;
@@ -397,6 +409,10 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(owner == 0 ? S8_READY : S8_SECOND_READY);
                 }
             }
+            if constexpr (!FINALIZE_Q) {
+                // The Stage-8-only harness has no S8_READY wait before reuse.
+                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(BAND_LOADED);
+            }
             if constexpr (COMPUTE_RIGHT) {
                 Stage10<CAPTURE>(tiling, chunkIndex, firstHead, core, bank, capture, start);
             }
@@ -420,29 +436,61 @@ public:
                     workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES +
                     bank * WS_BANK_BYTES + (matrix == 0 ? WS_QPOS : WS_BKPOS)));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                if (matrix == 0) {
+                    // Stage 8 reused the dAqk L1 area for FP32 dq operands.
+                    AscendC::GlobalTensor<bfloat16_t> lower;
+                    lower.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
+                        workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES +
+                        bank * WS_BANK_BYTES + WS_DAQK_LOWER));
+                    for (uint32_t plane = 0; plane < 2; ++plane) {
+                        CopyToL1(l1[plane * 8192].ReinterpretCast<bfloat16_t>(), lower[plane * 4096], 64, 64, 64, 64);
+                    }
+                }
                 for (uint32_t plane = 0; plane < 2; ++plane) {
                     CopyToL1(l1[32768 + plane * 16384].ReinterpretCast<bfloat16_t>(), input[plane * 8192], 64, 128, 64,
                              128);
                 }
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
             }
-            for (uint32_t term = 0; term < 3; ++term) {
-                for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
-                    if (firstHead + owner >= tiling.heads) {
-                        continue;
-                    }
-                    if (term == 0) {
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
-                    }
-                    auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
-                    auto a = l1[matrix * 16384 + (term == 2 ? 8192 : 0)].ReinterpretCast<bfloat16_t>();
-                    auto b = l1[32768 + (term == 1 ? 16384 : 0)].ReinterpretCast<bfloat16_t>();
-                    // NZ column bands are contiguous: A[:,start:start+32].T is [32,64].
-                    LoadOperands<true, false>(a[start * 64], b, 32, 128, 64, owner);
+            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                if (firstHead + owner >= tiling.heads) {
+                    continue;
                 }
-                for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
-                    if (firstHead + owner < tiling.heads) {
-                        Multiply(32, 128, 64, owner, matrix == 0 && term == 0, matrix == 1 && term == 2);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+                auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
+                auto a = l1[matrix * 16384].ReinterpretCast<bfloat16_t>();
+                auto b = l1[32768].ReinterpretCast<bfloat16_t>();
+                LoadOperands<true, false, true>(a[start * 64], b, 32, 128, 64, owner);
+            }
+            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                if (firstHead + owner >= tiling.heads) {
+                    continue;
+                }
+                for (uint32_t term = 0; term < 3; ++term) {
+                    Multiply<bfloat16_t, true>(32, 128, 64, owner, matrix == 0 && term == 0, matrix == 1 && term == 2,
+                                               term);
+                }
+                if (matrix == 1) {
+                    auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
+                    fix.quantPre = QuantMode_t::NoQuant;
+                    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
+                    auto result = l0CBuf_.Get<float>()[owner * L0_C_SLOT_BYTES / 4];
+                    AscendC::GlobalTensor<float> output;
+                    output.SetGlobalBuffer(
+                        reinterpret_cast<__gm__ float *>(workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES +
+                                                         owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES + WS_RIGHT));
+                    AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+                    if constexpr (CAPTURE) {
+                        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                            capture +
+                            static_cast<uint64_t>((firstHead + owner) * tiling.chunks + chunkIndex) * CAPTURE_BYTES +
+                            CAPTURE_RIGHT));
+                        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
+
+                    if (owner == 0) {
+                        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S10_FIRST_READY);
                     }
                 }
             }
@@ -451,27 +499,6 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
                 }
             }
-        }
-        auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
-        fix.quantPre = QuantMode_t::NoQuant;
-        for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
-            if (firstHead + owner >= tiling.heads) {
-                continue;
-            }
-            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
-            auto result = l0CBuf_.Get<float>()[owner * L0_C_SLOT_BYTES / 4];
-            AscendC::GlobalTensor<float> output;
-            output.SetGlobalBuffer(
-                reinterpret_cast<__gm__ float *>(workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES +
-                                                 owner * WS_HEAD_BYTES + bank * WS_BANK_BYTES + WS_RIGHT));
-            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
-            if constexpr (CAPTURE) {
-                output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-                    capture + static_cast<uint64_t>((firstHead + owner) * tiling.chunks + chunkIndex) * CAPTURE_BYTES +
-                    CAPTURE_RIGHT));
-                AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
         }
         // Protect right_raw from the next band's kNeg stores (same GM slot).
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(BAND_LOADED);
@@ -512,13 +539,14 @@ public:
 
 private:
     // Shared mechanics only: the Stage method owns the formula and result path.
-    __aicore__ inline void CopyToL1(AscendC::LocalTensor<bfloat16_t> dst, AscendC::GlobalTensor<bfloat16_t> src,
-                                    uint32_t rows, uint32_t columns, uint32_t validRows, uint32_t validColumns)
+    template <typename T>
+    __aicore__ inline void CopyToL1(AscendC::LocalTensor<T> dst, AscendC::GlobalTensor<T> src, uint32_t rows,
+                                    uint32_t columns, uint32_t validRows, uint32_t validColumns)
     {
         if (validRows != rows || validColumns != columns) {
-            AscendC::InitConstValue(dst, AscendC::InitConstValueParams<bfloat16_t>(
-                                             1, static_cast<uint16_t>(rows * columns * sizeof(bfloat16_t) / 32), 0,
-                                             static_cast<bfloat16_t>(0)));
+            AscendC::InitConstValue(
+                dst, AscendC::InitConstValueParams<T>(1, static_cast<uint16_t>(rows * columns * sizeof(T) / 32), 0,
+                                                      static_cast<T>(0)));
             AscendC::PipeBarrier<PIPE_MTE2>();
         }
         AscendC::Nd2NzParams copy{};
@@ -531,53 +559,93 @@ private:
         AscendC::DataCopy(dst, src, copy);
     }
 
-    template <bool TRANSPOSE_A, bool TRANSPOSE_B>
+    template <bool TRANSPOSE_A, bool TRANSPOSE_B, bool RESIDUAL = false>
     __aicore__ inline void LoadOperands(AscendC::LocalTensor<bfloat16_t> a, AscendC::LocalTensor<bfloat16_t> b,
                                         uint32_t m, uint32_t n, uint32_t k, uint32_t slot, uint32_t aRows = 0)
     {
         auto l0A = l0ABuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
         auto l0B = l0BBuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
-        AscendC::LoadData2DParams load{};
-        load.dstGap = 0;
-        if constexpr (TRANSPOSE_A) {
-            // Transposed ND -> NZ already has the required outer M1/K1 order.
-            load.repeatTimes = (m / 16) * (k / 16);
-            load.srcStride = 1;
-            load.ifTranspose = true;
-            AscendC::LoadData(l0A, a, load);
-        } else {
-            load.repeatTimes = k / 16;
-            load.srcStride = (aRows == 0 ? m : aRows) / 16;
-            load.ifTranspose = false;
-            for (uint32_t row = 0; row < m / 16; ++row) {
-                AscendC::LoadData(l0A[row * (k / 16) * FRACTAL_ELEMENTS], a[row * FRACTAL_ELEMENTS], load);
+        // Residual high/low planes fit in one slot: A 8 KiB, B 32 KiB.
+        for (uint32_t plane = 0; plane < (RESIDUAL ? 2 : 1); ++plane) {
+            auto aSrc = a[plane * CHUNK_SIZE * CHUNK_SIZE];
+            auto bSrc = b[plane * CHUNK_SIZE * HEAD_DIM];
+            auto aDst = l0A[plane * m * k];
+            auto bDst = l0B[plane * k * n];
+            AscendC::LoadData2DParams load{};
+            load.dstGap = 0;
+            if constexpr (TRANSPOSE_A) {
+                // Transposed ND -> NZ already has the required outer M1/K1 order.
+                load.repeatTimes = (m / 16) * (k / 16);
+                load.srcStride = 1;
+                load.ifTranspose = true;
+                AscendC::LoadData(aDst, aSrc, load);
+            } else {
+                load.repeatTimes = k / 16;
+                load.srcStride = (aRows == 0 ? m : aRows) / 16;
+                load.ifTranspose = false;
+                for (uint32_t row = 0; row < m / 16; ++row) {
+                    AscendC::LoadData(aDst[row * (k / 16) * FRACTAL_ELEMENTS], aSrc[row * FRACTAL_ELEMENTS], load);
+                }
             }
-        }
-        if constexpr (TRANSPOSE_B) {
-            // ND [n,k] -> L1 NZ directly matches the transposed L0B order.
-            load.repeatTimes = (k / 16) * (n / 16);
-            load.srcStride = 1;
-            load.ifTranspose = false;
-            AscendC::LoadData(l0B, b, load);
-        } else {
-            load.repeatTimes = n / 16;
-            load.srcStride = k / 16;
-            load.ifTranspose = true;
-            for (uint32_t row = 0; row < k / 16; ++row) {
-                AscendC::LoadData(l0B[row * (n / 16) * FRACTAL_ELEMENTS], b[row * FRACTAL_ELEMENTS], load);
+            if constexpr (TRANSPOSE_B) {
+                // ND [n,k] -> L1 NZ directly matches the transposed L0B order.
+                load.repeatTimes = (k / 16) * (n / 16);
+                load.srcStride = 1;
+                load.ifTranspose = false;
+                AscendC::LoadData(bDst, bSrc, load);
+            } else {
+                load.repeatTimes = n / 16;
+                load.srcStride = k / 16;
+                load.ifTranspose = true;
+                for (uint32_t row = 0; row < k / 16; ++row) {
+                    AscendC::LoadData(bDst[row * (n / 16) * FRACTAL_ELEMENTS], bSrc[row * FRACTAL_ELEMENTS], load);
+                }
             }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(operandReady_[slot]);
     }
 
-    __aicore__ inline AscendC::LocalTensor<float> Multiply(uint32_t m, uint32_t n, uint32_t k, uint32_t slot,
-                                                           bool initialize = true, bool finish = true)
+    // FP32 NZ uses 16x8 fractals; c220 L0B needs the 3Dv2 conversion.
+    __aicore__ inline void LoadDqFp32(AscendC::LocalTensor<float> a, AscendC::LocalTensor<float> b)
     {
-        auto l0A = l0ABuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
-        auto l0B = l0BBuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
+        auto l0A = l0ABuf_.Get<float>();
+        auto l0B = l0BBuf_.Get<float>();
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(operandFree_[0]);
+        AscendC::LoadData2DParams loadA{};
+        loadA.repeatTimes = 8;
+        loadA.srcStride = 4;
+        for (uint32_t row = 0; row < 2; ++row) {
+            AscendC::LoadData(l0A[row * 8 * 128], a[row * 128], loadA);
+        }
+        AscendC::LoadData3DParamsV2<float> loadB{};
+        loadB.l1H = 1;
+        loadB.l1W = 64;
+        loadB.channelSize = 128;
+        loadB.kExtension = 128;
+        loadB.mExtension = 64;
+        loadB.strideW = 1;
+        loadB.strideH = 1;
+        loadB.filterW = 1;
+        loadB.filterH = 1;
+        loadB.dilationFilterW = 1;
+        loadB.dilationFilterH = 1;
+        loadB.enTranspose = true;
+        AscendC::LoadData(l0B, b, loadB);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(operandReady_[0]);
+    }
+
+    template <typename T = bfloat16_t, bool RESIDUAL = false>
+    __aicore__ inline AscendC::LocalTensor<float> Multiply(uint32_t m, uint32_t n, uint32_t k, uint32_t slot,
+                                                           bool initialize = true, bool finish = true,
+                                                           uint32_t term = 0)
+    {
+        auto l0A = l0ABuf_.Get<T>()[slot * L0_AB_SLOT_BYTES / sizeof(T) + (RESIDUAL && term == 2 ? m * k : 0)];
+        auto l0B = l0BBuf_.Get<T>()[slot * L0_AB_SLOT_BYTES / sizeof(T) + (RESIDUAL && term == 1 ? k * n : 0)];
         auto l0C = l0CBuf_.Get<float>()[slot * L0_C_SLOT_BYTES / sizeof(float)];
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(operandReady_[slot]);
+        if (!RESIDUAL || term == 0) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(operandReady_[slot]);
+        }
         if (initialize) {
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
         }
@@ -589,7 +657,9 @@ private:
         params.cmatrixSource = false;
         params.unitFlag = 0;
         AscendC::Mmad(l0C, l0A, l0B, params);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+        if (!RESIDUAL || term == 2) {
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(operandFree_[slot]);
+        }
         if (finish) {
             AscendC::SetFlag<AscendC::HardEvent::M_FIX>(resultReady_[slot]);
         }

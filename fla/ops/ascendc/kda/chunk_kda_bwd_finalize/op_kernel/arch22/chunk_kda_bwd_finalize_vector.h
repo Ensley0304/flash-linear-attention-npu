@@ -32,7 +32,7 @@ public:
         }
     }
 
-    template <bool CAPTURE = false, bool SAVE_RH = false>
+    template <bool CAPTURE = false, bool SAVE_RH = false, bool FULL_CHUNK = false>
     __aicore__ inline void Stage1(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0)
@@ -45,7 +45,7 @@ public:
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
         const int64_t tokenOffset = ((batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart) * HEAD_DIM;
         const int64_t stateOffset = (chunkIndex * tiling.heads + head) * HEAD_DIM * HEAD_DIM;
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : static_cast<uint32_t>(chunk.validRows);
         auto kSaved = ub_[UB_K].ReinterpretCast<bfloat16_t>();
         auto expSaved = ub_[UB_EXP2_GK].ReinterpretCast<float>();
         auto rH = ub_[UB_RH].ReinterpretCast<float>();
@@ -204,14 +204,14 @@ public:
         }
     }
 
-    template <bool CAPTURE = false>
+    template <bool CAPTURE = false, bool FULL_CHUNK = false>
     __aicore__ inline void Stage3(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0)
     {
         constexpr uint32_t ROWS = 32;
         constexpr uint32_t ELEMENTS = ROWS * HEAD_DIM;
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : static_cast<uint32_t>(chunk.validRows);
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
         const int64_t token = (batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart;
         const uint64_t base =
@@ -330,7 +330,17 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             if (active != 0) {
-                AscendC::DataCopy(dv_[(token + first) * HEAD_DIM], output, active * HEAD_DIM);
+                if (tiling.outputTokenMajor) {
+                    const uint64_t dst = (static_cast<uint64_t>(batch) * tiling.tokens + chunk.tokenStart + first) *
+                                             tiling.heads * HEAD_DIM +
+                                         static_cast<uint64_t>(head) * HEAD_DIM;
+                    AscendC::DataCopyPad(dv_[dst], output,
+                                         {static_cast<uint16_t>(active), HEAD_DIM * sizeof(bfloat16_t), 0,
+                                          static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * sizeof(bfloat16_t)),
+                                          0});
+                } else {
+                    AscendC::DataCopy(dv_[(token + first) * HEAD_DIM], output, active * HEAD_DIM);
+                }
             }
             if constexpr (CAPTURE) {
                 if (tile + 1 == CHUNK_SIZE / ROWS) {
@@ -353,14 +363,14 @@ public:
         scale_ = scale;
     }
 
-    template <bool CAPTURE = false>
+    template <bool CAPTURE = false, bool FULL_CHUNK = false>
     __aicore__ inline void Stage5(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
         constexpr uint32_t ROWS = 16;
         constexpr uint32_t ELEMENTS = ROWS * HEAD_DIM;
         constexpr float LN2 = 0.6931471805599453f;
-        const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
+        const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : static_cast<uint32_t>(chunk.validRows);
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
         const int64_t token = (batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart;
         const uint64_t base =
@@ -539,10 +549,25 @@ public:
     __aicore__ inline void Stage7(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
+        // Dispatch once per chunk; full chunks have fixed counts in Stages 7/9/11.
+        if (chunk.validRows == CHUNK_SIZE) {
+            Stage7Impl<CAPTURE, CONSUME_BANDS, FINALIZE_Q, Q_NORM, COMPUTE_RIGHT, FINALIZE_K, true>(
+                tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+        } else {
+            Stage7Impl<CAPTURE, CONSUME_BANDS, FINALIZE_Q, Q_NORM, COMPUTE_RIGHT, FINALIZE_K, false>(
+                tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+        }
+    }
+
+    template <bool CAPTURE, bool CONSUME_BANDS, bool FINALIZE_Q, bool Q_NORM, bool COMPUTE_RIGHT, bool FINALIZE_K,
+              bool FULL_CHUNK>
+    __aicore__ inline void Stage7Impl(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+                                      int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
+    {
         constexpr uint32_t ROWS = 16;
         constexpr uint32_t ELEMENTS = ROWS * HEAD_DIM;
         constexpr float LN2 = 0.6931471805599453f;
-        const uint32_t rows = chunk.validRows;
+        const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : chunk.validRows;
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
         const int64_t token = (batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart;
         const uint64_t base =
@@ -575,6 +600,13 @@ public:
         auto indices = ub_[84 * 1024 + 768].ReinterpretCast<int32_t>();
         // Drain old layouts before remapping. Input and output permissions remain
         // independent.
+        // FP32 stores use [178,186) KiB for lower matrices, then reuse retired
+        // inputs at [88,104) KiB for bands, independently of BF16 outputs.
+        AscendC::TEventID fp32Free[2];
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            fp32Free[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+        }
         for (uint32_t slot = 0; slot < 2; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
@@ -623,6 +655,18 @@ public:
                 AscendC::Muls(value, value, matrix == 0 ? 65536.0f : -65536.0f, ROWS * CHUNK_SIZE);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
                 AscendC::PipeBarrier<PIPE_V>();
+                if (matrix == 0) {
+                    // Preserve the FP32 operand for dq before residual packing.
+                    const uint32_t fp32Slot = tile & 1;
+                    auto fp32Output = ub_[(178 + fp32Slot * 4) * 1024].ReinterpretCast<float>();
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[fp32Slot]);
+                    AscendC::Adds(fp32Output, value, 0.0f, ROWS * CHUNK_SIZE);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
+                    AscendC::DataCopy(out[WS_DAQK_FP32 + first * CHUNK_SIZE * 4], fp32Output.ReinterpretCast<uint8_t>(),
+                                      ROWS * CHUNK_SIZE * 4);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[fp32Slot]);
+                }
                 AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, ROWS * CHUNK_SIZE);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Cast(rebuilt, output, AscendC::RoundMode::CAST_NONE, ROWS * CHUNK_SIZE);
@@ -701,15 +745,34 @@ public:
                                 AscendC::Sub(exponent[64], g[first * HEAD_DIM + 64], center[64], 64, active,
                                              {1, 1, 1, 16, 16, 0});
                             }
-                            AscendC::Cast(operand, matrix == 1 ? q[first * HEAD_DIM] : k[first * HEAD_DIM],
-                                          AscendC::RoundMode::CAST_NONE, active * HEAD_DIM);
                             AscendC::PipeBarrier<PIPE_V>();
                             if (matrix != 2) {
+                                // exp2(x) = 2^n * exp((x - n) * ln(2)). Keep the
+                                // Exp argument small so reciprocal factors do not
+                                // amplify rounding of a large x * ln(2).
+                                const uint32_t count = active * HEAD_DIM;
+                                auto power = rebuilt.ReinterpretCast<int32_t>();
+                                AscendC::Maxs(operand, exponent, -126.0f, count);
+                                AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::Mins(operand, operand, 127.0f, count);
+                                AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::Cast(power, operand, AscendC::RoundMode::CAST_RINT, count);
+                                AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::Cast(operand, power, AscendC::RoundMode::CAST_NONE, count);
+                                AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::Sub(exponent, exponent, operand, count);
+                                AscendC::Adds(power, power, static_cast<int32_t>(127), count);
+                                AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::ShiftLeft(power, power, static_cast<int32_t>(23), count);
                                 AscendC::Muls(exponent, exponent, LN2, active * HEAD_DIM);
                                 AscendC::PipeBarrier<PIPE_V>();
                                 AscendC::Exp(exponent, exponent, active * HEAD_DIM);
                                 AscendC::PipeBarrier<PIPE_V>();
+                                AscendC::Mul(exponent, exponent, rebuilt, count);
                             }
+                            AscendC::Cast(operand, matrix == 1 ? q[first * HEAD_DIM] : k[first * HEAD_DIM],
+                                          AscendC::RoundMode::CAST_NONE, active * HEAD_DIM);
+                            AscendC::PipeBarrier<PIPE_V>();
                             AscendC::Mul(value, operand, exponent, active * HEAD_DIM);
                             if (matrix == 1 && first < end) {
                                 AscendC::Adds(bandExp[(first - start) * HEAD_DIM], exponent, 0.0f, active * HEAD_DIM);
@@ -723,6 +786,20 @@ public:
                         }
                         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
                         AscendC::PipeBarrier<PIPE_V>();
+                        if (matrix == 0) {
+                            auto fp32Output = ub_[(88 + slot * 8) * 1024].ReinterpretCast<float>();
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                            if (active == 0) {
+                                AscendC::Duplicate(fp32Output, 0.0f, ELEMENTS);
+                            } else {
+                                AscendC::Adds(fp32Output, value, 0.0f, ELEMENTS);
+                            }
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
+                            AscendC::DataCopy(out[WS_KNEG_FP32 + first * HEAD_DIM * 4],
+                                              fp32Output.ReinterpretCast<uint8_t>(), ELEMENTS * 4);
+                            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                        }
                         if (active == 0) {
                             // Both BF16 planes are zero; no residual decomposition is needed.
                             AscendC::Duplicate(output.ReinterpretCast<float>(), 0.0f, ELEMENTS);
@@ -767,6 +844,8 @@ public:
             }
             // Consume both output frees before the band/resident regions can change.
             for (uint32_t slot = 0; slot < 2; ++slot) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             }
             if constexpr (CAPTURE) {
@@ -786,17 +865,28 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
                 }
                 if constexpr (FINALIZE_Q) {
-                    Stage9<CAPTURE, Q_NORM>(tiling, chunk, chunkIndex, head, owner, core, capture, bank, start, end);
+                    Stage9<CAPTURE, Q_NORM, FULL_CHUNK>(tiling, chunk, chunkIndex, head, owner, core, capture, bank,
+                                                        start, end);
                     if (owner == 0) {
                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
                     }
                 }
                 if constexpr (COMPUTE_RIGHT) {
                     if constexpr (FINALIZE_K) {
-                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(BAND_LOADED);
-                        Stage11<CAPTURE, Q_NORM>(tiling, chunk, chunkIndex, head, owner, core, capture, bank, start,
-                                                 end);
+                        if constexpr (FULL_CHUNK && !CAPTURE) {
+                            if (start == 0) {
+                                Stage11<CAPTURE, Q_NORM, FULL_CHUNK, 16>(tiling, chunk, chunkIndex, head, owner, core,
+                                                                         capture, bank, start, end);
+                            } else {
+                                Stage11<CAPTURE, Q_NORM, FULL_CHUNK>(tiling, chunk, chunkIndex, head, owner, core,
+                                                                     capture, bank, start, end);
+                            }
+                        } else {
+                            Stage11<CAPTURE, Q_NORM, FULL_CHUNK>(tiling, chunk, chunkIndex, head, owner, core, capture,
+                                                                 bank, start, end);
+                        }
                     } else {
+                        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(S10_FIRST_READY);
                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
                     }
                 }
@@ -805,6 +895,8 @@ public:
         // Stage 1's next MTE2 writes overlap Stage 7 arithmetic scratch. Its old
         // input-free flags only covered the strict-lower reads, not the band loop.
         for (uint32_t slot = 0; slot < 2; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
         }
@@ -816,7 +908,7 @@ public:
         qRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
     }
 
-    template <bool CAPTURE, bool Q_NORM>
+    template <bool CAPTURE, bool Q_NORM, bool FULL_CHUNK = false>
     __aicore__ inline void Stage9(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank,
                                   uint32_t start, uint32_t end)
@@ -879,7 +971,7 @@ public:
         for (uint32_t tile = 0; tile < 2; ++tile) {
             const uint32_t slot = tile & 1;
             const uint32_t first = start + tile * ROWS;
-            const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
+            const uint32_t active = FULL_CHUNK ? ROWS : (first < end ? (end - first < ROWS ? end - first : ROWS) : 0);
             auto input = ub_[(88 + slot * 24) * 1024].ReinterpretCast<float>();
             auto local = input;
             auto dq = input[ELEMENTS];
@@ -943,7 +1035,17 @@ public:
             AscendC::DataCopy(dqBase[first * HEAD_DIM], dq, ELEMENTS);
             AscendC::DataCopy(dgBase[first * HEAD_DIM], dg, ELEMENTS);
             if (active != 0) {
-                AscendC::DataCopy(dq_[(token + first) * HEAD_DIM], packed, active * HEAD_DIM);
+                if (tiling.outputTokenMajor) {
+                    const uint64_t dst = (static_cast<uint64_t>(batch) * tiling.tokens + chunk.tokenStart + first) *
+                                             tiling.heads * HEAD_DIM +
+                                         static_cast<uint64_t>(head) * HEAD_DIM;
+                    AscendC::DataCopyPad(dq_[dst], packed,
+                                         {static_cast<uint16_t>(active), HEAD_DIM * sizeof(bfloat16_t), 0,
+                                          static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * sizeof(bfloat16_t)),
+                                          0});
+                } else {
+                    AscendC::DataCopy(dq_[(token + first) * HEAD_DIM], packed, active * HEAD_DIM);
+                }
             }
             if constexpr (CAPTURE) {
                 AscendC::DataCopy(savedDq[first * HEAD_DIM], dq, ELEMENTS);
@@ -1005,12 +1107,12 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
     }
 
-    template <bool CAPTURE, bool K_NORM>
+    template <bool CAPTURE, bool K_NORM, bool FULL_CHUNK = false, uint32_t ROWS = 8>
     __aicore__ inline void Stage11(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                    int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank,
                                    uint32_t start, uint32_t end)
     {
-        constexpr uint32_t ROWS = 8;
+        constexpr uint32_t TILES = 32 / ROWS;
         constexpr uint32_t E = ROWS * HEAD_DIM;
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
         const int64_t token = (batch * tiling.heads + head) * tiling.tokens + chunk.tokenStart;
@@ -1022,14 +1124,17 @@ public:
             saved.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
                 capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES));
         }
-        // 88--128: two 20 KiB input slots (left/right/dk/dg/raw gate).
+        // Last-band 16-row path: input slots [24,64)/[88,128) KiB replace dead k/gk.
+        // q[8,16) is dead too; gate outputs use [8,16)/[184,192). Lower mask stays live.
+        // q/k/product use [128,152); gate temporaries reuse q/k after their last read.
+        // The eight-row path keeps two 20 KiB inputs at [88,128).
         // 128--148: q/k and arithmetic; 148--160: independent dk/g output pairs.
         // Keep 160--178 band exponent/beta and 80--88 resident state intact.
         auto query = ub_[128 * 1024].ReinterpretCast<float>();
-        auto key = ub_[132 * 1024].ReinterpretCast<float>();
-        auto product = ub_[136 * 1024].ReinterpretCast<float>();
-        auto gateTemp = ub_[140 * 1024].ReinterpretCast<float>();
-        auto denom = ub_[144 * 1024].ReinterpretCast<float>();
+        auto key = ub_[(ROWS == 16 ? 136 : 132) * 1024].ReinterpretCast<float>();
+        auto product = ub_[(ROWS == 16 ? 144 : 136) * 1024].ReinterpretCast<float>();
+        auto gateTemp = ub_[(ROWS == 16 ? 128 : 140) * 1024].ReinterpretCast<float>();
+        auto denom = ub_[(ROWS == 16 ? 136 : 144) * 1024].ReinterpretCast<float>();
         auto sums = ub_[179 * 1024].ReinterpretCast<float>();
         auto rowScale = ub_[180 * 1024].ReinterpretCast<float>();
         auto suffix = ub_[UB11_SUFFIX].ReinterpretCast<float>();
@@ -1042,23 +1147,61 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
         for (uint32_t slot = 0; slot < 2; ++slot) {
-            LoadStage11Tile(ws, token, start + (3 - slot) * ROWS, end, slot);
+            LoadStage11Tile<ROWS>(ws, token, start + (TILES - 1 - slot) * ROWS, end, slot);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
         }
-        for (uint32_t tile = 0; tile < 4; ++tile) {
+        if constexpr (FULL_CHUNK && !CAPTURE && K_NORM && ROWS == 8) {
+            // The first tile's gate coefficient does not depend on right or its scan.
+            // These temporaries survive dk/db arithmetic until the gate multiply.
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
+            auto raw = ub_[88 * 1024].ReinterpretCast<float>()[4 * E];
+            constexpr uint32_t active = ROWS;
+            constexpr uint32_t count = E;
+            AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active, {1, 1, 1, 16, 16, 0});
+            AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,
+                         {1, 1, 1, 16, 16, 0});
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(gateTemp, raw, expA, 64, active * 2, {1, 1, 0, 8, 8, 0});
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Abs(gateTemp, gateTemp, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Muls(gateTemp, gateTemp, -1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Exp(gateTemp, gateTemp, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Adds(denom, gateTemp, 1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(denom, denom, denom, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Div(gateTemp, gateTemp, denom, count);
+        }
+        // Only right depends on Stage 10. Queue the other inputs before waiting.
+        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S10_FIRST_READY);
+        if (owner != 0) {
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(BAND_LOADED);
+        }
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            const uint32_t first = start + (TILES - 1 - slot) * ROWS;
+            auto input = ub_[(ROWS == 16 ? (slot == 0 ? 24 : 88) : 88 + slot * 20) * 1024].ReinterpretCast<float>();
+            AscendC::DataCopy(input[E], ws[WS_RIGHT / 4 + first * HEAD_DIM], E);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+        }
+        for (uint32_t tile = 0; tile < TILES; ++tile) {
             const uint32_t slot = tile & 1;
-            const uint32_t first = start + (3 - tile) * ROWS;
-            const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
-            auto input = ub_[(88 + slot * 20) * 1024].ReinterpretCast<float>();
+            const uint32_t first = start + (TILES - 1 - tile) * ROWS;
+            const uint32_t active = FULL_CHUNK ? ROWS : (first < end ? (end - first < ROWS ? end - first : ROWS) : 0);
+            auto input = ub_[(ROWS == 16 ? (slot == 0 ? 24 : 88) : 88 + slot * 20) * 1024].ReinterpretCast<float>();
             auto left = input;
             auto right = input[E];
             auto dk = input[2 * E];
             auto dg = input[3 * E];
             auto raw = input[4 * E];
-            auto db = ub_[178 * 1024 + 512 + slot * 32].ReinterpretCast<float>();
-            auto packedDb = ub_[178 * 1024 + slot * 256].ReinterpretCast<float>();
-            auto packedDk = ub_[(148 + slot * 2) * 1024].ReinterpretCast<bfloat16_t>();
-            auto gateOut = ub_[(152 + slot * 4) * 1024].ReinterpretCast<float>();
+            auto db =
+                ub_[(ROWS == 16 ? 181 * 1024 + slot * 64 : 178 * 1024 + 512 + slot * 32)].ReinterpretCast<float>();
+            auto packedDb = ub_[178 * 1024 + slot * ROWS * 32].ReinterpretCast<float>();
+            auto packedDk = ub_[(ROWS == 16 ? 152 + slot * 4 : 148 + slot * 2) * 1024].ReinterpretCast<bfloat16_t>();
+            auto gateOut = ub_[(ROWS == 16 ? (slot == 0 ? 8 : 184) : 152 + slot * 4) * 1024].ReinterpretCast<float>();
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             if (active != 0) {
@@ -1077,14 +1220,14 @@ public:
                 AscendC::Mul(product, left, key, count);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::WholeReduceSum(sums, product, 64, active, 1, 1, 16);
-                AscendC::WholeReduceSum(sums[8], product[64], 64, active, 1, 1, 16);
+                AscendC::WholeReduceSum(sums[ROWS], product[64], 64, active, 1, 1, 16);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(sums, sums, sums[8], ROWS);
+                AscendC::Add(sums, sums, sums[ROWS], ROWS);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Add(db, db, sums, active);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(db, db, ub_[UB11_BETA_FACTOR].ReinterpretCast<float>()[first], active);
-                AscendC::Brcb(rowScale, ub_[UB_BETA].ReinterpretCast<float>()[first], 1, {1, 8});
+                AscendC::Brcb(rowScale, ub_[UB_BETA].ReinterpretCast<float>()[first], ROWS / 8, {1, 8});
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(left, left, rowScale, 64, active, {1, 1, 0, 16, 16, 1});
                 AscendC::Mul(left[64], left[64], rowScale, 64, active, {1, 1, 0, 16, 16, 1});
@@ -1094,7 +1237,7 @@ public:
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(product, product, key, count);
                 AscendC::Add(dk, dk, right, count);
-                AscendC::Brcb(rowScale, ub_[80 * 1024 + 512].ReinterpretCast<float>()[first], 1, {1, 8});
+                AscendC::Brcb(rowScale, ub_[80 * 1024 + 512].ReinterpretCast<float>()[first], ROWS / 8, {1, 8});
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Add(dg, dg, product, count);
                 AscendC::Mul(product, query, rowScale, 64, active, {1, 1, 0, 16, 16, 1});
@@ -1106,17 +1249,17 @@ public:
                     AscendC::Mul(product, dk, key, count);
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::WholeReduceSum(sums, product, 64, active, 1, 1, 16);
-                    AscendC::WholeReduceSum(sums[8], product[64], 64, active, 1, 1, 16);
+                    AscendC::WholeReduceSum(sums[ROWS], product[64], 64, active, 1, 1, 16);
                     AscendC::PipeBarrier<PIPE_V>();
-                    AscendC::Add(sums, sums, sums[8], ROWS);
+                    AscendC::Add(sums, sums, sums[ROWS], ROWS);
                     AscendC::PipeBarrier<PIPE_V>();
-                    AscendC::Brcb(rowScale, sums, 1, {1, 8});
+                    AscendC::Brcb(rowScale, sums, ROWS / 8, {1, 8});
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::Mul(product, key, rowScale, 64, active, {1, 1, 0, 16, 16, 1});
                     AscendC::Mul(product[64], key[64], rowScale, 64, active, {1, 1, 0, 16, 16, 1});
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::Sub(dk, dk, product, count);
-                    AscendC::Brcb(rowScale, ub_[UB11_RSTD].ReinterpretCast<float>()[first], 1, {1, 8});
+                    AscendC::Brcb(rowScale, ub_[UB11_RSTD].ReinterpretCast<float>()[first], ROWS / 8, {1, 8});
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::Mul(dk, dk, rowScale, 64, active, {1, 1, 0, 16, 16, 1});
                     AscendC::Mul(dk[64], dk[64], rowScale, 64, active, {1, 1, 0, 16, 16, 1});
@@ -1125,7 +1268,27 @@ public:
                 AscendC::Cast(packedDk, dk, AscendC::RoundMode::CAST_RINT, count);
                 // Eight rows scan in three steps; left is dead after dk/db/dg formation.
                 // Carry crosses tiles and 32-row bands, never chunks.
-                if (active == ROWS) {
+                if constexpr (ROWS == 16) {
+                    // Keep the two original eight-row scans in reverse order.
+                    for (int32_t group = 8; group >= 0; group -= 8) {
+                        auto scanSrc = dg[group * HEAD_DIM];
+                        auto scanDst = left[group * HEAD_DIM];
+                        for (uint32_t step = 1; step < 8; step *= 2) {
+                            const uint32_t prefix = (8 - step) * HEAD_DIM;
+                            AscendC::Add(scanDst, scanSrc, scanSrc[step * HEAD_DIM], prefix);
+                            AscendC::Adds(scanDst[prefix], scanSrc[prefix], 0.0f, step * HEAD_DIM);
+                            AscendC::PipeBarrier<PIPE_V>();
+                            auto temp = scanSrc;
+                            scanSrc = scanDst;
+                            scanDst = temp;
+                        }
+                        AscendC::Add(dg[group * HEAD_DIM], scanSrc, suffix, 64, 8, {1, 1, 1, 16, 16, 0});
+                        AscendC::Add(dg[group * HEAD_DIM + 64], scanSrc[64], suffix[64], 64, 8, {1, 1, 1, 16, 16, 0});
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Adds(suffix, dg[group * HEAD_DIM], 0.0f, HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
+                } else if (active == ROWS) {
                     auto scanSrc = dg;
                     auto scanDst = left;
                     for (uint32_t step = 1; step < ROWS; step *= 2) {
@@ -1150,23 +1313,46 @@ public:
                         AscendC::PipeBarrier<PIPE_V>();
                     }
                 }
-                AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active, {1, 1, 1, 16, 16, 0});
-                AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,
-                             {1, 1, 1, 16, 16, 0});
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Mul(gateTemp, raw, expA, 64, active * 2, {1, 1, 0, 8, 8, 0});
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Abs(gateTemp, gateTemp, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gateTemp, gateTemp, -1.0f, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Exp(gateTemp, gateTemp, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Adds(denom, gateTemp, 1.0f, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Mul(denom, denom, denom, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Div(gateTemp, gateTemp, denom, count);
+                if constexpr (FULL_CHUNK && !CAPTURE && K_NORM && ROWS == 8) {
+                    if (tile != 0) {
+                        AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active,
+                                     {1, 1, 1, 16, 16, 0});
+                        AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,
+                                     {1, 1, 1, 16, 16, 0});
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Mul(gateTemp, raw, expA, 64, active * 2, {1, 1, 0, 8, 8, 0});
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Abs(gateTemp, gateTemp, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Muls(gateTemp, gateTemp, -1.0f, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Exp(gateTemp, gateTemp, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Adds(denom, gateTemp, 1.0f, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Mul(denom, denom, denom, count);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Div(gateTemp, gateTemp, denom, count);
+                    }
+                } else {
+                    AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active, {1, 1, 1, 16, 16, 0});
+                    AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,
+                                 {1, 1, 1, 16, 16, 0});
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Mul(gateTemp, raw, expA, 64, active * 2, {1, 1, 0, 8, 8, 0});
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Abs(gateTemp, gateTemp, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Muls(gateTemp, gateTemp, -1.0f, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Exp(gateTemp, gateTemp, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Adds(denom, gateTemp, 1.0f, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Mul(denom, denom, denom, count);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Div(gateTemp, gateTemp, denom, count);
+                }
                 AscendC::Mul(gateOut, dg, expA, 64, active * 2, {1, 1, 0, 8, 8, 0});
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Muls(gateOut, gateOut, tail_.lowerBound, count);
@@ -1175,17 +1361,47 @@ public:
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(product, gateOut, raw, count);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Duplicate(sums, 0.0f, 16);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::WholeReduceSum(sums, product, 64, active, 1, 1, 16);
-                AscendC::WholeReduceSum(sums[8], product[64], 64, active, 1, 1, 16);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(sums, sums, sums[8], ROWS);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(partial[HEAD_DIM], partial[HEAD_DIM], sums, ROWS);
-                for (uint32_t row = 0; row < active; ++row) {
-                    AscendC::Add(partial, partial, gateOut[row * HEAD_DIM], HEAD_DIM);
+                if constexpr (!FULL_CHUNK) {
+                    AscendC::Duplicate(sums, 0.0f, 16);
                     AscendC::PipeBarrier<PIPE_V>();
+                }
+                AscendC::WholeReduceSum(sums, product, 64, active, 1, 1, 16);
+                AscendC::WholeReduceSum(sums[ROWS], product[64], 64, active, 1, 1, 16);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Add(sums, sums, sums[ROWS], ROWS);
+                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (ROWS == 16) {
+                    // Preserve both eight-row parameter reductions and their accumulation order.
+                    for (int32_t group = 8; group >= 0; group -= 8) {
+                        AscendC::Add(partial[HEAD_DIM], partial[HEAD_DIM], sums[group], 8);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(product, gateOut[group * HEAD_DIM], gateOut[(group + 4) * HEAD_DIM], 4 * HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(product, product, product[2 * HEAD_DIM], 2 * HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(product, product, product[HEAD_DIM], HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(partial, partial, product, HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
+                } else {
+                    AscendC::Add(partial[HEAD_DIM], partial[HEAD_DIM], sums, ROWS);
+                    if (active == ROWS) {
+                        // product is dead after the dA_log reduction; preserve gateOut for MTE3.
+                        AscendC::Add(product, gateOut, gateOut[4 * HEAD_DIM], 4 * HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(product, product, product[2 * HEAD_DIM], 2 * HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(product, product, product[HEAD_DIM], HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                        AscendC::Add(partial, partial, product, HEAD_DIM);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    } else {
+                        for (uint32_t row = 0; row < active; ++row) {
+                            AscendC::Add(partial, partial, gateOut[row * HEAD_DIM], HEAD_DIM);
+                            AscendC::PipeBarrier<PIPE_V>();
+                        }
+                    }
                 }
             }
             if (active < ROWS) {
@@ -1195,12 +1411,22 @@ public:
                 // db_base already has zero padding from Stage 5; valid-lane math preserves it.
             }
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Brcb(packedDb, db, 1, {1, 8});
+            AscendC::Brcb(packedDb, db, ROWS / 8, {1, 8});
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             if (active != 0) {
                 const int64_t outputToken = ((batch * tiling.tokens + chunk.tokenStart + first) * tiling.heads + head);
-                AscendC::DataCopy(dk_[(token + first) * HEAD_DIM], packedDk, active * HEAD_DIM);
+                if (tiling.outputTokenMajor) {
+                    const uint64_t dst = (static_cast<uint64_t>(batch) * tiling.tokens + chunk.tokenStart + first) *
+                                             tiling.heads * HEAD_DIM +
+                                         static_cast<uint64_t>(head) * HEAD_DIM;
+                    AscendC::DataCopyPad(dk_[dst], packedDk,
+                                         {static_cast<uint16_t>(active), HEAD_DIM * sizeof(bfloat16_t), 0,
+                                          static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * sizeof(bfloat16_t)),
+                                          0});
+                } else {
+                    AscendC::DataCopy(dk_[(token + first) * HEAD_DIM], packedDk, active * HEAD_DIM);
+                }
                 AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gateOut,
                                      {static_cast<uint16_t>(active), HEAD_DIM * 4, 0,
                                       static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * 4), 0});
@@ -1221,9 +1447,11 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-            if (tile + 2 < 4) {
+            if (tile + 2 < TILES) {
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-                LoadStage11Tile(ws, token, first - 2 * ROWS, end, slot);
+                LoadStage11Tile<ROWS>(ws, token, first - 2 * ROWS, end, slot);
+                AscendC::DataCopy(input[E], ws[WS_RIGHT / 4 + (first - 2 * ROWS) * HEAD_DIM], E);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
             }
         }
         for (uint32_t slot = 0; slot < 2; ++slot) {
@@ -1240,6 +1468,10 @@ public:
         for (uint32_t slot = 0; slot < 2; ++slot) {
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
         }
+        if (owner == 0) {
+            // Both heads must retire right before the next band reuses its GM slot.
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(BAND_LOADED);
+        }
     }
 
     __aicore__ inline void End()
@@ -1255,21 +1487,22 @@ public:
     }
 
 private:
+    template <uint32_t ROWS = 8>
     __aicore__ inline void LoadStage11Tile(AscendC::GlobalTensor<float> ws, int64_t token, uint32_t first, uint32_t end,
                                            uint32_t slot)
     {
-        constexpr uint32_t E = 8 * HEAD_DIM;
-        auto input = ub_[(88 + slot * 20) * 1024].ReinterpretCast<float>();
+        constexpr uint32_t E = ROWS * HEAD_DIM;
+        auto input = ub_[(ROWS == 16 ? (slot == 0 ? 24 : 88) : 88 + slot * 20) * 1024].ReinterpretCast<float>();
         AscendC::DataCopy(input, ws[WS_LEFT / 4 + first * HEAD_DIM], E);
-        AscendC::DataCopy(input[E], ws[WS_RIGHT / 4 + first * HEAD_DIM], E);
         AscendC::DataCopy(input[2 * E], ws[WS_DK_BASE / 4 + first * HEAD_DIM], E);
         AscendC::DataCopy(input[3 * E], ws[WS_DG_BASE / 4 + first * HEAD_DIM], E);
-        AscendC::DataCopy(ub_[178 * 1024 + 512 + slot * 32].ReinterpretCast<float>(), ws[WS_DB_BASE / 4 + first], 8);
-        const uint32_t active = first < end ? (end - first < 8 ? end - first : 8) : 0;
+        AscendC::DataCopy(
+            ub_[(ROWS == 16 ? 181 * 1024 + slot * 64 : 178 * 1024 + 512 + slot * 32)].ReinterpretCast<float>(),
+            ws[WS_DB_BASE / 4 + first], ROWS);
+        const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
         if (active != 0) {
             AscendC::DataCopy(input[4 * E], rawG_[(token + first) * HEAD_DIM], active * HEAD_DIM);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
     }
     __aicore__ inline void LoadStage5Tile(AscendC::GlobalTensor<float> state, AscendC::GlobalTensor<float> gb,
                                           int64_t token, uint32_t first, uint32_t rows, uint32_t slot)

@@ -6,6 +6,12 @@
 
 硬件预算：L1 512 KiB，L0A/L0B 各 64 KiB，L0C 128 KiB，每个 AIV 的 UB 192 KiB。
 
+原生输出布局：Stage 3/9/11 分别写 dv/dq/dk。BNSD/NTD 沿用连续搬运；
+BSND/TND 使用 DataCopyPad 多行搬运，每行 128 个 BF16，GM 行间隔为
+`(H-1)*128*2` 字节。基址用 uint64_t，Host 检查 DMA stride 范围。
+复用既有输出双缓冲及 MTE3 完成事件，不新增 UB、workspace 或转置 kernel。
+dG/dBeta 的 BSND/TND 地址规则保持固定。
+
 - **首版**：Stage 0/2/4/6 使用单份 BF16×BF16、FP32 累加，dW/Tza/kE/Zb 均不加残差；Stage 8/10 保留三项残差补算。Vector 中间计算与归约使用 FP32，搬运与同步参考 A2 前向 prepare。
 - **提升精度**：逐 Stage 对照高精度标杆定位误差，仅给必要操作数加残差，优先单侧两项补算；残差必须由转换前的 FP32 生成。仍不满足时，再评估对应 GEMM 双输入转 FP32、关闭 HF32 的路径。
 - **提升性能**：优先比较 Stage 8/10 的三项、单侧两项和单份 BF16，精度通过后再减项；再评估 Stage 8 沿 M、Stage 10 沿 K 拼接。拼接减少指令与同步次数，不减少乘加量，取舍以 A2 实测为准。
@@ -296,3 +302,73 @@ dAkk_strict_lower = −2^16 × tril(P, -1)
 - 省去 dW/zV/zW/Zb/Tza 及其搬运；Stage 3 保留 dv/db_v，原 Stage 4/6 由上述 Cube 计算替代。P 只用于严格下三角改写，不等同于原完整 dAkk_raw。
 - 逻辑 GEMM 从 12 次减到 8 次。对 B=1、H=96、T=8192、K=V=128，保留 Stage 8/10 三项补算且不新增补偿时，理论 Cube 运算量约从 270.6 降至 231.9 GFLOPs（−14.3%），不代表实测加速。
 - 启用前用真实前向 dump 对比中间量及最终梯度：BF16 舍入会破坏严格等式，任意独立输入不保证满足该关系。另行确定 dv_b 送入 Cube 的精度、布局和搬运路径；精度与 A2 性能均通过后，再更新 Stage、依赖及内存规划。
+
+## dq 精度修复实验
+
+2026-10-14 性能候选 R1/R1b 已放弃：全分支删除或仅 norm 分支删除 Stage 9
+FP32 dq 写回，均出现非 norm 性能回退；恢复原调度。测量记录见 validation.md。
+
+性能优化 R2（已保留）：Stage 7 将 FP32 输出与 BF16 高低位输出分开。
+严格下三角阶段用 UB[178,182)/[182,186) KiB 两槽，每槽 FP32 16×64；
+band 阶段复用已消费完的输入 UB[88,96)/[96,104) KiB 两槽，每槽 FP32 16×128。
+前者在 Stage 7 矩阵 packing 时生产，后者在 kNeg packing 时生产；各自最后消费者为 MTE3。
+原 q/k/gk、mask、beta、bandExp 与其余算术槽不变，峰值仍不超过 192 KiB。
+额外分配两个 MTE3_V free event，进入 Stage 7 时初始化；写 FP32 槽前等待 free，
+用既有 V_MTE3 ready 发布后搬出并重置 free，随即在独立槽计算 BF16 高低位。
+复用该 FP32 槽时才等完成；每个 band 在进入 Stage 9/11 前收齐两槽 free 并重新初始化，
+避免其 UB 重映射覆盖尚在搬出的数据。Stage 7 退出时收齐并释放两 event。
+MTE3_V 共使用四个 event（原两槽加本轮两槽）；GM 地址和跨核协议不变。
+两轮交替 A/B 的八项耗时降低 2.24%～4.24%；20 个 case 的七个输出全部通过原 CT L1 双标杆，保留此项。
+
+局部矩阵乘以用户确认的纯 FP32 为目标。先只将 Stage 8 的
+`dAqk_lower @ kNeg` 改为 FP32，并关闭 HF32，其余 GEMM 保持原路径。
+Stage 7 额外保存 FP32 dAqk_lower 16 KiB、kNeg 32 KiB，每个 workspace bank
+由 320 增至 368 KiB。Stage 8 先完成 left，再复用本 head 的 64 KiB L1
+计算 dq；Stage 10 重载原 BF16 dAqk 两平面。L0 双槽、UB 双缓冲保留。
+仅运行到 Stage 8 时，`BAND_LOADED` 在两种输入都读完后通知，防止下一带提前覆盖；
+完整流水仍提前通知，由 Stage 9 的 `S8_READY` 等待保护 FP32 输入的生命周期。
+先验证冻结的失败 chunk，再跑完整 200 case。实验通过前保留原库及失败记录。
+FP32 搬运参考仓内 A2 前向 Prepare 的 LoadData2D/3Dv2 路径；本算子尺寸为
+M=32、N=128、K=64，L0A/B 每槽分别使用 8/32 KiB，均不超过 32 KiB。
+
+后续指数实验：Stage 7 按 `2^x = 2^n × exp((x-n)×ln2)` 计算，
+`n=round(x)` 并限制在 [-126,127]，保证 `2^n` 可用 FP32 正常数表示。
+范围内 Exp 参数不超过半个 ln2；范围外保留剩余指数，不截断原始 x。
+复用 operand/rebuilt 临时区，无新增 UB。用于减少大指数乘 ln2 的舍入误差，
+先检查冻结失败点，再检查尾块、布局和完整精度；设备结果未通过前不作采用结论。
+
+## 完整 chunk 路径优化（2026-10-14）
+Stage 7 入口按 validRows==64 分派一次，满块模板固定 Stage 7 行数和 Stage 9/11 每 tile 的 active；尾块保留通用路径。算术顺序、双缓冲、片上布局、workspace 和跨核协议不变。相对 R2 八项耗时降低1.86%～2.07%，20 case 的七个输出均通过原 CT L1，采用。
+
+## Stage 11 参数梯度归约优化（2026-10-14）
+满 8 行时，dt_bias partial 先按 4/2/1 行做树形归约，再累加一次；复用已结束 dA_log 计算的 product 区，gateOut 保留给 MTE3。尾块仍逐行累加。无需增加 UB 或同步事件，改变 FP32 加法顺序。相对完整块版本八项耗时降低0.47%～1.34%，20 case 七个输出均通过原 CT L1，采用。
+
+## Stage 11 输入预取（2026-10-14）
+先搬入前两个 tile 的 left/dk/dg/db/raw gate，再等待 Stage 10 的 BAND_LOADED，最后搬 right 并发布 inputReady。保留 Stage 9 输出完成与 UB 复用保护，不增加 buffer；后续 tile 在同一通知之后正常搬入。两轮 A/B 八项耗时降低 2.73%～3.48%，原 20 case 七个输出全部通过，采用。
+
+## Stage 11 完整块清零裁剪（2026-10-16）
+完整 chunk 的两次 WholeReduceSum 覆盖 sums 的全部 16 个元素，省去此前的 Duplicate 和对应 PIPE_V 等待；尾块保留清零。内存、公式和归约顺序不变。两组独立的八配置两轮 A/B 均有小幅收益，原 20 case、七个输出全部通过，采用。
+
+## Stage 8/10 L0 残差复用（2026-10-16）
+BF16 残差矩阵乘将 A/B 高低位各搬入一次，在现有 L0 双槽内复用，依次计算 HH、HL、LH。每槽 A 占8 KiB、B占32 KiB，容量不变；三项计算结束才释放操作数。Stage 8 的纯FP32 dq路径不变，Stage 10 两个矩阵的累加顺序不变。相对清零裁剪版，八配置两轮A/B耗时降低1.92%～2.80%，原20case七个输出全部通过，采用。
+
+## Stage 8 删除无效 BF16 dAqk 搬运（2026-10-16）
+Stage8首带只搬dAkk高低位平面；dq使用原FP32输入，不再搬随即被覆盖的BF16 dAqk。Stage10仍独立加载BF16 dAqk。内存、公式与同步不变。相对L0复用版八配置两轮A/B耗时降低0.56%～1.40%，原20case七输出全部通过，采用。
+
+## Stage 1/3/5 完整 chunk 特化（2026-10-16）
+入口按validRows==64选择FULL_CHUNK模板，固定前段行数；尾块保持原路径，运算、双缓冲和同步不变。无norm四配置两轮均有约0.41%～0.69%收益，norm四配置变化在-0.08%～+0.03%；全配置平均未过原自动0.5%筛选线，按稳定小收益单独复核后跑原20case，七输出全部通过，采用。仅无norm启用的变体实测回退，不采用。
+## Stage 10 按 head 提前通知（2026-10-16）
+
+Stage 10 每个 head 保持 HH/HL/LH 的原累加顺序。head 0 完成第二个矩阵并将 right 写回后，通过 S10_FIRST_READY 通知 AIV；head 1 随后完成。两条 AIV 各消费一次新通知，head 0 可提前计算 Stage 11，head 1 仍等原 BAND_LOADED。
+
+head 0 在 Stage 11 结束前也消费 BAND_LOADED，保留整对 workspace 的复用保护。Stage 10 前缀和奇数 head 的空 owner 同样消费通知。双 buffer、片上容量、GM 地址宽度和精度计算不变，不新增功能函数。该调整已通过八配置两轮 A/B 和原 20 case 七输出验收；Stage 9/11 融合实验性能回退，未采用。
+
+## Stage11 首 tile 预计算与末带16行（2026-10-17）
+
+执行到Stage11的完整chunk非采数路径：前一带保留8行tile；启用norm时，将首tile的gate系数放到right等待之前计算，使用原gateTemp/denom，增加一次对应MTE2→V输入完成同步，不新增事件或容量。最后一带start=0改为16行tile，不提前gate计算；gateTemp/denom在q/k末次消费后复用其空间。尾块、Stage0–10前缀和采数路径保留原实现。本轮实际验收的是完整Stage0–12入口。
+
+16行末带UB布局（KiB）：有效q[0,8)、k[16,24)；输入双40KiB槽[24,64)/[88,128)；lower mask[64,80)和小量[80,88)保留；query/key/product[128,152)；dk双4KiB槽[152,160)；指数[160,176)、beta广播[176,178)保留；gate双8KiB槽[8,16)/[184,192)；packedDb双512B槽[178,179)、sums起于179、rowScale起于180、db双64B槽起于181。最高地址192KiB，仅复用最后一带已死的q/k上半区和gk，lower mask不复用。
+
+16行逐元素运算及搬运合批，逆向扫描仍先处理高8行、再处理低8行；dA_log/ddt_bias按同样的两组8行顺序累加，FP32运算和残差精度策略不变。输入/输出双buffer、原跨核通知和最后释放闭环保留，GM地址仍用64位。
+
+末带dG驻留、Stage10 bkPos预取及全分支gate预计算实验均未保留。实测与精度见validation.md及工作区validation/perf-next-20261017。
