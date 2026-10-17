@@ -58,3 +58,10 @@ Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M�
 
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。
+
+### 通用 WY 单 head 窗口恢复
+
+S6/S7 方阵乘法在通用路径的最后单 head 窗口执行两次覆盖计算，
+与现有 packed/短尾恢复路径一致。dense 完整 chunk 的双 head 窗口
+仍执行一次；A5 分支不变。该处理消除已复现的 scratch 初值依赖，
+不改变公式、接口或 workspace 布局。保留 Python 侧已有补齐保护。
