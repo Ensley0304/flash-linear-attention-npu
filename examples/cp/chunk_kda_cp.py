@@ -12,8 +12,8 @@
 反向：Bwd Prepare -> CP pre_bwd -> all_gather/merge -> 边界适配 -> Dhu -> Finalize。
 当前 Dhu 忽略 dht，因此非末尾进程追加两个虚拟分块 注入边界梯度，随后裁剪输出。
 
-A2/A3 的反向 Prepare/WY/门控回代使用 PyTorch NPU 运算，块内梯度调用
-chunk_kda_bwd_intra；A5 保留独立的融合反向阶段。两条路径均复用前向中间量。
+A2/A3/A5 均调用原生反向 Prepare、Dhu、Finalize，复用前向中间量。
+A2/A3 算子包需包含 PR #915 的反向阶段与正向 Prepare 精度修复。
 
 运行（需要包含 CP 及对应 KDA 小算子的本机架构算子包）：
     torchrun --standalone --nproc_per_node=2 examples/cp/chunk_kda_cp.py --accuracy-check
@@ -231,80 +231,6 @@ def backward_finalize(x, saved, h, v_new, dh, dv_scan, d_aqk, dq_raw, scale):
         + [C.POINTER(C.c_uint64), C.POINTER(C.c_void_p)])
 
 
-def backward_prepare_a2_a3(aqk, v_new, do, h, scale):
-    """用设备上的分块矩阵乘完成 A3 暂未提供的独立反向 Prepare。
-
-    前向保存的 aqk 已含 scale，只有 d_aqk 需要额外乘 scale。
-    h 的分块维在头维之前，转换后与其余张量的 [B,H,NT,64,D] 对齐。
-    """
-    batch, heads, tokens, dim = do.shape
-    blocks = tokens // 64
-    dc = do.float().reshape(batch, heads, blocks, 64, dim)
-    vc = v_new.float().reshape_as(dc)
-    ac = aqk.float().reshape(batch, heads, blocks, 64, 64)
-    hc = h.float().permute(0, 2, 1, 3, 4)
-    d_aqk = torch.tril(dc @ vc.transpose(-1, -2)) * scale
-    dv = ac.transpose(-1, -2) @ dc
-    dq_raw = dc @ hc.transpose(-1, -2)
-    return (d_aqk.reshape_as(aqk).contiguous(), dv.reshape_as(do).to(do.dtype),
-            dq_raw.reshape_as(do).contiguous())
-
-
-def backward_finalize_a2_a3(x, saved, h, v_new, dh, dv_scan, d_aqk, dq_raw, scale):
-    """按 WY、块内梯度、门控回代三步完成 A2/A3 反向收尾。
-
-    直接读取前向保存的逆三角矩阵和新值，不重算前向。周边矩阵运算在 NPU
-    上执行，块内带门控的三角梯度使用已有 Ascend C 小算子。
-    """
-    from fla_npu.ops.ascendc import chunk_kda_bwd_intra
-
-    batch, heads, tokens, dim = x["q"].shape
-    blocks = tokens // 64
-    shape = (batch, heads, blocks, 64, dim)
-    qc, kc, vc = (x[n].float().reshape(shape) for n in ("q", "k", "v"))
-    beta = x["beta"].float().reshape(batch, heads, blocks, 64, 1)
-    gc = saved[0].float().reshape(shape)
-    inverse = saved[2].float().reshape(batch, heads, blocks, 64, 64)
-    hc = h.float().permute(0, 2, 1, 3, 4)
-    dhc = dh.float().permute(0, 2, 1, 3, 4)
-    vn = v_new.float().reshape(shape)
-    du = dv_scan.float().reshape(shape)
-    decay = torch.exp2(gc)
-    end_decay = torch.exp2(gc[..., -1:, :])
-
-    # v_new = A @ (beta*v - beta*k*exp2(gc) @ h)。
-    dy = inverse.transpose(-1, -2) @ du
-    dkb = -(dy @ hc.transpose(-1, -2))
-    dk_state = (vn @ dhc.transpose(-1, -2)) * torch.exp2(gc[..., -1:, :] - gc)
-    dq = dq_raw.reshape(shape) * decay * scale
-    dk_wy = dkb * beta * decay
-    dk = dk_state + dk_wy
-    db = (dy * vc + dkb * kc * decay).sum(-1)
-    dg = qc * dq - kc * dk_state + kc * dk_wy
-    # 分块末端的门控还控制状态衰减与 kg，需将这两项加到最后一个词元。
-    dg[..., -1, :] += (kc * dk_state).sum(-2) + (
-        hc * dhc).sum(-1) * end_decay.squeeze(-2)
-    d_akk = -torch.tril(dy @ vn.transpose(-1, -2), diagonal=-1)
-    dq, dk, db, dg = chunk_kda_bwd_intra(
-        x["q"], x["k"], saved[0], x["beta"], d_aqk,
-        d_akk.reshape_as(saved[2]).contiguous(),
-        dq.reshape_as(x["q"]).contiguous(), dk.reshape_as(x["k"]).contiguous(),
-        db.reshape_as(x["beta"]).contiguous(), dg.reshape_as(x["g"]).contiguous(),
-        chunk_size=64, safe_gate=True, layout="BNSD")
-
-    # 块内核输出自然对数域累积门控的梯度；先反向累加，再回代 safe gate。
-    upstream = dg.reshape(shape).flip(-2).cumsum(-2).flip(-2).reshape_as(x["g"])
-    raw = x["g"] + x["dt_bias"][None, :, None, :]
-    exp_a = x["A_log"].exp()[None, :, None, None]
-    sigmoid = torch.sigmoid(exp_a * raw)
-    dg_raw = upstream * (-5.0) * exp_a * sigmoid * (1.0 - sigmoid)
-    d_a_log = (dg_raw * raw).sum((0, 2, 3))
-    d_bias = dg_raw.sum((0, 2))
-    return (dq.to(x["q"].dtype), dk.to(x["k"].dtype),
-            (dy * beta).reshape_as(x["v"]).to(x["v"].dtype),
-            db.to(x["beta"].dtype), dg_raw, d_a_log, d_bias)
-
-
 def run_kda(x, *, scale, rank, world, architecture="a5"):
     from fla_npu.ops.ascendc import (
         chunk_kda_fwd_prepare, chunk_fwd_h, chunk_kda_fwd_finalize,
@@ -327,9 +253,7 @@ def run_kda(x, *, scale, rank, world, architecture="a5"):
                               use_exp2=True, save_new_value=True)
     o = chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, output_layout="BNSD")
 
-    prepare_bwd = backward_prepare if architecture == "a5" else backward_prepare_a2_a3
-    finalize_bwd = backward_finalize if architecture == "a5" else backward_finalize_a2_a3
-    d_aqk, dv_local, dq_raw = prepare_bwd(aqk, v_new, do, h, scale)
+    d_aqk, dv_local, dq_raw = backward_prepare(aqk, v_new, do, h, scale)
     # 此处使用未乘 scale 的 qg；qg_scaled 仅供前向 Finalize 使用。
     # CP 反向接口当前要求 gk 为 BF16 或 FP16。
     dhm = chunk_delta_h_bwd_preprocess(qg, kg, w, do, dv_local, scale, 64,
@@ -338,7 +262,7 @@ def run_kda(x, *, scale, rank, world, architecture="a5"):
     dh, dv_scan = dhu_with_boundary(
         qg, kg, w, do, dv_local, gk, dht, scale=scale,
         has_future=rank + 1 < world)
-    gradients = finalize_bwd(x, saved, h, v_new, dh, dv_scan, d_aqk, dq_raw, scale)
+    gradients = backward_finalize(x, saved, h, v_new, dh, dv_scan, d_aqk, dq_raw, scale)
     return dict(zip(("dq", "dk", "dv", "dbeta", "dg", "dA_log", "ddt_bias"), gradients),
                 o=o, h0=h0, dht=dht)
 
