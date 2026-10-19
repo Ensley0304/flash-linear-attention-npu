@@ -736,10 +736,14 @@ public:
             SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
         }
         PipeBarrier<PIPE_V>();
-        for (int row = int(active) - 1; row >= 0; --row) {
-            Add(suffix, suffix, dg[row * 128], 128);
+        if (active != 0) {
+            Add(dg[(active - 1) * 128], suffix, dg[(active - 1) * 128], 128);
             PipeBarrier<PIPE_V>();
-            Adds(dg[row * 128], suffix, 0.0f, 128);
+            for (int row = int(active) - 2; row >= 0; --row) {
+                Add(dg[row * 128], dg[(row + 1) * 128], dg[row * 128], 128);
+                PipeBarrier<PIPE_V>();
+            }
+            Adds(suffix, dg, 0.0f, 128);
             PipeBarrier<PIPE_V>();
         }
         Mul(dg, dg, ub_[96 * 1024].ReinterpretCast<float>(), 32 * 128);

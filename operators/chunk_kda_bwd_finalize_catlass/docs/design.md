@@ -462,3 +462,5 @@ AIV: S1 → wait S0/S2 → S3 → S5 → wait S6 → S7(band1,band0)
 ```
 
 实现不得把“AIV0等待前带结果”写成阻止AIV1后带S9推进的全局barrier。S9内部suffix等待按对应数据依赖执行。W=2允许下一work的S0使用另一relay槽，但其L1目标必须已经结束旧代消费；每个AIV只有一份完整UB状态。退出时AIC消费尚未回收的slot free，核内双buffer事件排空后释放。空片仍参加全部set/wait；无效带写安全零并闭环，不能跳过一侧通知。
+
+P3已验收：S9逆序scan直接写回dG。最后有效行先加远端suffix，前面的行依次加已完成的下一行；结束后仅复制首行到suffix。保持串行加法顺序，不改跨AIV通知、UB地址和gate计算。空片保留原suffix，不访问dG首行。
