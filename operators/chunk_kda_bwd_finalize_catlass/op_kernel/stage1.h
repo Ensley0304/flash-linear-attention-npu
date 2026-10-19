@@ -35,6 +35,14 @@ public:
         Bind(input, {});
         scalarReady_ = pipe.AllocEventID<HardEvent::V_S>();
         scalarWritten_ = pipe.AllocEventID<HardEvent::S_V>();
+        auto lowerMask = ub_[185 * 1024].ReinterpretCast<uint64_t>();
+        for (uint32_t row = 0; row < 32; ++row) {
+            lowerMask.SetValue(row, (uint64_t(1) << (GetSubBlockIdx() * 32 + row)) - 1);
+        }
+        SetFlag<HardEvent::S_V>(scalarWritten_);
+        WaitFlag<HardEvent::S_V>(scalarWritten_);
+        Duplicate(ub_[185 * 1024 + 256].ReinterpretCast<float>(), 0.0f, 32);
+        PipeBarrier<PIPE_V>();
         phaseFree_ = pipe.AllocEventID<HardEvent::MTE3_MTE2>();
         vectorPhaseFree_ = pipe.AllocEventID<HardEvent::V_MTE2>();
         for (uint32_t slot = 0; slot < 2; ++slot) {
@@ -491,11 +499,17 @@ public:
         Brcb(ub_[187 * 1024].ReinterpretCast<float>(), small[128], 4, {1, 8});
         Muls(ak, ak, -1.0f, 32 * 64);
         PipeBarrier<PIPE_V>();
-        for (uint32_t row = 0; row < 32; ++row) {
-            const uint32_t globalRow = first + row;
-            uint64_t mask[2] = {globalRow < rows ? (~uint64_t(0) << globalRow) : ~uint64_t(0), 0};
-            Duplicate(aq[row * 64], 0.0f, mask, 1, 1, 8);
-            Duplicate(ak[row * 64], 0.0f, mask, 1, 1, 8);
+        SetCmpMask(ub_[185 * 1024 + 256].ReinterpretCast<float>());
+        PipeBarrier<PIPE_V>();
+        SetVectorMask<float>(64);
+        Select(aq, ub_[185 * 1024], aq, 32, {1, 1, 1, 8, 8, 8});
+        Select(ak, ub_[185 * 1024], ak, 32, {1, 1, 1, 8, 8, 8});
+        ResetMask();
+        const uint32_t active = rows > first ? (rows - first < 32 ? rows - first : 32) : 0;
+        if (active < 32) {
+            PipeBarrier<PIPE_V>();
+            Duplicate(aq[active * 64], 0.0f, (32 - active) * 64);
+            Duplicate(ak[active * 64], 0.0f, (32 - active) * 64);
         }
         SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
         WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);

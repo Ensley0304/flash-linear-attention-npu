@@ -466,3 +466,7 @@ AIV: S1 → wait S0/S2 → S3 → S5 → wait S6 → S7(band1,band0)
 
 P3已验收：S9逆序scan直接写回dG。最后有效行先加远端suffix，前面的行依次加已完成的下一行；结束后仅复制首行到suffix。保持串行加法顺序，不改跨AIV通知、UB地址和gate计算。空片保留原suffix，不访问dG首行。
 
+P4c已验收：每个AIV初始化一次32×64 bit严格下三角mask，放在UB185KiB的256B；随后128B保存Select的零标量，两者全程保留。S7用两次Select批量清零Aq/Ak的对角及上三角，尾部无效行另外连续清零。总UB仍为188KiB，不覆盖184KiB的远端partial或186/187KiB的广播槽。使用SetCmpMask和不带mask参数的Select，并恢复Vector mask；当前CANN dav_c220的SelectCal直接发vsel，不申请常规Select接口的8KiB临时区。依据：kernel_operator_vec_cmpsel_impl.h:133及官方SetCmpMask说明。
+
+
+Select依据：[官方SetCmpMask](https://www.hiascend.com/doc_center/source/en/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_0224.html)；实现核对本机CANN 9.1.0的tools/tikcpp/tikcfw/impl/dav_c220/kernel_operator_vec_cmpsel_impl.h:133。
