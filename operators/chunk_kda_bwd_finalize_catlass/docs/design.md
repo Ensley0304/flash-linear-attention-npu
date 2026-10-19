@@ -314,7 +314,7 @@ for b in [1,0]:
 | --- | --- | --- | --- |
 | 输入、三路输出双槽及exp临时量 | UB | scratch132～188KiB | 8行tile，24KiB输出双槽+32KiB临时；原32行状态不复制 |
 
-S7先发布后带，再准备前带，与S8后带重叠。AIV0完成前带写出后提前贡献suffix模式1的空payload通知。
+S7先发布后带，再准备前带，与S8后带重叠。AIV0在S9等待suffix前，贡献suffix和partial两条模式1空payload通知。
 
 ### S8 · Cube：每带四项局部矩阵乘
 
@@ -385,7 +385,7 @@ apply optional beta*(1-beta/multiplier) to db
 | --- | --- | --- | --- |
 | 三路输入双槽、输出双槽、norm临时 | UB | scratch132～188KiB | 24KiB输入+8KiB BF16输出+8KiB FP32输出+16KiB临时；FP32输出槽轮流写dg/db |
 
-前带owner等待suffix模式1聚合，后带owner写完后贡献set；两片各wait一次。AIV0读取后半partial前另确认其写出完成，不能以早发布的suffix替代后半partial就绪。第一版把suffix和后半partial一起发布，保证一个ready覆盖完整记录。
+P4已验收：suffix与partial分开发布。AIV1完成scan后立即写suffix并发flag11，继续gate归约，不立即wait11。归约完成后消费flag11，再写partial并发flag12、wait12。AIV0先贡献flag11/12，wait11后只读suffix并执行本片scan与gate；本片归约完成后wait12，再读远端partial合并。两片对每个flag各set/wait一次；空片照常参与。读partial前用V_MTE2保护UB复用，读完后用MTE2_V确认可见。relay地址、work free和跨work复用不变。
 
 ### S10 · Vector：跨chunk归并
 
@@ -433,7 +433,7 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 
 ## 6. 跨 Stage 同步契约
 
-模式2用于一个AIC与两个AIV的聚合/广播。每次AIC发布由两片各消费一次；每次AIV发布由两片各贡献一次，AIC等待聚合。模式1仅用于同组两片的suffix记录。不同模式使用独立flag ID，不混用未消费代际。
+模式2用于一个AIC与两个AIV的聚合/广播。每次AIC发布由两片各消费一次；每次AIV发布由两片各贡献一次，AIC等待聚合。模式1用于同组两片的suffix和partial记录。不同模式使用独立flag ID，不混用未消费代际。
 
 直调host通过 `rtGetC2cCtrlAddr` 取得同步地址，kernel入口调用 `SetSyncBaseAddr`；依据固定CATLASS示例03及kernel_adapter。只声明MIX任务类型不能替代同步地址初始化。
 
@@ -447,7 +447,8 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 | 5/6 带操作数ready | 后/前带全部写完 | AIC按后再前wait | Aq/Ak及指数操作数 |
 | 7/8 带结果ready | 后/前带Fixpipe写完 | 两片各按后再前wait | 三项局部结果 |
 | 9 slot free | 首版W=1，初始隐式空闲 | AIC每work末等待两片S9结束；ID10保留给W=2候选 | 整代relay和下代常驻状态 |
-| 11 suffix记录ready | AIV0提前空贡献；AIV1完整记录MTE3写完再贡献 | 两片均wait，释放前不允许同slot覆盖 | suffix和后半partial |
+| 11 suffix ready | AIV0提前空贡献；AIV1扫描后MTE3写完再贡献 | AIV0读取前wait；AIV1在gate完成后wait | 未乘gate的suffix |
+| 12 partial ready | AIV0在wait11前空贡献；AIV1归约后MTE3写完再贡献 | 两片各wait一次，AIV0随后读取并合并 | 后半partial |
 | 本地HardEvent | 初始化可用槽位 | MTE2/V/MTE3、MTE2/MTE1/M/FIX成对set/wait | UB/L1/L0各自双buffer |
 
 执行顺序：

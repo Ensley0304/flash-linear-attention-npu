@@ -725,12 +725,12 @@ public:
         Duplicate(suffix, 0.0f, 128);
         if (sub == 0) {
             CrossCoreSetFlag<1, PIPE_MTE3>(11);
+            CrossCoreSetFlag<1, PIPE_MTE3>(12);
             CrossCoreWaitFlag(11);
             SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
             WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
             WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
             DataCopy(suffix, source[496 * 1024 / 4], 128);
-            DataCopy(remotePartial, source[496 * 1024 / 4 + 128], 136);
             SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
             WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
             SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
@@ -746,6 +746,12 @@ public:
             Adds(suffix, dg, 0.0f, 128);
             PipeBarrier<PIPE_V>();
         }
+        if (sub == 1) {
+            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            DataCopy(source[496 * 1024 / 4], suffix, 128);
+            CrossCoreSetFlag<1, PIPE_MTE3>(11);
+        }
         Mul(dg, dg, ub_[96 * 1024].ReinterpretCast<float>(), 32 * 128);
         Duplicate(partial, 0.0f, 136);
         PipeBarrier<PIPE_V>();
@@ -760,13 +766,21 @@ public:
         PipeBarrier<PIPE_V>();
         WholeReduceSum(partial, rowSums, 64, 1, 1, 1, 8);
         if (sub == 1) {
+            CrossCoreWaitFlag(11);
             SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
             WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
-            DataCopy(source[496 * 1024 / 4], suffix, 128);
             DataCopy(source[496 * 1024 / 4 + 128], partial, 136);
-            CrossCoreSetFlag<1, PIPE_MTE3>(11);
-            CrossCoreWaitFlag(11);
+            CrossCoreSetFlag<1, PIPE_MTE3>(12);
+            CrossCoreWaitFlag(12);
         } else {
+            CrossCoreWaitFlag(12);
+            SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+            WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+            WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
+            DataCopy(remotePartial, source[496 * 1024 / 4 + 128], 136);
+            SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
             PipeBarrier<PIPE_V>();
             Add(partial, partial, remotePartial, 136);
             SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
