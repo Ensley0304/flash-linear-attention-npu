@@ -12,9 +12,9 @@
   "optional_cross_check_devices": [
     "cuda"
   ],
-  "stage": "reference",
+  "stage": "implementation",
   "operator_contract": "frozen",
-  "golden_contract": "provisional",
+  "golden_contract": "frozen",
   "issue_type": null,
   "resume_from": null,
   "validation_scope": "full"

@@ -1,0 +1,146 @@
+[
+  {
+    "rows": 1,
+    "norm": false,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 1,
+    "norm": false,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 1,
+    "norm": false,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 1,
+    "norm": true,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 1,
+    "norm": true,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 1,
+    "norm": true,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 7,
+    "norm": false,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 7,
+    "norm": false,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 7,
+    "norm": false,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 7,
+    "norm": true,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 7,
+    "norm": true,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 7,
+    "norm": true,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 33,
+    "norm": false,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 33,
+    "norm": false,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 33,
+    "norm": false,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 33,
+    "norm": true,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 33,
+    "norm": true,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 33,
+    "norm": true,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 64,
+    "norm": false,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 64,
+    "norm": false,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 64,
+    "norm": false,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 64,
+    "norm": true,
+    "beta_mode": 0,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 64,
+    "norm": true,
+    "beta_mode": 1,
+    "autograd": "PASS"
+  },
+  {
+    "rows": 64,
+    "norm": true,
+    "beta_mode": 2,
+    "autograd": "PASS"
+  }
+]

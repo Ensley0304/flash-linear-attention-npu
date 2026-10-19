@@ -1,0 +1,2033 @@
+{
+  "torch": "2.7.1+cpu",
+  "device": "cpu",
+  "threads": 1,
+  "canonical_sha256": "cdb8bf9bca942995783dd468cad5ecfb4c046ada0f871148c07869b67b180f02",
+  "purpose": "CPU relocation parity and FP32-vs-FP64 calibration; not DUT acceptance",
+  "cases": [
+    {
+      "case_id": 0,
+      "spec": {
+        "case_id": 0,
+        "B": 1,
+        "H": 1,
+        "T": 1,
+        "lengths": null,
+        "norm": false,
+        "beta_mode": 0,
+        "output_layout": "BNSD",
+        "lower_bound": -5.0,
+        "scale": 0.08838834764831845,
+        "gate_mode": "ordinary",
+        "cores": 0
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            1,
+            1,
+            1,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.0079345703125,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            1,
+            1,
+            1,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.458984375,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            1,
+            1,
+            1,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.00010156631469726562,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            1,
+            1,
+            1
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.07535140216350555,
+          "max_abs": 4.5903027057647705e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            1,
+            1,
+            1,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.04570426419377327,
+          "max_abs": 5.587935447692871e-09,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            1
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.23597581684589386,
+          "max_abs": 1.4901161193847656e-08,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            1,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.04570426419377327,
+          "max_abs": 5.587935447692871e-09,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.032655954360961914
+    },
+    {
+      "case_id": 4,
+      "spec": {
+        "case_id": 4,
+        "B": 1,
+        "H": 7,
+        "T": 33,
+        "lengths": null,
+        "norm": false,
+        "beta_mode": 0,
+        "output_layout": "BNSD",
+        "lower_bound": -5.0,
+        "scale": 0.08838834764831845,
+        "gate_mode": "saturated",
+        "cores": 0
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            1,
+            7,
+            33,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.294921875,
+          "max_abs": 3.0517578125e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            1,
+            7,
+            33,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.8828125,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            1,
+            7,
+            33,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.48046875,
+          "max_abs": 0.00048828125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            1,
+            33,
+            7
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.638264000415802,
+          "max_abs": 0.0005145594477653503,
+          "matched_ratio_default_policy": 0.5281385281385281,
+          "default_error_count": 109,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            1,
+            33,
+            7,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.04654660448431969,
+          "max_abs": 4.672631621360779e-05,
+          "matched_ratio_default_policy": 0.9998308982683982,
+          "default_error_count": 5,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            7
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.06990353763103485,
+          "max_abs": 0.00010126829147338867,
+          "matched_ratio_default_policy": 0.5714285714285714,
+          "default_error_count": 3,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            7,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.04497724771499634,
+          "max_abs": 5.509890615940094e-05,
+          "matched_ratio_default_policy": 0.9933035714285714,
+          "default_error_count": 6,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.1319103240966797
+    },
+    {
+      "case_id": 7,
+      "spec": {
+        "case_id": 7,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": false,
+        "beta_mode": 0,
+        "output_layout": "BNSD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.65625,
+          "max_abs": 1.52587890625e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.03125,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.482421875,
+          "max_abs": 7.62939453125e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.9658454060554504,
+          "max_abs": 0.0019165277481079102,
+          "matched_ratio_default_policy": 0.3488372093023256,
+          "default_error_count": 504,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.002221565693616867,
+          "max_abs": 1.8260907381772995e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.07694459706544876,
+          "max_abs": 8.930638432502747e-05,
+          "matched_ratio_default_policy": 0.6666666666666666,
+          "default_error_count": 1,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1666124165058136,
+          "max_abs": 8.528120815753937e-05,
+          "matched_ratio_default_policy": 0.8697916666666666,
+          "default_error_count": 50,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.3910541534423828
+    },
+    {
+      "case_id": 23,
+      "spec": {
+        "case_id": 23,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": false,
+        "beta_mode": 1,
+        "output_layout": "BNSD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.7421875,
+          "max_abs": 0.0001220703125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.96484375,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.486328125,
+          "max_abs": 0.0001220703125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.2632923126220703,
+          "max_abs": 0.00047323573380708694,
+          "matched_ratio_default_policy": 0.5310077519379846,
+          "default_error_count": 363,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0026177368126809597,
+          "max_abs": 2.4252221919596195e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.16364368796348572,
+          "max_abs": 3.0860304832458496e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1475970447063446,
+          "max_abs": 8.492730557918549e-05,
+          "matched_ratio_default_policy": 0.8567708333333334,
+          "default_error_count": 55,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.3885822296142578
+    },
+    {
+      "case_id": 39,
+      "spec": {
+        "case_id": 39,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": false,
+        "beta_mode": 2,
+        "output_layout": "BNSD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.6015625,
+          "max_abs": 0.0001220703125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 3.15625,
+          "max_abs": 0.015625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.0,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.6295197010040283,
+          "max_abs": 0.0020911097526550293,
+          "matched_ratio_default_policy": 0.33462532299741604,
+          "default_error_count": 515,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.002396866912022233,
+          "max_abs": 5.906011210754514e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.13177472352981567,
+          "max_abs": 6.146542727947235e-05,
+          "matched_ratio_default_policy": 0.6666666666666666,
+          "default_error_count": 1,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.16214929521083832,
+          "max_abs": 0.00021014362573623657,
+          "matched_ratio_default_policy": 0.4661458333333333,
+          "default_error_count": 205,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.39058446884155273
+    },
+    {
+      "case_id": 47,
+      "spec": {
+        "case_id": 47,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": false,
+        "beta_mode": 2,
+        "output_layout": "BSND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.75,
+          "max_abs": 0.0009765625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 3.15625,
+          "max_abs": 0.015625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.94921875,
+          "max_abs": 3.0517578125e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.6333599090576172,
+          "max_abs": 0.0014832913875579834,
+          "matched_ratio_default_policy": 0.3578811369509044,
+          "default_error_count": 497,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.003852841444313526,
+          "max_abs": 8.576607797294855e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.10264590382575989,
+          "max_abs": 0.00024347007274627686,
+          "matched_ratio_default_policy": 0.3333333333333333,
+          "default_error_count": 2,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.24564014375209808,
+          "max_abs": 0.0003891885280609131,
+          "matched_ratio_default_policy": 0.5052083333333334,
+          "default_error_count": 190,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.4472804069519043
+    },
+    {
+      "case_id": 55,
+      "spec": {
+        "case_id": 55,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": true,
+        "beta_mode": 0,
+        "output_layout": "BNSD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.380859375,
+          "max_abs": 0.0001220703125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.67578125,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.4765625,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.7967730164527893,
+          "max_abs": 0.0008562207221984863,
+          "matched_ratio_default_policy": 0.46511627906976744,
+          "default_error_count": 414,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0015490358928218484,
+          "max_abs": 1.1762604117393494e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1260705143213272,
+          "max_abs": 5.0105154514312744e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.11144838482141495,
+          "max_abs": 5.884096026420593e-05,
+          "matched_ratio_default_policy": 0.9661458333333334,
+          "default_error_count": 13,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.45969152450561523
+    },
+    {
+      "case_id": 63,
+      "spec": {
+        "case_id": 63,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": true,
+        "beta_mode": 0,
+        "output_layout": "BSND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.390625,
+          "max_abs": 0.0009765625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.703125,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.494140625,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.8242208361625671,
+          "max_abs": 0.000997200608253479,
+          "matched_ratio_default_policy": 0.4573643410852713,
+          "default_error_count": 420,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0022934875451028347,
+          "max_abs": 1.1716110748238862e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.034976404160261154,
+          "max_abs": 3.80929559469223e-05,
+          "matched_ratio_default_policy": 0.6666666666666666,
+          "default_error_count": 1,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1199374794960022,
+          "max_abs": 5.163252353668213e-05,
+          "matched_ratio_default_policy": 0.9479166666666666,
+          "default_error_count": 20,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.46590280532836914
+    },
+    {
+      "case_id": 71,
+      "spec": {
+        "case_id": 71,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": true,
+        "beta_mode": 1,
+        "output_layout": "BNSD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.408203125,
+          "max_abs": 0.00048828125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.6796875,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.53125,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.2306898534297943,
+          "max_abs": 0.00019625388085842133,
+          "matched_ratio_default_policy": 0.6550387596899225,
+          "default_error_count": 267,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0019013209966942668,
+          "max_abs": 1.4424440450966358e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.07006321847438812,
+          "max_abs": 4.996545612812042e-05,
+          "matched_ratio_default_policy": 0.6666666666666666,
+          "default_error_count": 1,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.13960504531860352,
+          "max_abs": 6.804242730140686e-05,
+          "matched_ratio_default_policy": 0.9270833333333334,
+          "default_error_count": 28,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.48210978507995605
+    },
+    {
+      "case_id": 87,
+      "spec": {
+        "case_id": 87,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": true,
+        "beta_mode": 2,
+        "output_layout": "BNSD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.388671875,
+          "max_abs": 0.00048828125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.546875,
+          "max_abs": 0.0078125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            3,
+            129,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.0,
+          "max_abs": 9.5367431640625e-07,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.44630324840545654,
+          "max_abs": 0.0006952285766601562,
+          "matched_ratio_default_policy": 0.5077519379844961,
+          "default_error_count": 381,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.003127843840047717,
+          "max_abs": 4.900968633592129e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.055171459913253784,
+          "max_abs": 9.344518184661865e-05,
+          "matched_ratio_default_policy": 0.3333333333333333,
+          "default_error_count": 2,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1516089141368866,
+          "max_abs": 0.0001627504825592041,
+          "matched_ratio_default_policy": 0.6796875,
+          "default_error_count": 123,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.5380368232727051
+    },
+    {
+      "case_id": 95,
+      "spec": {
+        "case_id": 95,
+        "B": 2,
+        "H": 3,
+        "T": 129,
+        "lengths": null,
+        "norm": true,
+        "beta_mode": 2,
+        "output_layout": "BSND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.400390625,
+          "max_abs": 3.0517578125e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.578125,
+          "max_abs": 0.0078125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.92578125,
+          "max_abs": 2.3283064365386963e-10,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            2,
+            129,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.3535115420818329,
+          "max_abs": 0.0006728023290634155,
+          "matched_ratio_default_policy": 0.437984496124031,
+          "default_error_count": 435,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            2,
+            129,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.002281422493979335,
+          "max_abs": 2.986766048707068e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.07919498533010483,
+          "max_abs": 3.416091203689575e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.16887211799621582,
+          "max_abs": 0.00012872368097305298,
+          "matched_ratio_default_policy": 0.7057291666666666,
+          "default_error_count": 113,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.5262653827667236
+    },
+    {
+      "case_id": 103,
+      "spec": {
+        "case_id": 103,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": false,
+        "beta_mode": 0,
+        "output_layout": "NTD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.640625,
+          "max_abs": 0.000244140625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.0546875,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.455078125,
+          "max_abs": 1.9073486328125e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.8629343509674072,
+          "max_abs": 0.002765059471130371,
+          "matched_ratio_default_policy": 0.347008547008547,
+          "default_error_count": 382,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0021657822653651237,
+          "max_abs": 2.029875759035349e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.12339713424444199,
+          "max_abs": 6.320327520370483e-05,
+          "matched_ratio_default_policy": 0.6666666666666666,
+          "default_error_count": 1,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.11731068789958954,
+          "max_abs": 7.689371705055237e-05,
+          "matched_ratio_default_policy": 0.859375,
+          "default_error_count": 54,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.42464590072631836
+    },
+    {
+      "case_id": 119,
+      "spec": {
+        "case_id": 119,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": false,
+        "beta_mode": 1,
+        "output_layout": "NTD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.5859375,
+          "max_abs": 0.001953125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.1328125,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.5,
+          "max_abs": 0.000244140625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.21877998113632202,
+          "max_abs": 0.0005721691995859146,
+          "matched_ratio_default_policy": 0.5264957264957265,
+          "default_error_count": 277,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0019181303214281797,
+          "max_abs": 1.843844074755907e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.07299741357564926,
+          "max_abs": 6.77257776260376e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.12412676960229874,
+          "max_abs": 6.716465577483177e-05,
+          "matched_ratio_default_policy": 0.8854166666666666,
+          "default_error_count": 44,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.44121551513671875
+    },
+    {
+      "case_id": 135,
+      "spec": {
+        "case_id": 135,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": false,
+        "beta_mode": 2,
+        "output_layout": "NTD",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.57421875,
+          "max_abs": 0.0009765625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 2.921875,
+          "max_abs": 0.015625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            3,
+            195,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.9609375,
+          "max_abs": 7.450580596923828e-09,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.7295153737068176,
+          "max_abs": 0.0015783458948135376,
+          "matched_ratio_default_policy": 0.3452991452991453,
+          "default_error_count": 383,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0030214914586395025,
+          "max_abs": 9.055627742782235e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.03989901393651962,
+          "max_abs": 0.00020467489957809448,
+          "matched_ratio_default_policy": 0.6666666666666666,
+          "default_error_count": 1,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1473371386528015,
+          "max_abs": 0.00023795850574970245,
+          "matched_ratio_default_policy": 0.4791666666666667,
+          "default_error_count": 200,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.44415712356567383
+    },
+    {
+      "case_id": 143,
+      "spec": {
+        "case_id": 143,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": false,
+        "beta_mode": 2,
+        "output_layout": "TND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.62109375,
+          "max_abs": 0.0009765625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 2.40625,
+          "max_abs": 0.015625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.96875,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.6371927857398987,
+          "max_abs": 0.0016126930713653564,
+          "matched_ratio_default_policy": 0.35384615384615387,
+          "default_error_count": 378,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.003014456480741501,
+          "max_abs": 7.426366209983826e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.10224780440330505,
+          "max_abs": 8.596852421760559e-05,
+          "matched_ratio_default_policy": 0.3333333333333333,
+          "default_error_count": 2,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.15010657906532288,
+          "max_abs": 0.00023154757218435407,
+          "matched_ratio_default_policy": 0.5442708333333334,
+          "default_error_count": 175,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.427018404006958
+    },
+    {
+      "case_id": 159,
+      "spec": {
+        "case_id": 159,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": true,
+        "beta_mode": 0,
+        "output_layout": "TND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.392578125,
+          "max_abs": 0.00048828125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.72265625,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.484375,
+          "max_abs": 0.0001220703125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.6577937006950378,
+          "max_abs": 0.0009282231330871582,
+          "matched_ratio_default_policy": 0.4700854700854701,
+          "default_error_count": 310,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0019444935023784637,
+          "max_abs": 1.3059107004664838e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.056935857981443405,
+          "max_abs": 1.5074387192726135e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.11595094949007034,
+          "max_abs": 4.9192458391189575e-05,
+          "matched_ratio_default_policy": 0.9505208333333334,
+          "default_error_count": 19,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.4204061031341553
+    },
+    {
+      "case_id": 175,
+      "spec": {
+        "case_id": 175,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": true,
+        "beta_mode": 1,
+        "output_layout": "TND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.38671875,
+          "max_abs": 1.52587890625e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.63671875,
+          "max_abs": 0.00390625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.50390625,
+          "max_abs": 0.0,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.16377365589141846,
+          "max_abs": 0.0001976899802684784,
+          "matched_ratio_default_policy": 0.6632478632478632,
+          "default_error_count": 197,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0018313078908249736,
+          "max_abs": 1.1828888091258705e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.03720301762223244,
+          "max_abs": 2.2067688405513763e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.10395918786525726,
+          "max_abs": 4.8296526074409485e-05,
+          "matched_ratio_default_policy": 0.96875,
+          "default_error_count": 12,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.4674954414367676
+    },
+    {
+      "case_id": 191,
+      "spec": {
+        "case_id": 191,
+        "B": 1,
+        "H": 3,
+        "T": 195,
+        "lengths": [
+          0,
+          129,
+          0,
+          65,
+          1
+        ],
+        "norm": true,
+        "beta_mode": 2,
+        "output_layout": "TND",
+        "lower_bound": -0.01,
+        "scale": 1.0,
+        "gate_mode": "ordinary",
+        "cores": 1
+      },
+      "outputs": {
+        "dq": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.388671875,
+          "max_abs": 0.000244140625,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dk": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 1.4375,
+          "max_abs": 0.0078125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "dv": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.bfloat16",
+          "range_abs": 0.99609375,
+          "max_abs": 0.00048828125,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "db": {
+          "shape": [
+            195,
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.3451823890209198,
+          "max_abs": 0.0005560313875321299,
+          "matched_ratio_default_policy": 0.5487179487179488,
+          "default_error_count": 264,
+          "frozen_parity": true
+        },
+        "dg": {
+          "shape": [
+            195,
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0022685343865305185,
+          "max_abs": 2.3768261598888785e-06,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "da_log": {
+          "shape": [
+            3
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.1419113725423813,
+          "max_abs": 8.919835090637207e-05,
+          "matched_ratio_default_policy": 1.0,
+          "default_error_count": 0,
+          "frozen_parity": true
+        },
+        "ddt_bias": {
+          "shape": [
+            3,
+            128
+          ],
+          "dtype": "torch.float32",
+          "range_abs": 0.0992930606007576,
+          "max_abs": 9.497953578829765e-05,
+          "matched_ratio_default_policy": 0.7447916666666666,
+          "default_error_count": 98,
+          "frozen_parity": true
+        }
+      },
+      "elapsed_s": 0.43497753143310547
+    }
+  ],
+  "status": "PASS"
+}

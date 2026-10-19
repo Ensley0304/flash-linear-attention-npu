@@ -60,7 +60,7 @@ def round_bfloat16(value):
     return rounded.bfloat16()
 
 
-def reference(data, spec, chunks, high_precision=True):
+def reference(data, spec, chunks, high_precision=True, stage_capture=None):
     """FP64 mathematical golden / FP32 benchmark with documented BF16 handoffs.
 
     The exponential difference is factored per CPU output tile. FP64 can
@@ -95,13 +95,27 @@ def reference(data, spec, chunks, high_precision=True):
             ke = handoff(k * e)
             dvb = a.T @ ds
             dkg = a.T @ dw
-            zb = handoff(torch.tril((ds @ v.T - dw @ ke.T) * beta[None, :], -1))
-            ak = -(a.T @ handoff(zb @ a.T)).tril(-1)
-            state = (vn @ dh.T) * torch.exp2(g[-1] - g)
+            zv, zw = ds @ v.T, dw @ ke.T
+            zb = handoff(torch.tril((zv - zw) * beta[None, :], -1))
+            tza = handoff(zb @ a.T)
+            dakk_raw = a.T @ tza
+            ak = -dakk_raw.tril(-1)
+            state_raw = vn @ dh.T
+            state = state_raw * torch.exp2(g[-1] - g)
             dq = spec['scale'] * qr * e
             dk = state - beta[:, None] * e * dkg
             db = (v * dvb).sum(-1) - (k * e * dkg).sum(-1)
             dg = q * dq - k * state - beta[:, None] * k * e * dkg
+            if stage_capture is not None:
+                stage_capture.append({
+                    'chunk': ci, 'head': head,
+                    'values': {name: value.detach().clone() for name, value in {
+                        's0_dw': dw, 's0_state_raw': state_raw, 's0_dv_b': dvb, 's0_zv': zv,
+                        's1_exp': e, 's1_ke': ke, 's2_dkg': dkg, 's2_zw': zw,
+                        's3_zb': zb, 's4_tza': tza, 's5_dq_base': dq, 's5_dk_base': dk,
+                        's5_dg_base': dg, 's5_db_base': db, 's6_dakk_raw': dakk_raw,
+                    }.items()},
+                })
             dg[-1] += (k * state).sum(0) + torch.exp2(g[-1]) * (hh * dh).sum(-1)
             aq_lower = aq[:, :rows].tril(-1)
             local_q, left, right = (torch.empty_like(k) for _ in range(3))

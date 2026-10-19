@@ -14,14 +14,65 @@
     "bfloat16": {
       "atol": 0.0156,
       "rtol": 0.0156,
-      "max_abs_limit": 1.0,
+      "max_abs_limit": 0.03125,
       "max_ulp_limit": null
     },
     "float32": {
-      "atol": 0.0000153,
+      "atol": 0.0078125,
       "rtol": 0.000977,
-      "max_abs_limit": 0.01,
+      "max_abs_limit": 0.0078125,
       "max_ulp_limit": null
+    }
+  },
+  "calibration": {
+    "source": "CPU FP32 benchmark versus CPU FP64 golden, before DUT",
+    "case_ids": [
+      0,
+      4,
+      7,
+      23,
+      39,
+      47,
+      55,
+      63,
+      71,
+      87,
+      95,
+      103,
+      119,
+      135,
+      143,
+      159,
+      175,
+      191,
+      192,
+      199
+    ],
+    "seed_round": 0,
+    "mandatory_additional_gate": "Original CT L1, all seven outputs",
+    "details": {
+      "bfloat16": {
+        "peak_cpu_error": 0.015625,
+        "peak_cpu_value": 3.15625,
+        "round_up_twice_error": 0.03125,
+        "policy": {
+          "atol": 0.0156,
+          "rtol": 0.0156,
+          "max_abs_limit": 0.03125,
+          "max_ulp_limit": null
+        }
+      },
+      "float32": {
+        "peak_cpu_error": 0.0034755568485707045,
+        "peak_cpu_value": 3.364888906478882,
+        "round_up_twice_error": 0.0078125,
+        "policy": {
+          "atol": 0.0078125,
+          "rtol": 0.000977,
+          "max_abs_limit": 0.0078125,
+          "max_ulp_limit": null
+        }
+      }
     }
   }
 }

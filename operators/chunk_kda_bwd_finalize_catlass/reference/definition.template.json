@@ -1,6 +1,141 @@
 {
-  "name": "linear_attention",
-  "inputs": [],
-  "outputs": [],
+  "name": "chunk_kda_bwd_finalize_catlass",
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "bfloat16",
+      "shape": "[B,H,T,128] or [H,T,128]"
+    },
+    {
+      "name": "k",
+      "dtype": "bfloat16",
+      "shape": "same as q"
+    },
+    {
+      "name": "v",
+      "dtype": "bfloat16",
+      "shape": "same as q"
+    },
+    {
+      "name": "v_new",
+      "dtype": "bfloat16",
+      "shape": "same as q"
+    },
+    {
+      "name": "dv_scan",
+      "dtype": "bfloat16",
+      "shape": "same as q"
+    },
+    {
+      "name": "gk",
+      "dtype": "float32",
+      "shape": "same as q"
+    },
+    {
+      "name": "raw_g",
+      "dtype": "float32",
+      "shape": "same as q"
+    },
+    {
+      "name": "dq_raw",
+      "dtype": "float32",
+      "shape": "same as q"
+    },
+    {
+      "name": "dAqk",
+      "dtype": "float32",
+      "shape": "q.shape[:-1]+[64]"
+    },
+    {
+      "name": "akk",
+      "dtype": "bfloat16",
+      "shape": "q.shape[:-1]+[64]"
+    },
+    {
+      "name": "beta",
+      "dtype": "float32",
+      "shape": "q.shape[:-1]"
+    },
+    {
+      "name": "h",
+      "dtype": "bfloat16",
+      "shape": "[B,ceil(T/64),H,128,128] or [Nc,H,128,128]"
+    },
+    {
+      "name": "dh",
+      "dtype": "bfloat16",
+      "shape": "same as h"
+    },
+    {
+      "name": "a_log",
+      "dtype": "float32",
+      "shape": "[H]"
+    },
+    {
+      "name": "dt_bias",
+      "dtype": "float32",
+      "shape": "[H,128]"
+    },
+    {
+      "name": "q_rstd",
+      "dtype": "optional float32",
+      "shape": "q.shape[:-1]"
+    },
+    {
+      "name": "k_rstd",
+      "dtype": "optional float32",
+      "shape": "q.shape[:-1]"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "dq",
+      "dtype": "bfloat16",
+      "layout": "output_layout"
+    },
+    {
+      "name": "dk",
+      "dtype": "bfloat16",
+      "layout": "output_layout"
+    },
+    {
+      "name": "dv",
+      "dtype": "bfloat16",
+      "layout": "output_layout"
+    },
+    {
+      "name": "db",
+      "dtype": "float32",
+      "layout": "BTH or TH"
+    },
+    {
+      "name": "dg",
+      "dtype": "float32",
+      "layout": "BTHD or THD"
+    },
+    {
+      "name": "da_log",
+      "dtype": "float32",
+      "layout": "H"
+    },
+    {
+      "name": "ddt_bias",
+      "dtype": "float32",
+      "layout": "HD"
+    }
+  ],
+  "attributes": [
+    "B",
+    "H",
+    "T",
+    "lengths",
+    "norm",
+    "beta_mode",
+    "output_layout",
+    "lower_bound",
+    "scale",
+    "cores"
+  ],
+  "canonical_source": "tests/atk/chunk_kda_bwd_finalize/reference.py",
   "reference": ""
 }

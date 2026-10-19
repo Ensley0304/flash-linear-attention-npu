@@ -24,9 +24,11 @@ torch.set_num_threads(1)
 old = runpy.run_path(str(args.baseline))
 manifest = json.loads((OP / 'docs/baseline.json').read_text())
 for name, expected in manifest['assets'].items():
-    content = (REPO / name).read_bytes().replace(b'\r\n', b'\n')
+    # The original source stays pinned; the new canonical source may add
+    # observation points, with unchanged formulas verified below.
+    path = args.baseline if name.endswith('/reference.py') else REPO / name
+    content = path.read_bytes().replace(b'\r\n', b'\n')
     assert hashlib.sha256(content).hexdigest() == expected, name
-assert args.baseline.read_text() == (ATK / 'reference.py').read_text()
 profiles = json.loads((ATK / 'case_matrix.json').read_text())
 report = {'torch': torch.__version__, 'device': 'cpu', 'threads': 1,
           'canonical_sha256': hashlib.sha256((ATK / 'reference.py').read_bytes()).hexdigest(),
