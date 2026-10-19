@@ -475,3 +475,6 @@ P4d候选：S8前带发出ready后，AIC进入下一work的S0，与旧work的S9�
 
 
 P5已验收：S7每个8行tile只计算有效前缀。kn限于band末行之前，qp/bp从band首行直到chunk结束；无效后缀直接清零，不计算指数。有效行保持原FP32运算顺序、双buffer和同步协议。已通过独立性能及原20case七输出验收。
+
+
+P5b已验收：S7采用16行tile；复用结束生命周期的e区32～48KiB存kf/delta，输出双槽132～180KiB，center/edge180～181KiB。S9入口先排空两个MTE3槽再复用scratch。具体地址和同步见p5b-design.md，已通过性能及原20case验收。

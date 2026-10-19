@@ -519,12 +519,11 @@ public:
         WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
         SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
 
-        auto center = ub_[172 * 1024].ReinterpretCast<float>();
-        auto edge = ub_[173 * 1024].ReinterpretCast<float>();
-        auto qf = ub_[156 * 1024].ReinterpretCast<float>();
-        auto kf = ub_[160 * 1024].ReinterpretCast<float>();
-        auto delta = ub_[164 * 1024].ReinterpretCast<float>();
-        auto exponential = ub_[168 * 1024].ReinterpretCast<float>();
+        auto center = ub_[180 * 1024].ReinterpretCast<float>();
+        auto edge = ub_[180 * 1024 + 512].ReinterpretCast<float>();
+        // S5 consumed e; reuse its 16 KiB for the larger S7 tile.
+        auto kf = ub_[32 * 1024].ReinterpretCast<float>();
+        auto delta = ub_[40 * 1024].ReinterpretCast<float>();
         auto g = ub_[16 * 1024].ReinterpretCast<float>();
         for (int band = 1; band >= 0; --band) {
             const uint32_t bandFirst = band * 32;
@@ -548,60 +547,60 @@ public:
             if (band == sub) {
                 Adds(small[416], center, 0.0f, 128);
             }
-            for (uint32_t tile = 0; tile < 4; ++tile) {
+            for (uint32_t tile = 0; tile < 2; ++tile) {
                 const uint32_t slot = tile & 1;
-                const uint32_t offset = tile * 8 * 128;
-                auto kn = ub_[132 * 1024 + slot * 12288].ReinterpretCast<float>();
-                auto qp = kn[1024];
-                auto bp = kn[2048];
+                const uint32_t offset = tile * 16 * 128;
+                auto kn = ub_[132 * 1024 + slot * 24576].ReinterpretCast<float>();
+                auto qp = kn[2048];
+                auto bp = kn[4096];
                 WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
                 PipeBarrier<PIPE_V>();
-                const uint32_t tileFirst = first + tile * 8;
+                const uint32_t tileFirst = first + tile * 16;
                 const uint32_t negativeRows = validBand && tileFirst <= last
-                    ? (last + 1 - tileFirst < 8 ? last + 1 - tileFirst : 8) : 0;
+                    ? (last + 1 - tileFirst < 16 ? last + 1 - tileFirst : 16) : 0;
                 const uint32_t positiveRows = validBand && tileFirst >= bandFirst && tileFirst < rows
-                    ? (rows - tileFirst < 8 ? rows - tileFirst : 8) : 0;
-                Cast(kf, ub_[8 * 1024].ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 8 * 128);
+                    ? (rows - tileFirst < 16 ? rows - tileFirst : 16) : 0;
+                Cast(kf, ub_[8 * 1024].ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 16 * 128);
                 if (negativeRows != 0) {
                     Sub(delta, center, g[offset], 64, negativeRows, {1, 1, 1, 16, 0, 16});
                     Sub(delta[64], center[64], g[offset + 64], 64, negativeRows, {1, 1, 1, 16, 0, 16});
                     PipeBarrier<PIPE_V>();
-                    Muls(exponential, delta, 0.6931471805599453f, negativeRows * 128);
+                    Muls(delta, delta, 0.6931471805599453f, negativeRows * 128);
                     PipeBarrier<PIPE_V>();
-                    Exp(exponential, exponential, negativeRows * 128);
+                    Exp(delta, delta, negativeRows * 128);
                     PipeBarrier<PIPE_V>();
-                    Mul(kn, kf, exponential, negativeRows * 128);
+                    Mul(kn, kf, delta, negativeRows * 128);
                 }
-                if (negativeRows < 8) {
-                    Duplicate(kn[negativeRows * 128], 0.0f, (8 - negativeRows) * 128);
+                if (negativeRows < 16) {
+                    Duplicate(kn[negativeRows * 128], 0.0f, (16 - negativeRows) * 128);
                 }
                 PipeBarrier<PIPE_V>();
                 // The positive range extends to the chunk end, including the other half for band 0.
                 if (positiveRows != 0) {
-                    Cast(qf, ub_.ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, positiveRows * 128);
+                    Cast(qp, ub_.ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, positiveRows * 128);
                     Sub(delta, g[offset], center, 64, positiveRows, {1, 1, 1, 16, 16, 0});
                     Sub(delta[64], g[offset + 64], center[64], 64, positiveRows, {1, 1, 1, 16, 16, 0});
-                    auto betaRows = ub_[186 * 1024].ReinterpretCast<float>()[tile * 8 * 8];
+                    auto betaRows = ub_[186 * 1024].ReinterpretCast<float>()[tile * 16 * 8];
                     Mul(bp, kf, betaRows, 64, positiveRows, {1, 1, 0, 16, 16, 1});
                     Mul(bp[64], kf[64], betaRows, 64, positiveRows, {1, 1, 0, 16, 16, 1});
                     PipeBarrier<PIPE_V>();
-                    Muls(exponential, delta, 0.6931471805599453f, positiveRows * 128);
+                    Muls(delta, delta, 0.6931471805599453f, positiveRows * 128);
                     PipeBarrier<PIPE_V>();
-                    Exp(exponential, exponential, positiveRows * 128);
+                    Exp(delta, delta, positiveRows * 128);
                     PipeBarrier<PIPE_V>();
-                    Mul(qp, qf, exponential, positiveRows * 128);
-                    Mul(bp, bp, exponential, positiveRows * 128);
+                    Mul(qp, qp, delta, positiveRows * 128);
+                    Mul(bp, bp, delta, positiveRows * 128);
                 }
-                if (positiveRows < 8) {
-                    Duplicate(qp[positiveRows * 128], 0.0f, (8 - positiveRows) * 128);
-                    Duplicate(bp[positiveRows * 128], 0.0f, (8 - positiveRows) * 128);
+                if (positiveRows < 16) {
+                    Duplicate(qp[positiveRows * 128], 0.0f, (16 - positiveRows) * 128);
+                    Duplicate(bp[positiveRows * 128], 0.0f, (16 - positiveRows) * 128);
                 }
                 SetFlag<HardEvent::V_MTE3>(outputReady_[slot]);
                 WaitFlag<HardEvent::V_MTE3>(outputReady_[slot]);
-                const uint32_t base = (208 + (1 - band) * 96) * 1024 / 4 + (first + tile * 8) * 128;
-                DataCopy(source[base], kn, 8 * 128);
-                DataCopy(source[base + 8192], qp, 8 * 128);
-                DataCopy(source[base + 16384], bp, 8 * 128);
+                const uint32_t base = (208 + (1 - band) * 96) * 1024 / 4 + (first + tile * 16) * 128;
+                DataCopy(source[base], kn, 16 * 128);
+                DataCopy(source[base + 8192], qp, 16 * 128);
+                DataCopy(source[base + 16384], bp, 16 * 128);
                 SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
             }
             SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
