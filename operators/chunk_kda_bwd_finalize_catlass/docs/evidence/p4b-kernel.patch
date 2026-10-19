@@ -1,0 +1,54 @@
+diff --git a/operators/chunk_kda_bwd_finalize_catlass/op_kernel/finalize.h b/operators/chunk_kda_bwd_finalize_catlass/op_kernel/finalize.h
+index 9484ee65..2a222dc4 100644
+--- a/operators/chunk_kda_bwd_finalize_catlass/op_kernel/finalize.h
++++ b/operators/chunk_kda_bwd_finalize_catlass/op_kernel/finalize.h
+@@ -29,6 +29,7 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
+     using namespace KdaFinalizeCatlass;
+     SetSyncBaseAddr(args.syncBase);
+     const auto cfg = args.config;
++    const uint64_t chunksPerSequence = cfg.tokens / 64 + (cfg.tokens % 64 != 0);
+     GlobalTensor<uint64_t> metadata;
+     metadata.SetGlobalBuffer(reinterpret_cast<__gm__ uint64_t *>(args.metadata));
+     if ASCEND_IS_AIC {
+@@ -40,9 +41,17 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
+         for (uint64_t work = core; work < cfg.chunks * cfg.heads; work += GetBlockNum()) {
+             const uint64_t chunk = work / cfg.heads;
+             const uint64_t head = work % cfg.heads;
+-            const uint64_t seq = cfg.variable ? 0 : metadata.GetValue(chunk * 4);
+-            const uint64_t first = metadata.GetValue(chunk * 4 + 1);
+-            const uint32_t rows = metadata.GetValue(chunk * 4 + 2);
++            uint64_t seq = 0;
++            uint64_t first;
++            uint32_t rows;
++            if (cfg.variable) {
++                first = metadata.GetValue(chunk * 4 + 1);
++                rows = metadata.GetValue(chunk * 4 + 2);
++            } else {
++                seq = cfg.batches == 1 ? 0 : chunk / chunksPerSequence;
++                first = (chunk - seq * chunksPerSequence) * 64;
++                rows = static_cast<uint32_t>(cfg.tokens - first < 64 ? cfg.tokens - first : 64);
++            }
+             const uint64_t token = (seq * cfg.heads + head) * cfg.tokens + first;
+             const uint64_t state = (chunk * cfg.heads + head) * 128 * 128 * 2;
+             cube.Run(reinterpret_cast<GM_ADDR>(args.input.v + token * 256),
+@@ -80,9 +89,17 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
+         for (uint64_t work = core; work < cfg.chunks * cfg.heads; work += GetBlockNum()) {
+             const uint64_t chunk = work / cfg.heads;
+             const uint64_t head = work % cfg.heads;
+-            const uint64_t seq = cfg.variable ? 0 : metadata.GetValue(chunk * 4);
+-            const uint64_t first = metadata.GetValue(chunk * 4 + 1);
+-            const uint32_t rows = metadata.GetValue(chunk * 4 + 2);
++            uint64_t seq = 0;
++            uint64_t first;
++            uint32_t rows;
++            if (cfg.variable) {
++                first = metadata.GetValue(chunk * 4 + 1);
++                rows = metadata.GetValue(chunk * 4 + 2);
++            } else {
++                seq = cfg.batches == 1 ? 0 : chunk / chunksPerSequence;
++                first = (chunk - seq * chunksPerSequence) * 64;
++                rows = static_cast<uint32_t>(cfg.tokens - first < 64 ? cfg.tokens - first : 64);
++            }
+             const uint64_t token = (seq * cfg.heads + head) * cfg.tokens + first;
+             const uint64_t state = (chunk * cfg.heads + head) * 128 * 128 * 2;
+             auto input = args.input;
