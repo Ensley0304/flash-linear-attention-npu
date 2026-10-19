@@ -11,11 +11,13 @@ parser.add_argument('--label', required=True)
 parser.add_argument('--executable', default='finalize')
 parser.add_argument('--scratch-root', type=Path)
 parser.add_argument('--binary-root', type=Path)
+parser.add_argument('--device', type=int, default=3)
 args = parser.parse_args()
 root = Path('/data/wys/kda-finalize-a2-cannbot-20261019')
 scratch = args.scratch_root or root
 records = json.loads((scratch / 'reports' / args.perf / 'summary.json').read_text())
 assert len(records) == 32
+assert all(r.get('device', 3) == args.device for r in records)
 gains = []
 for round_id in range(2):
     for tokens in (8192, 16384):
@@ -30,5 +32,5 @@ subprocess.run([sys.executable, '-u', str(root / 'source-r1/operators/chunk_kda_
     '--executable', str((args.binary_root or root / 'build-r1') / args.executable),
     '--skill-root', str(root / 'plugins-official/catlass-op-generator/catlass-cpp-generator'),
     '--artifacts', str(scratch / 'reports' / args.label), '--work-dir', str(scratch / 'precision-work'),
-    '--reference-cache', str(root / 'reference-cache'), '--device', '3', '--cores', '20', '--repeat', '3',
+    '--reference-cache', str(root / 'reference-cache'), '--device', str(args.device), '--cores', '20', '--repeat', '3',
     '--cases', '0,4,7,23,39,47,55,63,71,87,95,103,119,135,143,159,175,191,192,199'], check=True)

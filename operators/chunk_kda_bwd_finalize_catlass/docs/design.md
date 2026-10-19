@@ -472,3 +472,6 @@ P4c已验收：每个AIV初始化一次32×64 bit严格下三角mask，放在UB1
 Select依据：[官方SetCmpMask](https://www.hiascend.com/doc_center/source/en/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_0224.html)；实现核对本机CANN 9.1.0的tools/tikcpp/tikcfw/impl/dav_c220/kernel_operator_vec_cmpsel_impl.h:133。
 
 P4d候选：S8前带发出ready后，AIC进入下一work的S0，与旧work的S9重叠。S0仅写relay[0,80)KiB；旧S9只读152KiB的state_sum及[400,498)KiB的局部结果、suffix和partial。旧Aq在S8后带已搬入L1，S8前带结束后不再读取GM[64,80)KiB。下一S0覆盖的L1[0,176)KiB与S8局部操作数[176,400)KiB分离，L0复用仍由已有free事件保护。下一S0之后消费上一work的flag9，再发flag0，保证S2及后续写入不能超前。最后一work在退出前单独消费flag9；无work的核不等待。workspace、L1和UB容量不变。
+
+
+P5已验收：S7每个8行tile只计算有效前缀。kn限于band末行之前，qp/bp从band首行直到chunk结束；无效后缀直接清零，不计算指数。有效行保持原FP32运算顺序、双buffer和同步协议。已通过独立性能及原20case七输出验收。

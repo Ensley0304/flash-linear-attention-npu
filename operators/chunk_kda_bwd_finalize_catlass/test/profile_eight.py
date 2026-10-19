@@ -18,6 +18,7 @@ parser.add_argument('--label', required=True)
 parser.add_argument('--resume', action='store_true')
 parser.add_argument('--scratch-root', type=Path)
 parser.add_argument('--binary-root', type=Path)
+parser.add_argument('--device', type=int, default=3)
 args = parser.parse_args()
 root = Path('/data/wys/kda-finalize-a2-cannbot-20261019')
 scratch = args.scratch_root or root
@@ -59,7 +60,7 @@ def digest(path):
 binaries = {label: (args.binary_root or root / 'build-r1') / name for label, name in [('A', args.baseline), ('B', args.candidate)]}
 hashes = {label: digest(path) for label, path in binaries.items()}
 records = json.loads((out / 'summary.json').read_text()) if args.resume else []
-assert all(r['sha256'] == hashes[r['label']] for r in records)
+assert all(r['sha256'] == hashes[r['label']] and r.get('device', 3) == args.device for r in records)
 completed = {(r['round'], r['T'], r['norm'], r['beta'], r['label']) for r in records}
 assert len(completed) == len(records)
 for round_id in range(2):
@@ -79,7 +80,7 @@ for round_id in range(2):
                     name = f'{base_name}-retry{attempt}'
                 exe = binaries[label]
                 assert digest(exe) == hashes[label]
-                application = f'{exe} {directory} 3 20 20 20'
+                application = f'{exe} {directory} {args.device} 20 20 20'
                 with (out / f'{name}.log').open('w') as log:
                     subprocess.run(['msprof', f'--application={application}', f'--output={out / name}',
                                     '--aic-metrics=PipeUtilization', '--runtime-api=on'],
@@ -100,7 +101,7 @@ for round_id in range(2):
                                         min_us=min(values), max_us=max(values), samples=20)
                     for key in ('aiv_vec_ratio', 'aiv_scalar_ratio', 'aic_mac_ratio', 'aic_mte2_ratio'):
                         measured[op][key] = statistics.mean(float(item[key]) for item in items[-20:])
-                record = dict(round=round_id, T=tokens, norm=norm, beta=beta, label=label,
+                record = dict(device=args.device, round=round_id, T=tokens, norm=norm, beta=beta, label=label,
                               sha256=hashes[label], kernels=measured,
                               combined_us=sum(item['mean_us'] for item in measured.values()))
                 records.append(record)
