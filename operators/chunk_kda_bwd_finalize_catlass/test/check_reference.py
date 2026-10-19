@@ -24,8 +24,9 @@ torch.set_num_threads(1)
 old = runpy.run_path(str(args.baseline))
 manifest = json.loads((OP / 'docs/baseline.json').read_text())
 for name, expected in manifest['assets'].items():
-    assert hashlib.sha256((REPO / name).read_bytes()).hexdigest() == expected, name
-assert args.baseline.read_bytes() == (ATK / 'reference.py').read_bytes()
+    content = (REPO / name).read_bytes().replace(b'\r\n', b'\n')
+    assert hashlib.sha256(content).hexdigest() == expected, name
+assert args.baseline.read_text() == (ATK / 'reference.py').read_text()
 profiles = json.loads((ATK / 'case_matrix.json').read_text())
 report = {'torch': torch.__version__, 'device': 'cpu', 'threads': 1,
           'canonical_sha256': hashlib.sha256((ATK / 'reference.py').read_bytes()).hexdigest(),

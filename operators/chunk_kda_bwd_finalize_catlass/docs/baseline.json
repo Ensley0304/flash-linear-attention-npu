@@ -229,9 +229,10 @@
   "primary_goal": "At least 70% of historical A5 throughput at matched 8K flags; report fresh baseline A/B for all eight configurations.",
   "target_8k_no_norm_no_beta_us": 9604.066428571428,
   "assets": {
-    "tests/atk/chunk_kda_bwd_finalize/reference.py": "1ca03ac97bfcfc161311c8f364e5fe86e9b9cc86c8240497b1209fb54e01ca2c",
-    "tests/atk/chunk_kda_bwd_finalize/case_matrix.json": "7010cae7909d1ee11d539af055c22779974fe76af8b2e3e8ba4d84c6c8ac2d73",
-    "tests/atk/chunk_kda_bwd_finalize/atk_chunk_kda_bwd_finalize.json": "d64679686346f0b09d57efc9e55be1ed1208604468b5c0c69696b2905776557d",
-    "tests/atk/chunk_kda_bwd_finalize/gen_chunk_kda_bwd_finalize.py": "cb67935d3d5957cb9e94c43cb37e018d17611ee911697468c9f2d587609052f8"
-  }
+    "tests/atk/chunk_kda_bwd_finalize/reference.py": "1a5e5d498ce1cc5474f628c4279d871e305a3b9cb4b31b2bcba48e7109f6c706",
+    "tests/atk/chunk_kda_bwd_finalize/case_matrix.json": "62e6641a06a24b867d7b91f72f4b00a38d23046ee365600b6309323980fd6429",
+    "tests/atk/chunk_kda_bwd_finalize/atk_chunk_kda_bwd_finalize.json": "71300e889acc6a469269ee57345c6b85396079fe6d5cf9efb911aedd188f2a06",
+    "tests/atk/chunk_kda_bwd_finalize/gen_chunk_kda_bwd_finalize.py": "d47264f22f8069e78bdbef9337bd9379656700315f8ae46880c9d235b0dc4730"
+  },
+  "asset_hash_encoding": "UTF-8 bytes with LF line endings"
 }

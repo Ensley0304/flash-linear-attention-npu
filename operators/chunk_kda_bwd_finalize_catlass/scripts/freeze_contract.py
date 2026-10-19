@@ -44,7 +44,7 @@ manifest = {
     'assets': {},
 }
 for path in (canonical, ATK / 'case_matrix.json', ATK / 'atk_chunk_kda_bwd_finalize.json', ATK / 'gen_chunk_kda_bwd_finalize.py'):
-    manifest['assets'][str(path.relative_to(REPO)).replace('\\', '/')] = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest['assets'][str(path.relative_to(REPO)).replace('\\', '/')] = hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
 (OP / 'docs/baseline.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
 state_path = OP / 'docs/workflow.json'
 state = json.loads(state_path.read_text(encoding='utf-8'))
