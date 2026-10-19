@@ -120,6 +120,8 @@ public:
         SetFlag<HardEvent::V_S>(scalarReady_);
         WaitFlag<HardEvent::V_S>(scalarReady_);
         const float ea = scalar.GetValue(0);
+        // One 32-byte block per row, reused by all beta-weighted Vector stages.
+        Brcb(ub_[186 * 1024].ReinterpretCast<float>(), small, 4, {1, 8});
 
         GlobalTensor<bfloat16_t> ke;
         ke.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(relay + 80 * 1024));
@@ -305,9 +307,9 @@ public:
             WholeReduceSum(partial[64], product[64], 64, 16, 1, 1, 16);
             PipeBarrier<PIPE_V>();
             Add(small[32 + slot * 16], partial, partial[64], 16);
-            for (uint32_t row = 0; row < 16; ++row) {
-                Muls(value[row * 128], input[row * 128], small.GetValue(slot * 16 + row), 128);
-            }
+            auto betaRows = ub_[186 * 1024].ReinterpretCast<float>()[slot * 16 * 8];
+            Mul(value, input, betaRows, 64, 16, {1, 1, 0, 16, 16, 1});
+            Mul(value[64], input[64], betaRows, 64, 16, {1, 1, 0, 16, 16, 1});
             SetFlag<HardEvent::V_MTE2>(inputFree_[slot]);
             WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
             PipeBarrier<PIPE_V>();
@@ -384,9 +386,9 @@ public:
             PipeBarrier<PIPE_V>();
             Muls(state, state, 0.6931471805599453f, 8 * 128);
             Mul(dq[offset], dq[offset], e[offset], 8 * 128);
-            for (uint32_t row = 0; row < 8; ++row) {
-                Muls(term[row * 128], e[offset + row * 128], small.GetValue(tile * 8 + row), 128);
-            }
+            auto betaRows = ub_[186 * 1024].ReinterpretCast<float>()[tile * 8 * 8];
+            Mul(term, e[offset], betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
+            Mul(term[64], e[offset + 64], betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
             PipeBarrier<PIPE_V>();
             Exp(state, state, 8 * 128);
             Mul(term, term, input[1024], 8 * 128);
@@ -407,8 +409,9 @@ public:
             for (uint32_t row = 0; row < 8; ++row) {
                 Add(stateSum, stateSum, product[row * 128], 128);
                 PipeBarrier<PIPE_V>();
-                Muls(term[row * 128], kf[row * 128], small.GetValue(tile * 8 + row), 128);
             }
+            Mul(term, kf, betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
+            Mul(term[64], kf[64], betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
             PipeBarrier<PIPE_V>();
             Sub(small[32 + tile * 8], small[32 + tile * 8], partial, 8);
             Mul(term, term, e[offset], 8 * 128);
@@ -561,8 +564,10 @@ public:
                     if (!validBand || globalRow < bandFirst || globalRow >= rows) {
                         Duplicate(delta[row * 128], 0.0f, 128);
                     }
-                    Muls(bp[row * 128], kf[row * 128], small.GetValue(tile * 8 + row), 128);
                 }
+                auto betaRows = ub_[186 * 1024].ReinterpretCast<float>()[tile * 8 * 8];
+                Mul(bp, kf, betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
+                Mul(bp[64], kf[64], betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
                 PipeBarrier<PIPE_V>();
                 Muls(exponential, delta, 0.6931471805599453f, 8 * 128);
                 PipeBarrier<PIPE_V>();
@@ -681,9 +686,9 @@ public:
             PipeBarrier<PIPE_V>();
             Add(dq[offset], dq[offset], localQ, 1024);
             Mul(product, qf, localQ, 1024);
-            for (uint32_t row = 0; row < 8; ++row) {
-                Muls(term[row * 128], left[row * 128], small.GetValue(tile * 8 + row), 128);
-            }
+            auto betaRows = ub_[186 * 1024].ReinterpretCast<float>()[tile * 8 * 8];
+            Mul(term, left, betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
+            Mul(term[64], left[64], betaRows, 64, 8, {1, 1, 0, 16, 16, 1});
             PipeBarrier<PIPE_V>();
             Add(dg[offset], dg[offset], product, 1024);
             Add(dk[offset], dk[offset], term, 1024);

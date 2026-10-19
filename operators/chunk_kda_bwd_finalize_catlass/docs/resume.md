@@ -1,5 +1,9 @@
 # 恢复位置：2026-10-19
 
+最新：P1 beta批量广播已通过原20case七输出、八配置两轮交替A/B。8K无附加反向21061.379→19452.631us，八配置平均降时7.33%，目标9604.066us尚未达到。报告见`evidence/p1-precision20.json`和`p1-eight-*.json`。A2根目录仍为`/data/wys/kda-finalize-a2-cannbot-20261019`，当前`build-r1/finalize`为P1，初始完整版本保存为`build-r1/finalize-initial`。下一项从P2批量对角/norm/db处理继续，不能叠加未验收的候选。
+
+用户已授权并完成删除两处旧性能目录中的35个`output_*.bin`，释放约4.7GiB；其他文件未删除。CPU标杆缓存为`reference-cache`，测试复用`precision-work`，性能复用`perf-inputs`；新的删除仍需按服务器规则确认。最后一组A/B曾在设备初始化报507033，重试成功，失败日志保留。
+
 基线仍在原分支`kda-finalize-a2`，标签`baseline/kda-finalize-a2-20261019`。本候选在`kda-finalize-a2-cannbot`，不替换原入口。CANNBot仍处于`implementation / precision_debug`，没有进入complete。
 
 ## 已确认

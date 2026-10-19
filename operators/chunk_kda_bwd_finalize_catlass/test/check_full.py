@@ -23,6 +23,7 @@ parser.add_argument('--seed', type=int, default=20261013)
 parser.add_argument('--repeat', type=int, default=1)
 parser.add_argument('--smoke-ids', default='0,1,2,3,4,5')
 parser.add_argument('--work-dir', type=Path, help='Optional reusable binary input directory; reports remain per run')
+parser.add_argument('--reference-cache', type=Path, help='Cache CPU results by source hash, spec and seed')
 args = parser.parse_args()
 op = Path(__file__).resolve().parents[1]
 atk = op.parents[1] / 'tests/atk/chunk_kda_bwd_finalize'
@@ -75,8 +76,19 @@ for case_id, spec in selected:
     (directory / 'host.log').write_text(completed.stdout + completed.stderr)
     assert completed.returncode == 0, (case_id, completed.stderr)
     print(f'case={case_id} NPU done; CPU golden', flush=True)
-    high = reference(data, spec, chunks, True)
-    low = reference(data, spec, chunks, False)
+    reference_hash = hashlib.sha256((atk / 'reference.py').read_bytes()).hexdigest()
+    cache_key = hashlib.sha256(json.dumps([reference_hash, spec, args.seed + case_id], sort_keys=True).encode()).hexdigest()
+    cache_file = args.reference_cache / (cache_key + '.pt') if args.reference_cache else None
+    if cache_file is not None and cache_file.exists():
+        saved = torch.load(cache_file, weights_only=False, map_location='cpu')
+        assert saved['key'] == cache_key
+        high, low = saved['high'], saved['low']
+    else:
+        high = reference(data, spec, chunks, True)
+        low = reference(data, spec, chunks, False)
+        if cache_file is not None:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(dict(key=cache_key, high=high, low=low), cache_file)
     actual, golden, benchmark = {}, {}, {}
     for index, name in enumerate(NAMES):
         dtype = torch.bfloat16 if index < 3 else torch.float32
