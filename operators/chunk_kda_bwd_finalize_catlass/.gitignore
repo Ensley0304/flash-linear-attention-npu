@@ -1,0 +1,5 @@
+/build/
+/test/inputs/
+/test/outputs/
+/test/golden/
+__pycache__/
