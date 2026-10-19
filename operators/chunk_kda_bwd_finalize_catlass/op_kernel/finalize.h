@@ -51,6 +51,11 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
                      reinterpret_cast<GM_ADDR>(args.input.h + state),
                      reinterpret_cast<GM_ADDR>(args.input.dh + state),
                      reinterpret_cast<GM_ADDR>(args.dvScan + token * 256), relay, nullptr, rows);
+            // Stage 0 reuses only the retired early relay and L1 regions.
+            // Later stages still wait until both AIVs finish the previous work.
+            if (work != core) {
+                CrossCoreWaitFlag(9);
+            }
             CrossCoreSetFlag<2, PIPE_FIX>(0);
             CrossCoreWaitFlag(1);
             cube.Stage2(relay);
@@ -65,7 +70,8 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
             CrossCoreWaitFlag(6);
             cube.Stage8(relay, 0);
             CrossCoreSetFlag<2, PIPE_FIX>(8);
-            // Both AIVs must finish all writes before the relay belongs to the next work.
+        }
+        if (core < cfg.chunks * cfg.heads) {
             CrossCoreWaitFlag(9);
         }
         cube.End();

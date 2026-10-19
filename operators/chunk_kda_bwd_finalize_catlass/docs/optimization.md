@@ -18,10 +18,13 @@
 | P4 | suffix与partial分开发布 | AIV0收到suffix即开始scan，不再等待AIV1全部gate归约 | 独立ready标志、GM槽生命周期 |
 | P4b | 定长元数据直接推导 | 热循环每个AIC/AIV目前逐项读取GM；定长可由chunk编号计算 | 多batch、尾块及uint64_t偏移；变长保留 |
 | P4c | S7三角mask初始化一次、批量选择 | 每work的64次逐行Duplicate改为两次Select | 显式比较寄存器、UB185KiB常驻槽、尾行清零 |
+| P4d | S0提前一个work | S0写relay[0,80)KiB，S9读取其他区域，重叠Cube与Vector | flag9移至下代S0之后，S2前仍等free；末次单独排空；加测单核回绕 |
 | P5 | S7有效区按连续块处理 | 避免无效行指数及重复逐行mask分支 | 三角因果范围、指数溢出和尾块 |
 | P5b | S7复用已结束的e，tile从8行增至16行 | e的16KiB在S5后空闲；减少循环、广播和通知次数，保留输出双buffer | 先重算scratch地址和消费边界，不覆盖beta/diag常驻槽 |
 | P5c | S9参数梯度分层归约 | dt_bias的32次逐行Add改为树形归约，降低串行依赖 | FP32累加顺序改变，七输出精度不通过就撤销 |
 | P5d | rH两片各算64行 | S1当前由末行owner独算128行；S9才消费，可借已有flag3→flag4保证两片写回可见 | 规划relay153KiB的512B；检查尾块、空片及Stage抓取；每行加法顺序保持 |
+| P5e | 完整64行chunk编译期分支 | 由host校验过的rows决定路由，裁剪各Stage尾块判断；当前AIV Scalar占比仍高 | 独立完整块小case；保留混合尾块/变长通用分支，不套用已撤销的P4b |
+| P5f | S9复用g/e，tile从8行增至16行 | 两组16行输入先完成缩放恢复，g随即复用为qf/kf；减少循环和指令启动 | 因子必须先全部消费，输入双buffer和逐行加法顺序保持 |
 | P6 | 评估状态收缩转Cube | AIC已有h/dh，探索小块对角乘积替代Vector rH归约 | 归约次序改变；需逐Stage和原20case验证 |
 | P7 | W2跨work提前S0 | 用S9时间准备下一work，隐藏部分Cube和搬入 | 先重新设计slot、credit、L1生命周期 |
 
@@ -38,3 +41,14 @@ P4 suffix/partial分开发布已保留：六个边界冒烟及原20case七输出
 P4b定长元数据推导已撤销：六个冒烟通过，但两轮八配置平均慢0.44%，所有配置均无收益，性能门禁未通过，因此没有进入原20case验收。恢复P4；报告与失败候选补丁见evidence/p4b-*。
 
 P4c批量三角mask已保留：六个边界冒烟及原20case七输出通过；两轮八配置平均降时4.98%。8K无附加反向17314.034→16424.155us。证据见evidence/p4c-*；只改变掩码执行方式，原精度条件不变。
+
+后续优先保持浮点顺序的P5/P5b/P5d/P5f/P5e，再考虑P5c树形归约。资源候选核对如下，实施前仍需写入design.md并单独验收：
+
+| 候选 | 片上/GM位置 | 必须满足的生命周期 |
+| --- | --- | --- |
+| P5b S7 | 输出双槽132～180KiB，各24KiB；kf/delta复用e的32～48KiB；center/edge放180～181KiB | e已在S5结束；q直接Cast到qp槽；delta原位Exp，改写前保护上一次Mul读取；185～188KiB常驻不动 |
+| P5d rH | 两片各写relay153KiB起的256B；S9末行owner从152KiB连续读384个float，最后128个为rH | 写入在S3 flag3之前，消费在S6 flag4之后；下一work写rH前，旧末行owner已读完（由S9 flag11/12保证）；S1抓取由两片各写64行 |
+| P5f S9 | 输入双槽132～180KiB，各24KiB；先在g的16～32KiB原位生成全部factor并恢复两槽；随后g作qf/kf，e的32～48KiB作term/product；reduced180、norm广播182KiB | 状态修正先用132KiB临时区；恢复两槽前不能覆盖g；合并结束后才将输入区复用为gate归约及输出；不改变scan及参数归约顺序 |
+
+
+P4d Stage0提前一个work已验收：常规六例、单核多work六例均连续20次通过；八配置两轮交替A/B平均降时4.93%，8K无附加反向16388.544→15713.235us；原20case七输出全部通过，精度阈值不变。证据见evidence/p4d-*。

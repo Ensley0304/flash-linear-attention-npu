@@ -446,7 +446,7 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 | 4 S6 ready | Fixpipe写完dAkk | 两片各wait一次 | dAkk_raw |
 | 5/6 带操作数ready | 后/前带全部写完 | AIC按后再前wait | Aq/Ak及指数操作数 |
 | 7/8 带结果ready | 后/前带Fixpipe写完 | 两片各按后再前wait | 三项局部结果 |
-| 9 slot free | 首版W=1，初始隐式空闲 | AIC每work末等待两片S9结束；ID10保留给W=2候选 | 整代relay和下代常驻状态 |
+| 9 slot free | W=1，初始隐式空闲 | P4d允许下代S0先运行，之后等待上一代free再发布S0 ready；末尾排空最后一代 | 下代S2及后续阶段；S0仅复用已结束的0～80KiB |
 | 11 suffix ready | AIV0提前空贡献；AIV1扫描后MTE3写完再贡献 | AIV0读取前wait；AIV1在gate完成后wait | 未乘gate的suffix |
 | 12 partial ready | AIV0在wait11前空贡献；AIV1归约后MTE3写完再贡献 | 两片各wait一次，AIV0随后读取并合并 | 后半partial |
 | 本地HardEvent | 初始化可用槽位 | MTE2/V/MTE3、MTE2/MTE1/M/FIX成对set/wait | UB/L1/L0各自双buffer |
@@ -454,7 +454,7 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 执行顺序：
 
 ```text
-AIC: slot free → S0 → wait kE → S2 → wait Zb → S4 → S6
+AIC: S0 → wait上一work free（首个免等） → wait kE → S2 → wait Zb → S4 → S6
      → wait band1 → S8(band1) → wait band0 → S8(band0)
 AIV: S1 → wait S0/S2 → S3 → S5 → wait S6 → S7(band1,band0)
      → 两片消费band1 ready，AIV1执行S9
@@ -470,3 +470,5 @@ P4c已验收：每个AIV初始化一次32×64 bit严格下三角mask，放在UB1
 
 
 Select依据：[官方SetCmpMask](https://www.hiascend.com/doc_center/source/en/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_0224.html)；实现核对本机CANN 9.1.0的tools/tikcpp/tikcfw/impl/dav_c220/kernel_operator_vec_cmpsel_impl.h:133。
+
+P4d候选：S8前带发出ready后，AIC进入下一work的S0，与旧work的S9重叠。S0仅写relay[0,80)KiB；旧S9只读152KiB的state_sum及[400,498)KiB的局部结果、suffix和partial。旧Aq在S8后带已搬入L1，S8前带结束后不再读取GM[64,80)KiB。下一S0覆盖的L1[0,176)KiB与S8局部操作数[176,400)KiB分离，L0复用仍由已有free事件保护。下一S0之后消费上一work的flag9，再发flag0，保证S2及后续写入不能超前。最后一work在退出前单独消费flag9；无work的核不等待。workspace、L1和UB容量不变。
