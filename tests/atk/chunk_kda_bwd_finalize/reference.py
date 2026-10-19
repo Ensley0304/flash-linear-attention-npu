@@ -120,6 +120,25 @@ def reference(data, spec, chunks, high_precision=True, stage_capture=None):
             rh = (hh * dh).sum(-1)
             dg[-1] += (k * state).sum(0) + torch.exp2(g[-1]) * rh
             aq_lower = aq[:, :rows].tril(-1)
+            if stage_capture is not None:
+                observed = stage_capture[-1]['values']
+                observed.update(s7_aq=aq_lower.clone(), s7_ak=ak.clone())
+                local_raw, left_raw, right_raw = (torch.zeros_like(k) for _ in range(3))
+                for band in (1, 0):
+                    start, end = 32 * band, min(32 * (band + 1), rows)
+                    kn, qp, bp = (torch.zeros_like(k) for _ in range(3))
+                    if start < end:
+                        center = (g[start] + g[end - 1]) * .5
+                        kn[:end] = k[:end] * torch.exp2(center - g[:end])
+                        pos = torch.exp2(g[start:] - center)
+                        qp[start:] = q[start:] * pos
+                        bp[start:] = beta[start:, None] * k[start:] * pos
+                    observed.update({f's7_kn{band}': kn, f's7_qp{band}': qp, f's7_bp{band}': bp})
+                    if start < end:
+                        local_raw[start:end] = aq_lower[start:end] @ kn
+                        left_raw[start:end] = ak[start:end] @ kn
+                        right_raw[start:end] = aq_lower[:, start:end].T @ qp + ak[:, start:end].T @ bp
+                observed.update(s8_local_q=local_raw, s8_left=left_raw, s8_right=right_raw)
             local_q, left, right = (torch.empty_like(k) for _ in range(3))
             width = rows if high_precision else 8
             for start in range(0, rows, width):

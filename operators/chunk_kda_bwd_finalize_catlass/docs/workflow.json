@@ -15,7 +15,7 @@
   "stage": "implementation",
   "operator_contract": "frozen",
   "golden_contract": "frozen",
-  "issue_type": null,
-  "resume_from": null,
-  "validation_scope": "full"
+  "issue_type": "precision_debug",
+  "resume_from": "implementation",
+  "validation_scope": "precision_targeted"
 }

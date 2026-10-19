@@ -12,7 +12,12 @@ namespace KdaFinalizeCatlass {
 using namespace AscendC;
 
 struct VectorInputs {
-    uint64_t q, k, gk, raw, aLog, bias, beta, qRstd, kRstd, h, dh, v, dqRaw;
+    uint64_t q, k, gk, raw, aLog, bias, beta, qRstd, kRstd, h, dh, v, dqRaw, daq;
+};
+
+struct VectorOutputs {
+    uint64_t dq, dk, dv, dg, db, partial;
+    uint32_t vectorStride, headStride;
 };
 
 class VectorStage1 {
@@ -22,6 +27,25 @@ public:
         pipe_ = &pipe;
         pipe.InitBuffer(buffer_, 188 * 1024);
         ub_ = buffer_.Get<uint8_t>();
+        Bind(input, {});
+        scalarReady_ = pipe.AllocEventID<HardEvent::V_S>();
+        scalarWritten_ = pipe.AllocEventID<HardEvent::S_V>();
+        phaseFree_ = pipe.AllocEventID<HardEvent::MTE3_MTE2>();
+        vectorPhaseFree_ = pipe.AllocEventID<HardEvent::V_MTE2>();
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            inputReady_[slot] = pipe.AllocEventID<HardEvent::MTE2_V>();
+            inputFree_[slot] = pipe.AllocEventID<HardEvent::V_MTE2>();
+            outputReady_[slot] = pipe.AllocEventID<HardEvent::V_MTE3>();
+            outputFree_[slot] = pipe.AllocEventID<HardEvent::MTE3_V>();
+            SetFlag<HardEvent::V_MTE2>(inputFree_[slot]);
+            SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+        }
+    }
+
+    __aicore__ inline void Bind(const VectorInputs &input, const VectorOutputs &output)
+    {
+        outputs_ = output;
+        hasNorm_ = input.qRstd != 0;
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(input.q));
         k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(input.k));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(input.h));
@@ -35,21 +59,16 @@ public:
         qr_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(input.qRstd));
         kr_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(input.kRstd));
         dqRaw_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(input.dqRaw));
-        scalarReady_ = pipe.AllocEventID<HardEvent::V_S>();
-        phaseFree_ = pipe.AllocEventID<HardEvent::MTE3_MTE2>();
-        vectorPhaseFree_ = pipe.AllocEventID<HardEvent::V_MTE2>();
-        for (uint32_t slot = 0; slot < 2; ++slot) {
-            inputReady_[slot] = pipe.AllocEventID<HardEvent::MTE2_V>();
-            inputFree_[slot] = pipe.AllocEventID<HardEvent::V_MTE2>();
-            outputReady_[slot] = pipe.AllocEventID<HardEvent::V_MTE3>();
-            outputFree_[slot] = pipe.AllocEventID<HardEvent::MTE3_V>();
-            SetFlag<HardEvent::V_MTE2>(inputFree_[slot]);
-            SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
-        }
+        daq_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(input.daq));
     }
 
     __aicore__ inline void Run(uint32_t rows, float lowerBound, GM_ADDR relay, GM_ADDR snapshot)
     {
+        rows_ = rows;
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+            SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+        }
         const uint32_t sub = GetSubBlockIdx();
         const uint32_t first = sub * 32;
         const uint32_t active = rows > first ? (rows - first < 32 ? rows - first : 32) : 0;
@@ -80,8 +99,10 @@ public:
             DataCopyExtParams copy{1, active * 4, 0, 0, 0};
             DataCopyPadExtParams<float> padding{true, 0, static_cast<uint8_t>((8 - active % 8) % 8), 0};
             DataCopyPad(small, beta_[first], copy, padding);
-            DataCopyPad(small[64], qr_[first], copy, padding);
-            DataCopyPad(small[96], kr_[first], copy, padding);
+            if (hasNorm_) {
+                DataCopyPad(small[64], qr_[first], copy, padding);
+                DataCopyPad(small[96], kr_[first], copy, padding);
+            }
         }
         DataCopy(gLast, g_[uint64_t(rows - 1) * 128], 128);
         DataCopy(bias, bias_, 128);
@@ -181,18 +202,20 @@ public:
         for (uint32_t slot = 0; slot < 2; ++slot) {
             WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
         }
-        GlobalTensor<float> capture;
-        capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot));
-        SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
-        WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
-        DataCopy(capture[first * 128], e, 32 * 128);
-        DataCopy(capture[8448 + first * 128], factor, 32 * 128);
-        DataCopy(capture[16640 + first * 128], x, 32 * 128);
-        if (sub == lastOwner) {
-            DataCopy(capture[8192], rh, 128);
-        }
-        if (sub == 0) {
-            DataCopy(capture[8320], gLast, 128);
+        if (snapshot != nullptr) {
+            GlobalTensor<float> capture;
+            capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot));
+            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            DataCopy(capture[first * 128], e, 32 * 128);
+            DataCopy(capture[8448 + first * 128], factor, 32 * 128);
+            DataCopy(capture[16640 + first * 128], x, 32 * 128);
+            if (sub == lastOwner) {
+                DataCopy(capture[8192], rh, 128);
+            }
+            if (sub == 0) {
+                DataCopy(capture[8320], gLast, 128);
+            }
         }
         for (uint32_t slot = 0; slot < 2; ++slot) {
             SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
@@ -212,7 +235,7 @@ public:
         GlobalTensor<bfloat16_t> zb;
         zb.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(relay + 144 * 1024));
         WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
-        DataCopy(betaFull, beta_, 64);
+        LoadRows(betaFull, beta_, 0, 64, 1);
         SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
         WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
         SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
@@ -249,6 +272,10 @@ public:
         }
         CrossCoreSetFlag<2, PIPE_MTE3>(3);
         // The following dv pipeline reuses the Zb staging area only after both readers finish.
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+            SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+        }
         SetFlag<HardEvent::MTE3_MTE2>(phaseFree_);
         WaitFlag<HardEvent::MTE3_MTE2>(phaseFree_);
         SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
@@ -257,11 +284,12 @@ public:
             auto input = ub_[132 * 1024 + slot * 12288].ReinterpretCast<float>();
             WaitFlag<HardEvent::V_MTE2>(inputFree_[slot]);
             DataCopy(input, source[32 * 1024 / 4 + (first + slot * 16) * 128], 16 * 128);
-            DataCopy(input[2048].ReinterpretCast<bfloat16_t>(), v_[uint64_t(first + slot * 16) * 128], 16 * 128);
+            LoadRows(input[2048].ReinterpretCast<bfloat16_t>(), v_, first + slot * 16, 16, 128);
             SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
         }
         GlobalTensor<bfloat16_t> dv;
-        dv.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(snapshot + 99328));
+        dv.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(snapshot != nullptr ?
+            snapshot + 99328 : reinterpret_cast<GM_ADDR>(outputs_.dv)));
         auto value = ub_[164 * 1024].ReinterpretCast<float>();
         auto product = ub_[172 * 1024].ReinterpretCast<float>();
         auto partial = ub_[180 * 1024].ReinterpretCast<float>();
@@ -286,16 +314,25 @@ public:
             Cast(output, value, RoundMode::CAST_RINT, 16 * 128);
             SetFlag<HardEvent::V_MTE3>(outputReady_[slot]);
             WaitFlag<HardEvent::V_MTE3>(outputReady_[slot]);
-            DataCopy(dv[(first + slot * 16) * 128], output, 16 * 128);
+            const uint32_t start = first + slot * 16;
+            if (snapshot != nullptr) {
+                DataCopy(dv[start * 128], output, 16 * 128);
+            } else if (start < rows) {
+                const uint16_t count = rows - start < 16 ? rows - start : 16;
+                DataCopyPad(dv[uint64_t(start) * outputs_.vectorStride], output,
+                            {count, 256, 0, (outputs_.vectorStride - 128) * 2, 0});
+            }
             SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
         }
-        GlobalTensor<float> db;
-        db.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot + 115712));
-        WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
-        SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
-        WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
-        DataCopy(db[first], small[32], 32);
-        SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        if (snapshot != nullptr) {
+            GlobalTensor<float> db;
+            db.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot + 115712));
+            WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
+            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            DataCopy(db[first], small[32], 32);
+            SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        }
     }
 
     __aicore__ inline void Stage5(float scale, GM_ADDR relay, GM_ADDR snapshot)
@@ -330,7 +367,7 @@ public:
             WaitFlag<HardEvent::V_MTE2>(inputFree_[slot]);
             DataCopy(input, source[(first + slot * 8) * 128], 8 * 128);
             DataCopy(input[1024], source[96 * 1024 / 4 + (first + slot * 8) * 128], 8 * 128);
-            DataCopy(input[2048], dqRaw_[uint64_t(first + slot * 8) * 128], 8 * 128);
+            LoadRows(input[2048], dqRaw_, first + slot * 8, 8, 128);
             SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
         }
         for (uint32_t tile = 0; tile < 4; ++tile) {
@@ -385,21 +422,441 @@ public:
                 const uint32_t next = (first + (tile + 2) * 8) * 128;
                 DataCopy(input, source[next], 8 * 128);
                 DataCopy(input[1024], source[96 * 1024 / 4 + next], 8 * 128);
-                DataCopy(input[2048], dqRaw_[uint64_t(next)], 8 * 128);
+                LoadRows(input[2048], dqRaw_, first + (tile + 2) * 8, 8, 128);
                 SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
             }
         }
-        GlobalTensor<float> capture;
-        capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot + 124160));
         WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
         SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
         WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
-        DataCopy(capture[first * 128], dq, 32 * 128);
-        DataCopy(capture[8192 + first * 128], dk, 32 * 128);
-        DataCopy(capture[16384 + first * 128], dg, 32 * 128);
-        DataCopy(capture[24576 + first], small[32], 32);
         DataCopy(source[152 * 1024 / 4 + GetSubBlockIdx() * 128], stateSum, 128);
-        DataCopy(capture[24640 + GetSubBlockIdx() * 128], stateSum, 128);
+        if (snapshot != nullptr) {
+            GlobalTensor<float> capture;
+            capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot + 124160));
+            DataCopy(capture[first * 128], dq, 32 * 128);
+            DataCopy(capture[8192 + first * 128], dk, 32 * 128);
+            DataCopy(capture[16384 + first * 128], dg, 32 * 128);
+            DataCopy(capture[24576 + first], small[32], 32);
+            DataCopy(capture[24640 + GetSubBlockIdx() * 128], stateSum, 128);
+        }
+        SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
+    }
+
+    __aicore__ inline void Stage7(uint32_t rows, GM_ADDR relay, GM_ADDR snapshot)
+    {
+        const uint32_t sub = GetSubBlockIdx();
+        const uint32_t first = sub * 32;
+        auto small = ub_[128 * 1024].ReinterpretCast<float>();
+        auto aq = ub_[132 * 1024].ReinterpretCast<float>();
+        auto ak = ub_[140 * 1024].ReinterpretCast<float>();
+        auto zv = ub_[148 * 1024].ReinterpretCast<float>();
+        GlobalTensor<float> source, capture;
+        source.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(relay));
+        if (snapshot != nullptr) {
+            capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot));
+        }
+        SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+        WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+        SetFlag<HardEvent::MTE3_MTE2>(phaseFree_);
+        WaitFlag<HardEvent::MTE3_MTE2>(phaseFree_);
+        WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
+        LoadRows(aq, daq_, first, 32, 64);
+        DataCopy(ak, source[160 * 1024 / 4 + first * 64], 32 * 64);
+        if (snapshot != nullptr) {
+            DataCopy(zv, source[64 * 1024 / 4 + first * 64], 32 * 64);
+        }
+        SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
+        WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
+        SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
+        WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        if (snapshot != nullptr) {
+            DataCopy(capture[223744 / 4 + first * 64], ak, 32 * 64);
+            DataCopy(capture[240128 / 4 + first * 64], zv, 32 * 64);
+        }
+        SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        SetFlag<HardEvent::V_S>(scalarReady_);
+        WaitFlag<HardEvent::V_S>(scalarReady_);
+        for (uint32_t row = 0; row < 32; ++row) {
+            small.SetValue(128 + row, first + row < rows ? aq.GetValue(row * 64 + first + row) : 0.0f);
+        }
+        SetFlag<HardEvent::S_V>(scalarWritten_);
+        WaitFlag<HardEvent::S_V>(scalarWritten_);
+        Muls(ak, ak, -1.0f, 32 * 64);
+        PipeBarrier<PIPE_V>();
+        for (uint32_t row = 0; row < 32; ++row) {
+            const uint32_t globalRow = first + row;
+            uint64_t mask[2] = {globalRow < rows ? (~uint64_t(0) << globalRow) : ~uint64_t(0), 0};
+            Duplicate(aq[row * 64], 0.0f, mask, 1, 1, 8);
+            Duplicate(ak[row * 64], 0.0f, mask, 1, 1, 8);
+        }
+        SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        DataCopy(source[64 * 1024 / 4 + first * 64], aq, 32 * 64);
+        DataCopy(source[160 * 1024 / 4 + first * 64], ak, 32 * 64);
+        SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
+
+        auto center = ub_[172 * 1024].ReinterpretCast<float>();
+        auto edge = ub_[173 * 1024].ReinterpretCast<float>();
+        auto qf = ub_[156 * 1024].ReinterpretCast<float>();
+        auto kf = ub_[160 * 1024].ReinterpretCast<float>();
+        auto delta = ub_[164 * 1024].ReinterpretCast<float>();
+        auto exponential = ub_[168 * 1024].ReinterpretCast<float>();
+        auto g = ub_[16 * 1024].ReinterpretCast<float>();
+        for (int band = 1; band >= 0; --band) {
+            const uint32_t bandFirst = band * 32;
+            const bool validBand = rows > bandFirst;
+            const uint32_t last = validBand ? (rows < bandFirst + 32 ? rows - 1 : bandFirst + 31) : 0;
+            WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
+            if (validBand) {
+                DataCopy(center, g_[uint64_t(bandFirst) * 128], 128);
+                DataCopy(edge, g_[uint64_t(last) * 128], 128);
+            }
+            SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            if (validBand) {
+                Add(center, center, edge, 128);
+                PipeBarrier<PIPE_V>();
+                Muls(center, center, 0.5f, 128);
+            } else {
+                Duplicate(center, 0.0f, 128);
+            }
+            PipeBarrier<PIPE_V>();
+            if (band == sub) {
+                Adds(small[416], center, 0.0f, 128);
+            }
+            for (uint32_t tile = 0; tile < 4; ++tile) {
+                const uint32_t slot = tile & 1;
+                const uint32_t offset = tile * 8 * 128;
+                auto kn = ub_[132 * 1024 + slot * 12288].ReinterpretCast<float>();
+                auto qp = kn[1024];
+                auto bp = kn[2048];
+                WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+                PipeBarrier<PIPE_V>();
+                Cast(qf, ub_.ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 8 * 128);
+                Cast(kf, ub_[8 * 1024].ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 8 * 128);
+                Sub(delta, center, g[offset], 64, 8, {1, 1, 1, 16, 0, 16});
+                Sub(delta[64], center[64], g[offset + 64], 64, 8, {1, 1, 1, 16, 0, 16});
+                PipeBarrier<PIPE_V>();
+                for (uint32_t row = 0; row < 8; ++row) {
+                    if (!validBand || first + tile * 8 + row > last) {
+                        Duplicate(delta[row * 128], 0.0f, 128);
+                    }
+                }
+                PipeBarrier<PIPE_V>();
+                Muls(exponential, delta, 0.6931471805599453f, 8 * 128);
+                PipeBarrier<PIPE_V>();
+                Exp(exponential, exponential, 8 * 128);
+                PipeBarrier<PIPE_V>();
+                Mul(kn, kf, exponential, 8 * 128);
+                Sub(delta, g[offset], center, 64, 8, {1, 1, 1, 16, 16, 0});
+                Sub(delta[64], g[offset + 64], center[64], 64, 8, {1, 1, 1, 16, 16, 0});
+                PipeBarrier<PIPE_V>();
+                for (uint32_t row = 0; row < 8; ++row) {
+                    const uint32_t globalRow = first + tile * 8 + row;
+                    if (!validBand || globalRow < bandFirst || globalRow >= rows) {
+                        Duplicate(delta[row * 128], 0.0f, 128);
+                    }
+                    Muls(bp[row * 128], kf[row * 128], small.GetValue(tile * 8 + row), 128);
+                }
+                PipeBarrier<PIPE_V>();
+                Muls(exponential, delta, 0.6931471805599453f, 8 * 128);
+                PipeBarrier<PIPE_V>();
+                Exp(exponential, exponential, 8 * 128);
+                PipeBarrier<PIPE_V>();
+                Mul(qp, qf, exponential, 8 * 128);
+                Mul(bp, bp, exponential, 8 * 128);
+                PipeBarrier<PIPE_V>();
+                for (uint32_t row = 0; row < 8; ++row) {
+                    const uint32_t globalRow = first + tile * 8 + row;
+                    if (!validBand || globalRow > last) {
+                        Duplicate(kn[row * 128], 0.0f, 128);
+                    }
+                    if (!validBand || globalRow < bandFirst || globalRow >= rows) {
+                        Duplicate(qp[row * 128], 0.0f, 128);
+                        Duplicate(bp[row * 128], 0.0f, 128);
+                    }
+                }
+                SetFlag<HardEvent::V_MTE3>(outputReady_[slot]);
+                WaitFlag<HardEvent::V_MTE3>(outputReady_[slot]);
+                const uint32_t base = (208 + (1 - band) * 96) * 1024 / 4 + (first + tile * 8) * 128;
+                DataCopy(source[base], kn, 8 * 128);
+                DataCopy(source[base + 8192], qp, 8 * 128);
+                DataCopy(source[base + 16384], bp, 8 * 128);
+                SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+            }
+            SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
+            CrossCoreSetFlag<2, PIPE_MTE3>(band == 1 ? 5 : 6);
+        }
+    }
+
+    __aicore__ inline void Stage9(uint32_t rows, bool norm, uint32_t betaMode, GM_ADDR relay, GM_ADDR snapshot)
+    {
+        const uint32_t sub = GetSubBlockIdx();
+        const uint32_t first = sub * 32;
+        const uint32_t active = rows > first ? (rows - first < 32 ? rows - first : 32) : 0;
+        auto g = ub_[16 * 1024].ReinterpretCast<float>();
+        auto dq = ub_[48 * 1024].ReinterpretCast<float>();
+        auto dk = ub_[64 * 1024].ReinterpretCast<float>();
+        auto dg = ub_[80 * 1024].ReinterpretCast<float>();
+        auto small = ub_[128 * 1024].ReinterpretCast<float>();
+        auto suffix = small[544];
+        auto partial = small[800];
+        auto qf = ub_[156 * 1024].ReinterpretCast<float>();
+        auto kf = ub_[160 * 1024].ReinterpretCast<float>();
+        auto factor = ub_[164 * 1024].ReinterpretCast<float>();
+        auto term = ub_[168 * 1024].ReinterpretCast<float>();
+        auto product = ub_[172 * 1024].ReinterpretCast<float>();
+        auto reduced = ub_[176 * 1024].ReinterpretCast<float>();
+        auto remotePartial = ub_[184 * 1024].ReinterpretCast<float>();
+        GlobalTensor<float> source, capture;
+        source.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(relay));
+        if (snapshot != nullptr) {
+            capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot));
+        }
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+            SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+        }
+        SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+        WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+        // Apply the state correction before the local terms, matching CPU association.
+        if (sub == (rows > 32 ? 1U : 0U)) {
+            WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
+            DataCopy(qf, source[152 * 1024 / 4], 256);
+            SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            Add(kf, qf, qf[128], 128);
+            Muls(factor, small[288], 0.6931471805599453f, 128);
+            PipeBarrier<PIPE_V>();
+            Exp(factor, factor, 128);
+            PipeBarrier<PIPE_V>();
+            Mul(factor, factor, small[160], 128);
+            PipeBarrier<PIPE_V>();
+            Add(kf, kf, factor, 128);
+            PipeBarrier<PIPE_V>();
+            Add(dg[(active - 1) * 128], dg[(active - 1) * 128], kf, 128);
+            SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
+        }
+        const uint32_t base = (400 + (1 - sub) * 48) * 1024 / 4;
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            auto input = ub_[132 * 1024 + slot * 12288].ReinterpretCast<float>();
+            WaitFlag<HardEvent::V_MTE2>(inputFree_[slot]);
+            for (uint32_t item = 0; item < 3; ++item) {
+                DataCopy(input[item * 1024], source[base + item * 4096 + slot * 1024], 1024);
+            }
+            SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
+        }
+        for (uint32_t tile = 0; tile < 4; ++tile) {
+            const uint32_t slot = tile & 1;
+            const uint32_t offset = tile * 1024;
+            auto input = ub_[132 * 1024 + slot * 12288].ReinterpretCast<float>();
+            auto localQ = input;
+            auto left = input[1024];
+            auto right = input[2048];
+            WaitFlag<HardEvent::MTE2_V>(inputReady_[slot]);
+            PipeBarrier<PIPE_V>();
+            Cast(qf, ub_.ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 1024);
+            Cast(kf, ub_[8 * 1024].ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 1024);
+            Sub(factor, g[offset], small[416], 64, 8, {1, 1, 1, 16, 16, 0});
+            Sub(factor[64], g[offset + 64], small[480], 64, 8, {1, 1, 1, 16, 16, 0});
+            PipeBarrier<PIPE_V>();
+            for (uint32_t row = 0; row < 8; ++row) {
+                if (tile * 8 + row >= active) {
+                    Duplicate(factor[row * 128], 0.0f, 128);
+                }
+            }
+            PipeBarrier<PIPE_V>();
+            Muls(factor, factor, 0.6931471805599453f, 1024);
+            PipeBarrier<PIPE_V>();
+            Exp(factor, factor, 1024);
+            PipeBarrier<PIPE_V>();
+            Mul(localQ, localQ, factor, 1024);
+            Mul(left, left, factor, 1024);
+            Div(right, right, factor, 1024);
+            PipeBarrier<PIPE_V>();
+            Add(dq[offset], dq[offset], localQ, 1024);
+            Mul(product, qf, localQ, 1024);
+            for (uint32_t row = 0; row < 8; ++row) {
+                Muls(term[row * 128], left[row * 128], small.GetValue(tile * 8 + row), 128);
+            }
+            PipeBarrier<PIPE_V>();
+            Add(dg[offset], dg[offset], product, 1024);
+            Add(dk[offset], dk[offset], term, 1024);
+            Sub(term, term, right, 1024);
+            Mul(product, kf, left, 1024);
+            PipeBarrier<PIPE_V>();
+            WholeReduceSum(reduced, product, 64, 8, 1, 1, 16);
+            WholeReduceSum(reduced[64], product[64], 64, 8, 1, 1, 16);
+            Mul(term, kf, term, 1024);
+            Add(dk[offset], dk[offset], right, 1024);
+            PipeBarrier<PIPE_V>();
+            Add(reduced, reduced, reduced[64], 8);
+            Add(dg[offset], dg[offset], term, 1024);
+            for (uint32_t row = 0; row < 8; ++row) {
+                const float diag = small.GetValue(128 + tile * 8 + row);
+                Muls(term[row * 128], kf[row * 128], diag, 128);
+                Muls(product[row * 128], qf[row * 128], diag, 128);
+            }
+            PipeBarrier<PIPE_V>();
+            Add(small[32 + tile * 8], small[32 + tile * 8], reduced, 8);
+            Add(dq[offset], dq[offset], term, 1024);
+            Add(dk[offset], dk[offset], product, 1024);
+            SetFlag<HardEvent::V_MTE2>(inputFree_[slot]);
+            if (tile + 2 < 4) {
+                WaitFlag<HardEvent::V_MTE2>(inputFree_[slot]);
+                for (uint32_t item = 0; item < 3; ++item) {
+                    DataCopy(input[item * 1024], source[base + item * 4096 + (tile + 2) * 1024], 1024);
+                }
+                SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
+            }
+        }
+        Duplicate(suffix, 0.0f, 128);
+        if (sub == 0) {
+            CrossCoreSetFlag<1, PIPE_MTE3>(11);
+            CrossCoreWaitFlag(11);
+            SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+            WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+            WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
+            DataCopy(suffix, source[496 * 1024 / 4], 128);
+            DataCopy(remotePartial, source[496 * 1024 / 4 + 128], 136);
+            SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
+            SetFlag<HardEvent::V_MTE2>(inputFree_[0]);
+        }
+        PipeBarrier<PIPE_V>();
+        for (int row = int(active) - 1; row >= 0; --row) {
+            Add(suffix, suffix, dg[row * 128], 128);
+            PipeBarrier<PIPE_V>();
+            Adds(dg[row * 128], suffix, 0.0f, 128);
+            PipeBarrier<PIPE_V>();
+        }
+        Mul(dg, dg, ub_[96 * 1024].ReinterpretCast<float>(), 32 * 128);
+        Duplicate(partial, 0.0f, 136);
+        PipeBarrier<PIPE_V>();
+        auto gateProduct = ub_[132 * 1024].ReinterpretCast<float>();
+        auto rowSums = ub_[148 * 1024].ReinterpretCast<float>();
+        Mul(gateProduct, dg, ub_[112 * 1024].ReinterpretCast<float>(), 32 * 128);
+        for (uint32_t row = 0; row < 32; ++row) {
+            Add(partial[8], partial[8], dg[row * 128], 128);
+            PipeBarrier<PIPE_V>();
+        }
+        WholeReduceSum(rowSums, gateProduct, 64, 64, 1, 1, 8);
+        PipeBarrier<PIPE_V>();
+        WholeReduceSum(partial, rowSums, 64, 1, 1, 1, 8);
+        if (sub == 1) {
+            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            DataCopy(source[496 * 1024 / 4], suffix, 128);
+            DataCopy(source[496 * 1024 / 4 + 128], partial, 136);
+            CrossCoreSetFlag<1, PIPE_MTE3>(11);
+            CrossCoreWaitFlag(11);
+        } else {
+            PipeBarrier<PIPE_V>();
+            Add(partial, partial, remotePartial, 136);
+            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            if (snapshot != nullptr) {
+                DataCopy(capture[322304 / 4], partial, 136);
+            } else {
+                GlobalTensor<float> workPartial;
+                workPartial.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(outputs_.partial));
+                DataCopy(workPartial, partial, 136);
+            }
+        }
+        // Normalize in FP32, then round once at the final BF16 writeback.
+        GlobalTensor<bfloat16_t> finalQ, finalK;
+        finalQ.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(snapshot != nullptr ?
+            snapshot + 256512 : reinterpret_cast<GM_ADDR>(outputs_.dq)));
+        finalK.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(snapshot != nullptr ?
+            snapshot + 272896 : reinterpret_cast<GM_ADDR>(outputs_.dk)));
+        for (uint32_t tile = 0; tile < 4; ++tile) {
+            const uint32_t offset = tile * 1024;
+            const uint32_t slot = tile & 1;
+            PipeBarrier<PIPE_V>();
+            if (norm) {
+                Cast(qf, ub_.ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 1024);
+                Cast(kf, ub_[8 * 1024].ReinterpretCast<bfloat16_t>()[offset], RoundMode::CAST_NONE, 1024);
+                PipeBarrier<PIPE_V>();
+                for (uint32_t which = 0; which < 2; ++which) {
+                    auto grad = which == 0 ? dq[offset] : dk[offset];
+                    auto normalized = which == 0 ? qf : kf;
+                    Mul(product, grad, normalized, 1024);
+                    PipeBarrier<PIPE_V>();
+                    WholeReduceSum(reduced, product, 64, 8, 1, 1, 16);
+                    WholeReduceSum(reduced[64], product[64], 64, 8, 1, 1, 16);
+                    PipeBarrier<PIPE_V>();
+                    Add(reduced, reduced, reduced[64], 8);
+                    SetFlag<HardEvent::V_S>(scalarReady_);
+                    WaitFlag<HardEvent::V_S>(scalarReady_);
+                    for (uint32_t row = 0; row < 8; ++row) {
+                        Muls(term[row * 128], normalized[row * 128], reduced.GetValue(row), 128);
+                    }
+                    PipeBarrier<PIPE_V>();
+                    Sub(grad, grad, term, 1024);
+                    PipeBarrier<PIPE_V>();
+                    for (uint32_t row = 0; row < 8; ++row) {
+                        Muls(grad[row * 128], grad[row * 128], small.GetValue(64 + which * 32 + tile * 8 + row), 128);
+                    }
+                    PipeBarrier<PIPE_V>();
+                }
+            }
+            auto output = ub_[132 * 1024 + slot * 4096].ReinterpretCast<bfloat16_t>();
+            WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+            Cast(output, dq[offset], RoundMode::CAST_RINT, 1024);
+            Cast(output[1024], dk[offset], RoundMode::CAST_RINT, 1024);
+            SetFlag<HardEvent::V_MTE3>(outputReady_[slot]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[slot]);
+            const uint32_t start = first + tile * 8;
+            if (snapshot != nullptr) {
+                DataCopy(finalQ[first * 128 + offset], output, 1024);
+                DataCopy(finalK[first * 128 + offset], output[1024], 1024);
+            } else if (start < rows) {
+                const uint16_t count = rows - start < 8 ? rows - start : 8;
+                const DataCopyExtParams write{count, 256, 0, (outputs_.vectorStride - 128) * 2, 0};
+                DataCopyPad(finalQ[uint64_t(start) * outputs_.vectorStride], output, write);
+                DataCopyPad(finalK[uint64_t(start) * outputs_.vectorStride], output[1024], write);
+            }
+            SetFlag<HardEvent::MTE3_V>(outputFree_[slot]);
+        }
+        if (betaMode != 0) {
+            Muls(reduced, small, betaMode == 2 ? -0.5f : -1.0f, 32);
+            PipeBarrier<PIPE_V>();
+            Adds(reduced, reduced, 1.0f, 32);
+            PipeBarrier<PIPE_V>();
+            Mul(reduced, reduced, small, 32);
+            PipeBarrier<PIPE_V>();
+            Mul(small[32], small[32], reduced, 32);
+        }
+        WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
+        SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        if (snapshot != nullptr) {
+            DataCopy(capture[289280 / 4 + first * 128], dg, 4096);
+            DataCopy(capture[322048 / 4 + first], small[32], 32);
+        } else if (active != 0) {
+            GlobalTensor<float> finalG, finalBeta;
+            finalG.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(outputs_.dg));
+            finalBeta.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(outputs_.db));
+            DataCopyPad(finalG[uint64_t(first) * outputs_.headStride * 128], dg,
+                        {static_cast<uint16_t>(active), 512, 0, (outputs_.headStride - 1) * 512, 0});
+            auto packedBeta = ub_[144 * 1024].ReinterpretCast<float>();
+            SetFlag<HardEvent::V_S>(scalarReady_);
+            WaitFlag<HardEvent::V_S>(scalarReady_);
+            for (uint32_t row = 0; row < active; ++row) {
+                packedBeta.SetValue(row * 8, small.GetValue(32 + row));
+            }
+            SetFlag<HardEvent::S_V>(scalarWritten_);
+            WaitFlag<HardEvent::S_V>(scalarWritten_);
+            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+            DataCopyPad(finalBeta[uint64_t(first) * outputs_.headStride], packedBeta,
+                        {static_cast<uint16_t>(active), 4, 0, (outputs_.headStride - 1) * 4, 0});
+        }
         SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
     }
 
@@ -414,11 +871,36 @@ public:
             pipe_->ReleaseEventID<HardEvent::MTE3_V>(outputFree_[slot]);
         }
         pipe_->ReleaseEventID<HardEvent::V_S>(scalarReady_);
+        pipe_->ReleaseEventID<HardEvent::S_V>(scalarWritten_);
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(phaseFree_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(vectorPhaseFree_);
     }
 
 private:
+    template <typename T>
+    __aicore__ inline void LoadRows(LocalTensor<T> destination, GlobalTensor<T> source,
+                                   uint32_t first, uint32_t tileRows, uint32_t columns)
+    {
+        const uint32_t valid = rows_ > first ? (rows_ - first < tileRows ? rows_ - first : tileRows) : 0;
+        if (valid != tileRows) {
+            // The free token orders DMA; Vector zeroing also needs the previous Vector readers retired.
+            PipeBarrier<PIPE_V>();
+            if constexpr (std::is_same<T, float>::value) {
+                Duplicate(destination, 0.0f, tileRows * columns);
+            } else {
+                Duplicate(destination.template ReinterpretCast<uint16_t>(), uint16_t(0), tileRows * columns);
+            }
+            SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+            WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
+        }
+        if (valid != 0) {
+            const uint32_t count = valid * columns;
+            const uint8_t right = (32 / sizeof(T) - count % (32 / sizeof(T))) % (32 / sizeof(T));
+            DataCopyPad(destination, source[uint64_t(first) * columns],
+                        {1, static_cast<uint32_t>(count * sizeof(T)), 0, 0, 0}, {true, 0, right, 0});
+        }
+    }
+
     __aicore__ inline void StateRows(LocalTensor<float> result)
     {
         constexpr uint32_t ELEMENTS = 16 * 128;
@@ -457,12 +939,15 @@ private:
     }
 
     TPipe *pipe_;
+    VectorOutputs outputs_{};
+    uint32_t rows_ = 0;
+    bool hasNorm_ = false;
     TBuf<TPosition::VECCALC> buffer_;
     LocalTensor<uint8_t> ub_;
     GlobalTensor<bfloat16_t> q_, k_, h_, dh_, v_;
-    GlobalTensor<float> g_, raw_, aLog_, bias_, beta_, qr_, kr_, dqRaw_;
+    GlobalTensor<float> g_, raw_, aLog_, bias_, beta_, qr_, kr_, dqRaw_, daq_;
     TEventID inputReady_[2], inputFree_[2], outputReady_[2], outputFree_[2];
-    TEventID scalarReady_, phaseFree_, vectorPhaseFree_;
+    TEventID scalarReady_, scalarWritten_, phaseFree_, vectorPhaseFree_;
 };
 } // namespace KdaFinalizeCatlass
 #endif

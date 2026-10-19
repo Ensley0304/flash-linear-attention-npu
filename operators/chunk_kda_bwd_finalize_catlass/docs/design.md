@@ -49,7 +49,7 @@ varlen state_index = (uint64(chunk)*H+head)*128*128
 
 UB地址以KiB表示：q=0、k=8、gk=16、e=32、dq_base=48、dk_base=64、dg_base=80、gate_factor=96、raw_x=112、小量区=128、scratch=132。小量区布局：beta128B、db128B、q_rstd128B、k_rstd128B、diag128B、rH512B、g_last512B、center512B、suffix512B、state_sum512B、partial544B，共3744B；剩352B保留。q/k为32×128 BF16，其余大常驻量为32×128 FP32。
 
-scratch共56KiB。S5采用16行tile：三路FP32输入各两槽共48KiB，8KiB用于cast和计算。S7采用8行tile：两套三路FP32输出24KiB、输入及运算临时32KiB。S9采用8行tile：三路FP32输入双槽24KiB、BF16输出双槽8KiB、FP32写回双槽8KiB、运算临时16KiB。不同Stage的scratch仅在本地pipe排空后改义。
+scratch共56KiB。S5采用8行tile：三路FP32输入双槽24KiB，其余用于q/k转换、state、乘积与归约。S7采用8行tile：三路FP32输出双槽24KiB，其余用于指数和输入转换。S9采用8行tile：三路FP32输入双槽24KiB，收尾阶段复用为BF16输出双槽8KiB；FP32梯度直接从常驻区写出。两个子阶段不同时占用同一地址。跨Stage复用同时保护MTE2搬入与Vector清零，不能只等待MTE3→MTE2。
 
 UB峰值188KiB，平台上限191.75KiB；剩余连续空间3.75KiB。第一版使用显式本地buffer，不引入未计入的高阶Vector临时空间。
 
@@ -117,7 +117,7 @@ z = exp(-abs(x*ea)); gate_factor = lower_bound*ea*z/(1+z)^2
 
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
-| q/k/gk/e/gate_factor/x | UB | 0/8/16/32/96/112KiB | 每片32行；e至S5，gk至S7，其余至S9；下一work不能覆盖 |
+| q/k/gk/e/gate_factor/x | UB | 0/8/16/32/96/112KiB | 每片32行；e至S5，gk至S9恢复factor，其余至S9；下一work不能覆盖 |
 | beta/rstd/g_last/rH | UB | 小量区128KiB内 | FP32；rH由chunk末行owner计算（validRows>32为AIV1，否则AIV0），按16个K行分块搬h/dh；diag留到S7读取dAqk时提取，避免重复搬矩阵 |
 | kE | GM | relay+80KiB | 64×128 BF16，两片各写32行；S2读后释放 |
 
@@ -240,13 +240,13 @@ state_sum = sum_rows(k*state)
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
 | q/k/gk/e、beta/g_last、gate/x | UB | 固定区 | e最后消费，其他固定数据继续保护；state指数非正 |
-| dk_state_raw、dKgb_raw、dq_raw | GM | relay+0/96KiB及API地址 | 16行tile，三路双buffer；两代relay地址独立 |
+| dk_state_raw、dKgb_raw、dq_raw | GM | relay+0/96KiB及API地址 | 8行tile，三路双buffer；尾行搬入前按有效范围补零 |
 
 **本 Stage 临时/固定**
 
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
-| 三路输入双槽、cast | UB | scratch132～188KiB | 48+8KiB；驻留base提供结果地址，不新增隐藏输出数组 |
+| 三路输入双槽、cast | UB | scratch132～188KiB | 输入24KiB，其余用于cast和计算；结果写常驻base |
 
 S4与S5可以重叠。S5不等待Tza；rH与state_sum的chunk末行修正留到S9。
 
@@ -421,11 +421,11 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 | 区域 | 数量与单份大小 | 主case大小（8K） |
 | --- | --- | ---: |
 | chunk metadata | 128×32B | 4KiB |
-| relay | P×W×512KiB；W=2 | 20MiB |
+| relay | P×W×512KiB；首版W=1 | 10MiB |
 | chunk partial | 128×96×544B | 6.375MiB |
-| 用户额外workspace | 64B对齐 | **26.37890625MiB** |
+| 用户额外workspace | 64B对齐 | **16.37890625MiB** |
 
-上述总量为27.660288 MB（十进制）。W=1时relay为10MiB。中间结果按物理槽复用，不按Nwork分配；partial确需跨work保留。API输入、最终输出、片上空间、固定系统workspace不计入。metadata和partial对所有变长chunk使用同一64位公式。
+首版总量为17.174528 MB（十进制）。W=2是后续独立候选，对应26.37890625MiB。中间结果按物理槽复用，不按Nwork分配；partial跨work保留。API输入、最终输出、片上空间、固定系统workspace不计入。metadata和partial对所有变长chunk使用同一64位公式。
 
 ## 6. 跨 Stage 同步契约
 
@@ -442,7 +442,7 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 | 4 S6 ready | Fixpipe写完dAkk | 两片各wait一次 | dAkk_raw |
 | 5/6 带操作数ready | 后/前带全部写完 | AIC按后再前wait | Aq/Ak及指数操作数 |
 | 7/8 带结果ready | 后/前带Fixpipe写完 | 两片各按后再前wait | 三项局部结果 |
-| 9/10 slot free | 首W代隐式空闲，无预置token | 后续覆盖slot前wait两片S9结束通知；两slot分别轮转 | 整代relay和下代常驻状态 |
+| 9 slot free | 首版W=1，初始隐式空闲 | AIC每work末等待两片S9结束；ID10保留给W=2候选 | 整代relay和下代常驻状态 |
 | 11 suffix记录ready | AIV0提前空贡献；AIV1完整记录MTE3写完再贡献 | 两片均wait，释放前不允许同slot覆盖 | suffix和后半partial |
 | 本地HardEvent | 初始化可用槽位 | MTE2/V/MTE3、MTE2/MTE1/M/FIX成对set/wait | UB/L1/L0各自双buffer |
 

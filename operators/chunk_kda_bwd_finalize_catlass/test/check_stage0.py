@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 
 import numpy as np
@@ -14,7 +15,7 @@ parser.add_argument('--executable', type=Path, required=True)
 parser.add_argument('--skill-root', type=Path, required=True)
 parser.add_argument('--artifacts', type=Path, required=True)
 parser.add_argument('--device', type=int, default=3)
-parser.add_argument('--prefix', type=int, choices=range(7), default=0)
+parser.add_argument('--prefix', type=int, choices=range(10), default=0)
 args = parser.parse_args()
 op = Path(__file__).resolve().parents[1]
 atk = op.parents[1] / 'tests/atk/chunk_kda_bwd_finalize'
@@ -33,11 +34,13 @@ for rows in (1, 7, 31, 32, 33, 63, 64):
                 beta_mode=rows % 3, gate_mode='saturated' if rows == 64 else 'ordinary')
     data, _, chunks = build_inputs(spec, 20261019 + rows)
     high, low = [], []
-    reference(data, spec, chunks, True, high)
-    reference(data, spec, chunks, False, low)
+    final_high = reference(data, spec, chunks, True, high)
+    final_low = reference(data, spec, chunks, False, low)
     assert len(high) == len(low) == 1
     directory = args.artifacts / f'rows-{rows}'
     directory.mkdir(exist_ok=True)
+    (directory / 'attributes.bin').write_bytes(struct.pack('<ffII', spec['scale'], spec['lower_bound'],
+                                                          int(spec['norm']), spec['beta_mode']))
     for name in ('v', 'akk', 'v_new', 'h', 'dh', 'dv_scan'):
         columns = 64 if name == 'akk' else 128
         size = 128 if name in ('h', 'dh') else 64
@@ -46,6 +49,9 @@ for rows in (1, 7, 31, 32, 33, 63, 64):
         padded[:value.shape[0]] = value
         (directory / f'{name}.bin').write_bytes(padded.view(torch.uint16).numpy().tobytes())
     if args.prefix >= 1:
+        padded = torch.zeros(64, 64, dtype=torch.float32)
+        padded[:rows] = data['dAqk'].reshape(rows, 64)
+        (directory / 'dAqk.bin').write_bytes(padded.numpy().tobytes())
         for name in ('q', 'k', 'gk', 'raw_g', 'dq_raw'):
             padded = torch.zeros(64, 128, dtype=data[name].dtype)
             padded[:rows] = data[name].reshape(rows, 128)
@@ -75,8 +81,12 @@ for rows in (1, 7, 31, 32, 33, 63, 64):
         names += ['s5_dq_base', 's5_dk_base', 's5_dg_base', 's5_db_base']
     if args.prefix >= 6:
         names += ['s6_dakk_raw']
+    if args.prefix >= 7:
+        names += ['s7_aq', 's7_ak', 's7_kn1', 's7_qp1', 's7_bp1', 's7_kn0', 's7_qp0', 's7_bp0']
+    if args.prefix >= 8:
+        names += ['s8_local_q', 's8_left', 's8_right']
     bf16_names = ('s0_dw', 's1_ke', 's3_zb', 's3_dv', 's4_tza')
-    square_names = ('s0_zv', 's2_zw', 's3_zb', 's4_tza', 's6_dakk_raw')
+    square_names = ('s0_zv', 's2_zw', 's3_zb', 's4_tza', 's6_dakk_raw', 's7_aq', 's7_ak')
     for name in names:
         columns = 1 if name in ('s3_db_v', 's5_db_base') else (64 if name in square_names else 128)
         dtype = torch.bfloat16 if name in bf16_names else torch.float32
@@ -114,6 +124,33 @@ for rows in (1, 7, 31, 32, 33, 63, 64):
         dual[name] = {'pass': bool(comparison['success']), 'ratios': comparison['ratios']}
     passed = shared['pass'] and all(value['pass'] for value in dual.values())
     results.append({'rows': rows, 'pass': passed, 'shared': shared, 'ct': dual})
+    if args.prefix >= 9:
+        fa, fg, fb = {}, {}, {}
+        for index, name in enumerate(('dq', 'dk', 'dv', 'dg', 'db', 'da', 'dbias')):
+            dtype = torch.bfloat16 if index < 3 else torch.float32
+            raw = (directory / f'final_{name}.bin').read_bytes()
+            value = torch.frombuffer(bytearray(raw), dtype=dtype).clone()
+            if index < 4:
+                assert (value.reshape(64, 128)[rows:] == 0).all(), (rows, name, 'final padding')
+                value = value.reshape(64, 128)[:rows]
+            elif name == 'db':
+                assert (value[rows:] == 0).all(), (rows, name, 'final padding')
+                value = value[:rows]
+            reference_index = 4 if name == 'dg' else (3 if name == 'db' else index)
+            fa[name] = value.reshape(final_high[reference_index].shape)
+            fg[name], fb[name] = final_high[reference_index], final_low[reference_index]
+        final_ct = {name: ct.dual(fa[name], fg[name], fb[name], level='L1',
+                                dtype=str(fa[name].dtype).split('.')[-1]) for name in fa}
+        final_masks = {name: np.ones(value.shape, dtype=bool) for name, value in fa.items()}
+        final_expected = {name: {'shape': list(value.shape), 'dtype': str(value.dtype).split('.')[-1],
+                                 'required_regions': ['boundary_all']} for name, value in fa.items()}
+        final_shared = compare_case(fa, fg, case=f'final_rows_{rows}', policy=policy,
+                                    expected_outputs=final_expected, valid_masks=final_masks,
+                                    regions={name: {'boundary_all': mask} for name, mask in final_masks.items()})
+        final_pass = final_shared['pass'] and all(v['success'] for v in final_ct.values())
+        results[-1]['final'] = {'pass': final_pass, 'shared': final_shared,
+                              'ct': {k: {'pass': bool(v['success']), 'ratios': v['ratios']} for k, v in final_ct.items()}}
+        print(rows, 'FINAL PASS' if final_pass else 'FINAL FAIL', flush=True)
     print(rows, 'PASS' if passed else 'FAIL', flush=True)
     (args.artifacts / 'report.json').write_text(json.dumps(results, indent=2) + '\n')
 assert all(value['pass'] for value in results)

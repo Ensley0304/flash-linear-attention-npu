@@ -9,6 +9,8 @@
 #include "catlass/arch/arch.hpp"
 #include "catlass/gemm/gemm_type.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
+#include "catlass/gemm/tile/copy_l1_to_l0a.hpp"
+#include "catlass/gemm/tile/copy_l1_to_l0b.hpp"
 
 namespace KdaFinalizeCatlass {
 
@@ -62,7 +64,9 @@ public:
         GlobalTensor<float> output;
         output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(relay));
         GlobalTensor<bfloat16_t> capture;
-        capture.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dwCapture));
+        if (dwCapture != nullptr) {
+            capture.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dwCapture));
+        }
         auto vectorFix = FixpipeParamsV220(128, 64, 64, 128, false);
         vectorFix.quantPre = QuantMode_t::NoQuant;
 
@@ -90,7 +94,9 @@ public:
         // Development-only snapshot; production dW remains in BF16 NZ L1.
         auto dumpFix = vectorFix;
         dumpFix.quantPre = QuantMode_t::F322BF16;
-        Fixpipe<bfloat16_t, float, CFG_ROW_MAJOR>(capture, dwResult, dumpFix);
+        if (dwCapture != nullptr) {
+            Fixpipe<bfloat16_t, float, CFG_ROW_MAJOR>(capture, dwResult, dumpFix);
+        }
         SetFlag<HardEvent::FIX_M>(resultFree_[0]);
 
         WaitFlag<HardEvent::M_FIX>(resultReady_[1]);
@@ -145,9 +151,11 @@ public:
         auto fix = FixpipeParamsV220(64, 64, 64, 64, false);
         fix.quantPre = QuantMode_t::F322BF16;
         Fixpipe<bfloat16_t, float, FIX_NZ>(tza, result, fix);
-        GlobalTensor<bfloat16_t> dump;
-        dump.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(capture));
-        Fixpipe<bfloat16_t, float, CFG_ROW_MAJOR>(dump, result, fix);
+        if (capture != nullptr) {
+            GlobalTensor<bfloat16_t> dump;
+            dump.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(capture));
+            Fixpipe<bfloat16_t, float, CFG_ROW_MAJOR>(dump, result, fix);
+        }
         SetFlag<HardEvent::FIX_M>(resultFree_[0]);
     }
 
@@ -169,6 +177,47 @@ public:
         SetFlag<HardEvent::FIX_M>(resultFree_[1]);
     }
 
+    __aicore__ inline void Stage8(GM_ADDR relay, uint32_t band)
+    {
+        auto l1 = l1Buffer_.Get<uint8_t>();
+        auto aq = l1[176 * KIB].ReinterpretCast<float>();
+        auto ak = l1[192 * KIB].ReinterpretCast<float>();
+        const uint32_t bandBase = (208 + (1 - band) * 96) * KIB;
+        auto kn = l1[bandBase].ReinterpretCast<float>();
+        auto qp = l1[bandBase + 32 * KIB].ReinterpretCast<float>();
+        auto bp = l1[bandBase + 64 * KIB].ReinterpretCast<float>();
+        if (band == 1) {
+            LoadFloat(aq, relay + 64 * KIB, 64, 64);
+            LoadFloat(ak, relay + 160 * KIB, 64, 64);
+        }
+        LoadFloat(kn, relay + bandBase, 64, 128);
+        LoadFloat(qp, relay + bandBase + 32 * KIB, 64, 128);
+        LoadFloat(bp, relay + bandBase + 64 * KIB, 64, 128);
+        SetFlag<HardEvent::MTE2_MTE1>(inputReady_);
+        WaitFlag<HardEvent::MTE2_MTE1>(inputReady_);
+        FloatOperands<false>(aq, kn, band, 0);
+        FloatOperands<false>(ak, kn, band, 1);
+        auto localQ = FloatMultiply<false>(0);
+        auto left = FloatMultiply<false>(1);
+        FloatOperands<true>(aq, qp, band, 0);
+        GlobalTensor<float> output;
+        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(relay + (400 + (1 - band) * 48) * KIB));
+        auto fix = FixpipeParamsV220(128, 32, 32, 128, false);
+        fix.quantPre = QuantMode_t::NoQuant;
+        WaitFlag<HardEvent::M_FIX>(resultReady_[0]);
+        Fixpipe<float, float, CFG_ROW_MAJOR>(output, localQ, fix);
+        SetFlag<HardEvent::FIX_M>(resultFree_[0]);
+        FloatMultiply<true>(0, true, false);
+        FloatOperands<true>(ak, bp, band, 0);
+        WaitFlag<HardEvent::M_FIX>(resultReady_[1]);
+        Fixpipe<float, float, CFG_ROW_MAJOR>(output[4096], left, fix);
+        SetFlag<HardEvent::FIX_M>(resultFree_[1]);
+        auto right = FloatMultiply<true>(0, false, true);
+        WaitFlag<HardEvent::M_FIX>(resultReady_[0]);
+        Fixpipe<float, float, CFG_ROW_MAJOR>(output[8192], right, fix);
+        SetFlag<HardEvent::FIX_M>(resultFree_[0]);
+    }
+
     __aicore__ inline void End()
     {
         for (uint32_t slot = 0; slot < 2; ++slot) {
@@ -184,6 +233,68 @@ public:
     }
 
 private:
+    __aicore__ inline void LoadFloat(LocalTensor<float> destination, GM_ADDR source,
+                                    uint32_t rows, uint32_t columns)
+    {
+        GlobalTensor<float> input;
+        input.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(source));
+        Nd2NzParams copy{};
+        copy.ndNum = 1;
+        copy.nValue = rows;
+        copy.dValue = columns;
+        copy.srcDValue = columns;
+        copy.dstNzC0Stride = rows;
+        copy.dstNzNStride = 1;
+        DataCopy(destination, input, copy);
+    }
+
+    template <bool TRANSPOSE_A>
+    __aicore__ inline void FloatOperands(LocalTensor<float> a, LocalTensor<float> b,
+                                        uint32_t band, uint32_t slot)
+    {
+        using namespace Catlass;
+        auto aa = l0ABuffer_.Get<float>()[slot * 32 * KIB / 4];
+        auto bb = l0BBuffer_.Get<float>()[slot * 32 * KIB / 4];
+        WaitFlag<HardEvent::M_MTE1>(operandFree_[slot]);
+        auto aLayout = layout::zZ::MakeLayout<float>(32, 64);
+        if constexpr (TRANSPOSE_A) {
+            using Source = Gemm::GemmType<float, layout::nZ, TPosition::A1>;
+            Gemm::Tile::CopyL1ToL0A<Arch::AtlasA2, Source> copy;
+            copy(aa, a[band * 2048], aLayout, layout::nZ::MakeLayout<float>(64, 64));
+        } else {
+            using Source = Gemm::GemmType<float, layout::zN, TPosition::A1>;
+            Gemm::Tile::CopyL1ToL0A<Arch::AtlasA2, Source> copy;
+            copy(aa, a[band * 256], aLayout, layout::zN::MakeLayout<float>(64, 64));
+        }
+        using BSource = Gemm::GemmType<float, layout::zN, TPosition::A1>;
+        Gemm::Tile::CopyL1ToL0B<Arch::AtlasA2, BSource> copyB;
+        copyB(bb, b, layout::nZ::MakeLayout<float>(64, 128), layout::zN::MakeLayout<float>(64, 128));
+        SetFlag<HardEvent::MTE1_M>(operandReady_[slot]);
+    }
+
+    template <bool TRANSPOSE_A>
+    __aicore__ inline LocalTensor<float> FloatMultiply(uint32_t slot, bool initialize = true, bool finish = true)
+    {
+        using namespace Catlass;
+        using ALayout = typename std::conditional<TRANSPOSE_A, layout::ColumnMajor, layout::RowMajor>::type;
+        using A = Gemm::GemmType<float, ALayout>;
+        using B = Gemm::GemmType<float, layout::RowMajor>;
+        auto a = l0ABuffer_.Get<float>()[slot * 32 * KIB / 4];
+        auto b = l0BBuffer_.Get<float>()[slot * 32 * KIB / 4];
+        auto c = l0CBuffer_.Get<float>()[slot * 32 * KIB / 4];
+        WaitFlag<HardEvent::MTE1_M>(operandReady_[slot]);
+        if (initialize) {
+            WaitFlag<HardEvent::FIX_M>(resultFree_[slot]);
+        }
+        Gemm::Tile::TileMmad<Arch::AtlasA2, A, B, void> multiply;
+        multiply(c, a, b, 32, 128, 64, initialize);
+        SetFlag<HardEvent::M_MTE1>(operandFree_[slot]);
+        if (finish) {
+            SetFlag<HardEvent::M_FIX>(resultReady_[slot]);
+        }
+        return c;
+    }
+
     __aicore__ inline void Load(LocalTensor<bfloat16_t> destination, GM_ADDR source, uint32_t rows,
                                uint32_t columns, uint32_t validRows, uint32_t validColumns)
     {
