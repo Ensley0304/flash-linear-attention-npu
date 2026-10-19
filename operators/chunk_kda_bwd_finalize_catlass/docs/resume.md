@@ -1,3 +1,11 @@
+# 当前检查点：P2已验收
+
+P2 对角、norm和db批量处理：八配置两轮交替A/B均有收益，降时6.55%～9.87%；8K无附加反向19459.909→18184.937us。原20case七输出全部通过CT L1和冻结附加策略，保留P2。case192首轮host进程60秒超时，原因未确定；同一输入独立重试18.21秒正常退出，随后192/199完整精度通过。失败日志保留，没有放宽超时或精度阈值。证据见evidence/p2-*。
+
+/data空间紧张，后续工作在/tmp/wys/kda-finalize-a2-cannbot-20261019；bin/finalize-p2为已验收二进制，SHA256=d28889fdd6be7122c3a2bae6f1447a3643293e6cd886d29d4c643405515719af。原始输入、CPU缓存、CATLASS仍在/data/wys原目录。下一项P3原位scan。
+
+以下为此前记录，路径与版本以本段为准。
+
 # 恢复位置：2026-10-19
 
 最新：P1 beta批量广播已通过原20case七输出、八配置两轮交替A/B。8K无附加反向21061.379→19452.631us，八配置平均降时7.33%，目标9604.066us尚未达到。报告见`evidence/p1-precision20.json`和`p1-eight-*.json`。A2根目录仍为`/data/wys/kda-finalize-a2-cannbot-20261019`，当前`build-r1/finalize`为P1，初始完整版本保存为`build-r1/finalize-initial`。下一项从P2批量对角/norm/db处理继续，不能叠加未验收的候选。

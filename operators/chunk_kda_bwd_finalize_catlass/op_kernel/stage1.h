@@ -27,6 +27,11 @@ public:
         pipe_ = &pipe;
         pipe.InitBuffer(buffer_, 188 * 1024);
         ub_ = buffer_.Get<uint8_t>();
+        auto diagonalIndices = ub_[128 * 1024 + 936 * 4].ReinterpretCast<int32_t>();
+        CreateVecIndex(diagonalIndices, 0, 32);
+        PipeBarrier<PIPE_V>();
+        Muls(diagonalIndices, diagonalIndices, int32_t(65 * 4), 32);
+        PipeBarrier<PIPE_V>();
         Bind(input, {});
         scalarReady_ = pipe.AllocEventID<HardEvent::V_S>();
         scalarWritten_ = pipe.AllocEventID<HardEvent::S_V>();
@@ -480,13 +485,10 @@ public:
         }
         SetFlag<HardEvent::MTE3_V>(outputFree_[0]);
         WaitFlag<HardEvent::MTE3_V>(outputFree_[0]);
-        SetFlag<HardEvent::V_S>(scalarReady_);
-        WaitFlag<HardEvent::V_S>(scalarReady_);
-        for (uint32_t row = 0; row < 32; ++row) {
-            small.SetValue(128 + row, first + row < rows ? aq.GetValue(row * 64 + first + row) : 0.0f);
-        }
-        SetFlag<HardEvent::S_V>(scalarWritten_);
-        WaitFlag<HardEvent::S_V>(scalarWritten_);
+        auto diagonalIndices = small[936].ReinterpretCast<uint32_t>();
+        Gather(small[128], aq, diagonalIndices, first * 4, 32);
+        PipeBarrier<PIPE_V>();
+        Brcb(ub_[187 * 1024].ReinterpretCast<float>(), small[128], 4, {1, 8});
         Muls(ak, ak, -1.0f, 32 * 64);
         PipeBarrier<PIPE_V>();
         for (uint32_t row = 0; row < 32; ++row) {
@@ -702,11 +704,11 @@ public:
             PipeBarrier<PIPE_V>();
             Add(reduced, reduced, reduced[64], 8);
             Add(dg[offset], dg[offset], term, 1024);
-            for (uint32_t row = 0; row < 8; ++row) {
-                const float diag = small.GetValue(128 + tile * 8 + row);
-                Muls(term[row * 128], kf[row * 128], diag, 128);
-                Muls(product[row * 128], qf[row * 128], diag, 128);
-            }
+            auto diagRows = ub_[187 * 1024].ReinterpretCast<float>()[tile * 8 * 8];
+            Mul(term, kf, diagRows, 64, 8, {1, 1, 0, 16, 16, 1});
+            Mul(term[64], kf[64], diagRows, 64, 8, {1, 1, 0, 16, 16, 1});
+            Mul(product, qf, diagRows, 64, 8, {1, 1, 0, 16, 16, 1});
+            Mul(product[64], qf[64], diagRows, 64, 8, {1, 1, 0, 16, 16, 1});
             PipeBarrier<PIPE_V>();
             Add(small[32 + tile * 8], small[32 + tile * 8], reduced, 8);
             Add(dq[offset], dq[offset], term, 1024);
@@ -796,17 +798,19 @@ public:
                     WholeReduceSum(reduced[64], product[64], 64, 8, 1, 1, 16);
                     PipeBarrier<PIPE_V>();
                     Add(reduced, reduced, reduced[64], 8);
-                    SetFlag<HardEvent::V_S>(scalarReady_);
-                    WaitFlag<HardEvent::V_S>(scalarReady_);
-                    for (uint32_t row = 0; row < 8; ++row) {
-                        Muls(term[row * 128], normalized[row * 128], reduced.GetValue(row), 128);
-                    }
+                    auto rowBroadcast = ub_[182 * 1024].ReinterpretCast<float>();
+                    PipeBarrier<PIPE_V>();
+                    Brcb(rowBroadcast, reduced, 1, {1, 8});
+                    PipeBarrier<PIPE_V>();
+                    Mul(term, normalized, rowBroadcast, 64, 8, {1, 1, 0, 16, 16, 1});
+                    Mul(term[64], normalized[64], rowBroadcast, 64, 8, {1, 1, 0, 16, 16, 1});
                     PipeBarrier<PIPE_V>();
                     Sub(grad, grad, term, 1024);
                     PipeBarrier<PIPE_V>();
-                    for (uint32_t row = 0; row < 8; ++row) {
-                        Muls(grad[row * 128], grad[row * 128], small.GetValue(64 + which * 32 + tile * 8 + row), 128);
-                    }
+                    Brcb(rowBroadcast, small[64 + which * 32 + tile * 8], 1, {1, 8});
+                    PipeBarrier<PIPE_V>();
+                    Mul(grad, grad, rowBroadcast, 64, 8, {1, 1, 0, 16, 16, 1});
+                    Mul(grad[64], grad[64], rowBroadcast, 64, 8, {1, 1, 0, 16, 16, 1});
                     PipeBarrier<PIPE_V>();
                 }
             }
@@ -850,13 +854,7 @@ public:
             DataCopyPad(finalG[uint64_t(first) * outputs_.headStride * 128], dg,
                         {static_cast<uint16_t>(active), 512, 0, (outputs_.headStride - 1) * 512, 0});
             auto packedBeta = ub_[144 * 1024].ReinterpretCast<float>();
-            SetFlag<HardEvent::V_S>(scalarReady_);
-            WaitFlag<HardEvent::V_S>(scalarReady_);
-            for (uint32_t row = 0; row < active; ++row) {
-                packedBeta.SetValue(row * 8, small.GetValue(32 + row));
-            }
-            SetFlag<HardEvent::S_V>(scalarWritten_);
-            WaitFlag<HardEvent::S_V>(scalarWritten_);
+            Brcb(packedBeta, small[32], 4, {1, 8});
             SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
             WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
             DataCopyPad(finalBeta[uint64_t(first) * outputs_.headStride], packedBeta,

@@ -55,6 +55,8 @@ UB峰值188KiB，平台上限191.75KiB；剩余连续空间3.75KiB。第一版�
 
 性能候选P1：在scratch末端186～187KiB保留32行beta广播，每行8个FP32副本。S1用Brcb生成，S3/S5/S7/S9按行repeat乘法读取，替代逐行标量GetValue；到S9最后一次beta乘法后释放。该区与已有临时量不重叠，UB峰值仍188KiB，数学运算和舍入位置不变。先做边界精度和同条件性能对照，未过门禁不作为已验收方案。
 
+候选P2：小量区float偏移936处保存32个对角Gather字节索引（额外128B，初始化一次）。S7从已补零的Aq提取32个对角元素，广播结果驻留187～188KiB到S9对角项合并结束。S9 norm用182KiB处256B临时广播区，dBeta在144KiB处生成32B/行打包；保持原归约顺序和乘法顺序。所有区域均在现有188KiB内，不增加事件或workspace。
+
 L1地址以KiB表示：akk[0/1]=0/8、dW=16、kE=32、Zb=48、Tza=56、h=64、dh=96、v_new=128、dv_scan=144、v=160。局部Aq/Ak共享区位于176/192，各16KiB；两个带操作数槽位于208和304，各96KiB：kNeg32、qPos32、betaKPos32。Aq/Ak从GM仅搬入一次并保留到两个带全部消费。两个akk代际最多16KiB，其余早段驻留仅一份；下一work仅在这些区域旧消费者结束后进入。L1峰值400KiB，剩余连续111.75KiB。
 
 L0A/L0B各两槽，每槽32KiB；L0C两槽，每槽32KiB。分别不超过64/64/128KiB。无自定义FixBuf分配，按平台返回2KiB限制使用普通Fixpipe。使用CATLASS `TileMmad<Arch::AtlasA2,...>`及对应Copy组件；地址、双buffer和事件由本算子显式管理。FP32转置路径按layout选择LoadData与kDirectionAlign，不沿用BF16的分形宽度。

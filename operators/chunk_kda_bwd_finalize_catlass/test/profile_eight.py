@@ -16,11 +16,14 @@ parser.add_argument('--baseline', required=True)
 parser.add_argument('--candidate', required=True)
 parser.add_argument('--label', required=True)
 parser.add_argument('--resume', action='store_true')
+parser.add_argument('--scratch-root', type=Path)
+parser.add_argument('--binary-root', type=Path)
 args = parser.parse_args()
 root = Path('/data/wys/kda-finalize-a2-cannbot-20261019')
-out = root / 'reports' / args.label
-out.mkdir(exist_ok=args.resume)
-data_root = root / 'perf-inputs'
+scratch = args.scratch_root or root
+out = scratch / 'reports' / args.label
+out.mkdir(parents=True, exist_ok=args.resume)
+data_root = scratch / 'perf-inputs'
 data_root.mkdir(exist_ok=True)
 torch.set_num_threads(1)
 for tokens in (8192, 16384):
@@ -28,7 +31,14 @@ for tokens in (8192, 16384):
     directory.mkdir(exist_ok=True)
     if (directory / 'ready.json').exists():
         continue
-    if shutil.disk_usage(root).free < 16 * 1024**3:
+    existing = root / 'perf-inputs' / str(tokens)
+    if scratch != root and (existing / 'ready.json').exists():
+        for file in existing.glob('*.bin'):
+            if not file.name.startswith('output_') and file.name != 'configuration.bin':
+                (directory / file.name).symlink_to(file)
+        shutil.copyfile(existing / 'ready.json', directory / 'ready.json')
+        continue
+    if shutil.disk_usage(scratch).free < 16 * 1024**3:
         raise RuntimeError('Need 16 GiB free to prepare inputs and outputs')
     cache = Path('/data/wys/kda-finalize-a2-stage9-20261012/perf-finalize-20261013') / f'inputs-{tokens}.pt'
     data, cu, chunks = torch.load(cache, weights_only=False, mmap=True, map_location='cpu')
@@ -46,7 +56,7 @@ for tokens in (8192, 16384):
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-binaries = {label: root / 'build-r1' / name for label, name in [('A', args.baseline), ('B', args.candidate)]}
+binaries = {label: (args.binary_root or root / 'build-r1') / name for label, name in [('A', args.baseline), ('B', args.candidate)]}
 hashes = {label: digest(path) for label, path in binaries.items()}
 records = json.loads((out / 'summary.json').read_text()) if args.resume else []
 assert all(r['sha256'] == hashes[r['label']] for r in records)

@@ -9,9 +9,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--perf', required=True)
 parser.add_argument('--label', required=True)
 parser.add_argument('--executable', default='finalize')
+parser.add_argument('--scratch-root', type=Path)
+parser.add_argument('--binary-root', type=Path)
 args = parser.parse_args()
 root = Path('/data/wys/kda-finalize-a2-cannbot-20261019')
-records = json.loads((root / 'reports' / args.perf / 'summary.json').read_text())
+scratch = args.scratch_root or root
+records = json.loads((scratch / 'reports' / args.perf / 'summary.json').read_text())
 assert len(records) == 32
 gains = []
 for round_id in range(2):
@@ -24,8 +27,8 @@ for round_id in range(2):
 assert min(gains) >= -.3 and statistics.mean(gains) > .5, gains
 print(json.dumps(dict(min_gain_pct=min(gains), mean_gain_pct=statistics.mean(gains))), flush=True)
 subprocess.run([sys.executable, '-u', str(root / 'source-r1/operators/chunk_kda_bwd_finalize_catlass/test/check_full.py'),
-    '--executable', str(root / 'build-r1' / args.executable),
+    '--executable', str((args.binary_root or root / 'build-r1') / args.executable),
     '--skill-root', str(root / 'plugins-official/catlass-op-generator/catlass-cpp-generator'),
-    '--artifacts', str(root / 'reports' / args.label), '--work-dir', str(root / 'precision-work'),
+    '--artifacts', str(scratch / 'reports' / args.label), '--work-dir', str(scratch / 'precision-work'),
     '--reference-cache', str(root / 'reference-cache'), '--device', '3', '--cores', '20', '--repeat', '3',
     '--cases', '0,4,7,23,39,47,55,63,71,87,95,103,119,135,143,159,175,191,192,199'], check=True)
