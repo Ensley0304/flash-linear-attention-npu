@@ -112,11 +112,13 @@ def reference(data, spec, chunks, high_precision=True, stage_capture=None):
                     'values': {name: value.detach().clone() for name, value in {
                         's0_dw': dw, 's0_state_raw': state_raw, 's0_dv_b': dvb, 's0_zv': zv,
                         's1_exp': e, 's1_ke': ke, 's2_dkg': dkg, 's2_zw': zw,
-                        's3_zb': zb, 's4_tza': tza, 's5_dq_base': dq, 's5_dk_base': dk,
+                        's3_zb': zb, 's3_dv': beta[:, None] * dvb, 's3_db_v': (v * dvb).sum(-1),
+                        's4_tza': tza, 's5_dq_base': dq, 's5_dk_base': dk,
                         's5_dg_base': dg, 's5_db_base': db, 's6_dakk_raw': dakk_raw,
                     }.items()},
                 })
-            dg[-1] += (k * state).sum(0) + torch.exp2(g[-1]) * (hh * dh).sum(-1)
+            rh = (hh * dh).sum(-1)
+            dg[-1] += (k * state).sum(0) + torch.exp2(g[-1]) * rh
             aq_lower = aq[:, :rows].tril(-1)
             local_q, left, right = (torch.empty_like(k) for _ in range(3))
             width = rows if high_precision else 8
@@ -139,7 +141,14 @@ def reference(data, spec, chunks, high_precision=True, stage_capture=None):
             x = data['raw_g'][region].to(dtype) + data['dt_bias'][head].to(dtype)
             ea = data['a_log'][head].to(dtype).exp()
             z = (-(x * ea).abs()).exp()
-            dg = scan * (spec['lower_bound'] * ea * z / (1 + z).square())
+            gate_factor = spec['lower_bound'] * ea * z / (1 + z).square()
+            dg = scan * gate_factor
+            if stage_capture is not None:
+                stage_capture[-1]['values'].update({
+                    name: value.detach().clone() for name, value in {
+                        's1_rh': rh, 's1_g_last': g[-1], 's1_gate_factor': gate_factor, 's1_raw_x': x,
+                    }.items()
+                })
             if spec['norm']:
                 dq = (dq - q * (dq * q).sum(-1, keepdim=True)) * data['q_rstd'][region].to(dtype)[:, None]
                 dk = (dk - k * (dk * k).sum(-1, keepdim=True)) * data['k_rstd'][region].to(dtype)[:, None]

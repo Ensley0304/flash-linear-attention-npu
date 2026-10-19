@@ -53,7 +53,7 @@ scratch共56KiB。S5采用16行tile：三路FP32输入各两槽共48KiB，8KiB�
 
 UB峰值188KiB，平台上限191.75KiB；剩余连续空间3.75KiB。第一版使用显式本地buffer，不引入未计入的高阶Vector临时空间。
 
-L1地址以KiB表示：akk[0/1]=0/8、dW=16、kE=32、Zb=48、Tza=56、h=64、dh=96、v_new=128、dv_scan=144、v=160。局部矩阵带槽位于176和304，各128KiB：Aq16、Ak16、kNeg32、qPos32、betaKPos32。两个akk代际最多16KiB，其余早段驻留仅一份；下一work仅在这些区域旧消费者结束后进入。L1峰值432KiB，剩余连续79.75KiB。
+L1地址以KiB表示：akk[0/1]=0/8、dW=16、kE=32、Zb=48、Tza=56、h=64、dh=96、v_new=128、dv_scan=144、v=160。局部Aq/Ak共享区位于176/192，各16KiB；两个带操作数槽位于208和304，各96KiB：kNeg32、qPos32、betaKPos32。Aq/Ak从GM仅搬入一次并保留到两个带全部消费。两个akk代际最多16KiB，其余早段驻留仅一份；下一work仅在这些区域旧消费者结束后进入。L1峰值400KiB，剩余连续111.75KiB。
 
 L0A/L0B各两槽，每槽32KiB；L0C两槽，每槽32KiB。分别不超过64/64/128KiB。无自定义FixBuf分配，按平台返回2KiB限制使用普通Fixpipe。使用CATLASS `TileMmad<Arch::AtlasA2,...>`及对应Copy组件；地址、双buffer和事件由本算子显式管理。FP32转置路径按layout选择LoadData与kDirectionAlign，不沿用BF16的分形宽度。
 
@@ -118,14 +118,14 @@ z = exp(-abs(x*ea)); gate_factor = lower_bound*ea*z/(1+z)^2
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
 | q/k/gk/e/gate_factor/x | UB | 0/8/16/32/96/112KiB | 每片32行；e至S5，gk至S7，其余至S9；下一work不能覆盖 |
-| beta/rstd/diag/g_last/rH | UB | 小量区128KiB内 | FP32；rH由chunk末行owner计算（validRows>32为AIV1，否则AIV0），按16个K行分块搬h/dh；其他小量两片按有效范围读取 |
+| beta/rstd/g_last/rH | UB | 小量区128KiB内 | FP32；rH由chunk末行owner计算（validRows>32为AIV1，否则AIV0），按16个K行分块搬h/dh；diag留到S7读取dAqk时提取，避免重复搬矩阵 |
 | kE | GM | relay+80KiB | 64×128 BF16，两片各写32行；S2读后释放 |
 
 **其它 Stage 提供、当前 Stage 读取或需保护**
 
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
-| 原始输入 | GM | API指针+任务地址 | q/k/gk/raw_g/beta/rstd/dAqk对角线等；当前Vector路径只搬一次常驻范围 |
+| 原始输入 | GM | API指针+任务地址 | q/k/gk/raw_g/beta/rstd等；当前Vector路径只搬一次常驻范围 |
 
 **本 Stage 临时/固定**
 
@@ -239,7 +239,7 @@ state_sum = sum_rows(k*state)
 
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
-| q/k/gk/e、beta/diag/g_last、gate/x | UB | 固定区 | e最后消费，其他固定数据继续保护；state指数非正 |
+| q/k/gk/e、beta/g_last、gate/x | UB | 固定区 | e最后消费，其他固定数据继续保护；state指数非正 |
 | dk_state_raw、dKgb_raw、dq_raw | GM | relay+0/96KiB及API地址 | 16行tile，三路双buffer；两代relay地址独立 |
 
 **本 Stage 临时/固定**
@@ -293,6 +293,7 @@ for b in [1,0]:
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
 | center | UB | 小量区center | 本片所属带128个FP32，S9消费；另一带中心只用scratch |
+| diag(dAqk) | UB | 小量区diag | 从本Stage首次读取的dAqk提取32个对角元，保留到S9 |
 | Aq、Ak | GM | relay+64/160KiB | 两个64×64 FP32，分别覆盖已消费Zv和raw；每片仅覆盖自己的32行 |
 | kNeg/qPos/betaKPos | GM | relay+208KiB+(1-b)×96KiB+0/32/64KiB | 每带三份64×128 FP32，两片各准备32行；不同带使用不同物理槽 |
 
@@ -329,7 +330,7 @@ right = Aq[:,band].T @ qPos + Ak[:,band].T @ betaKPos
 
 | 对象 | 存储位置 | 分配地址 | 功能 |
 | --- | --- | --- | --- |
-| Aq/Ak/kNeg/qPos/betaKPos | L1 | 176或304KiB带槽 | FP32共128KiB，两片写完后搬入；kNeg复用两次、Aq/Ak各复用两次，最后MMAD读取后释放 |
+| Aq/Ak/kNeg/qPos/betaKPos | L1 | Aq/Ak共享176/192KiB；带槽208或304KiB | FP32共享32KiB+每带96KiB；Aq/Ak仅搬一次，保护至前带结束；每带kNeg复用两次，最后MMAD读取后释放 |
 
 **本 Stage 临时/固定**
 
@@ -429,6 +430,8 @@ user_workspace_size = AlignUp(metadata_bytes+relay_bytes+partial_bytes,64)
 ## 6. 跨 Stage 同步契约
 
 模式2用于一个AIC与两个AIV的聚合/广播。每次AIC发布由两片各消费一次；每次AIV发布由两片各贡献一次，AIC等待聚合。模式1仅用于同组两片的suffix记录。不同模式使用独立flag ID，不混用未消费代际。
+
+直调host通过 `rtGetC2cCtrlAddr` 取得同步地址，kernel入口调用 `SetSyncBaseAddr`；依据固定CATLASS示例03及kernel_adapter。只声明MIX任务类型不能替代同步地址初始化。
 
 | 事件ID/资源 | 第一次语义 | 复用语义 | 被保护的数据 |
 | --- | --- | --- | --- |
