@@ -1,5 +1,7 @@
 # A2/A3 Finalize Stage 划分
 
+2026-10-17 协作实验：Stage9 两 AIV 各处理同一 head 的半带，先 head0 后 head1；Stage7 经 GM 交接原 FP32 指数，Stage11 保留原归属。八配置两轮 A/B 耗时增加9.47%～16.15%，不采用，代码已恢复 tile16。候选及证据在工作区 `validation/perf-coop-20261017`，不改变下述已验收设计。
+
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
 
 本轮实现范围：Stage 0～12 的 A2 独立开发验证入口，公开接口尚未接入；接口见 [api.md](api.md)，验证记录见 [validation.md](validation.md)。
@@ -372,3 +374,7 @@ head 0 在 Stage 11 结束前也消费 BAND_LOADED，保留整对 workspace 的�
 16行逐元素运算及搬运合批，逆向扫描仍先处理高8行、再处理低8行；dA_log/ddt_bias按同样的两组8行顺序累加，FP32运算和残差精度策略不变。输入/输出双buffer、原跨核通知和最后释放闭环保留，GM地址仍用64位。
 
 末带dG驻留、Stage10 bkPos预取及全分支gate预计算实验均未保留。实测与精度见validation.md及工作区validation/perf-next-20261017。
+
+## 局部流水候选复核（2026-10-17，均未采用）
+
+依次测试最终dq私有写回裁剪、Stage7高低位合并搬运、第三BF16输出槽、Stage8搬32行、Stage10搬32列、整条band零区裁剪，并复核三个仅无norm版本。九版均未通过八配置双轮性能门禁，不改变当前双buffer、数据布局及计算路径。边界七输出逐位一致，但没有候选进入原20case正式精度验收。完整证据见工作区validation/perf-local-20261017/README.md。
