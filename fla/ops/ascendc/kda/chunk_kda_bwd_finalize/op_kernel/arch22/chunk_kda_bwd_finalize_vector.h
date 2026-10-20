@@ -655,17 +655,22 @@ public:
                 AscendC::Muls(value, value, matrix == 0 ? 65536.0f : -65536.0f, ROWS * CHUNK_SIZE);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
                 AscendC::PipeBarrier<PIPE_V>();
-                if (matrix == 0) {
-                    // Preserve the FP32 operand for dq before residual packing.
+                {
+                    // Preserve both FP32 lower matrices for Stage 10.
                     const uint32_t fp32Slot = tile & 1;
                     auto fp32Output = ub_[(178 + fp32Slot * 4) * 1024].ReinterpretCast<float>();
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[fp32Slot]);
                     AscendC::Adds(fp32Output, value, 0.0f, ROWS * CHUNK_SIZE);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
-                    AscendC::DataCopy(out[WS_DAQK_FP32 + first * CHUNK_SIZE * 4], fp32Output.ReinterpretCast<uint8_t>(),
+                    const uint32_t fp32Dst = matrix == 0 ? WS_DAQK_FP32 : WS_DAKK_FP32;
+                    AscendC::DataCopy(out[fp32Dst + first * CHUNK_SIZE * 4], fp32Output.ReinterpretCast<uint8_t>(),
                                       ROWS * CHUNK_SIZE * 4);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[fp32Slot]);
+                }
+                if constexpr (!CAPTURE) {
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
+                    continue;
                 }
                 AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, ROWS * CHUNK_SIZE);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -786,7 +791,7 @@ public:
                         }
                         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
                         AscendC::PipeBarrier<PIPE_V>();
-                        if (matrix == 0) {
+                        {
                             auto fp32Output = ub_[(88 + slot * 8) * 1024].ReinterpretCast<float>();
                             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
                             if (active == 0) {
@@ -796,9 +801,14 @@ public:
                             }
                             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
-                            AscendC::DataCopy(out[WS_KNEG_FP32 + first * HEAD_DIM * 4],
+                            const uint32_t fp32Dst = matrix == 0 ? WS_KNEG_FP32 : dst;
+                            AscendC::DataCopy(out[fp32Dst + first * HEAD_DIM * 4],
                                               fp32Output.ReinterpretCast<uint8_t>(), ELEMENTS * 4);
                             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                        }
+                        if constexpr (!CAPTURE) {
+                            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
+                            continue;
                         }
                         if (active == 0) {
                             // Both BF16 planes are zero; no residual decomposition is needed.
@@ -815,8 +825,10 @@ public:
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                         for (uint32_t part = 0; part < 2; ++part) {
-                            AscendC::DataCopy(out[dst + part * 16384 + first * HEAD_DIM * 2],
-                                              output[part * ELEMENTS].ReinterpretCast<uint8_t>(), ELEMENTS * 2);
+                            if (matrix == 0) {
+                                AscendC::DataCopy(out[dst + part * 16384 + first * HEAD_DIM * 2],
+                                                  output[part * ELEMENTS].ReinterpretCast<uint8_t>(), ELEMENTS * 2);
+                            }
                             if constexpr (CAPTURE) {
                                 AscendC::DataCopy(
                                     snapshot[saved + matrix * 32768 + part * 16384 + first * HEAD_DIM * 2],

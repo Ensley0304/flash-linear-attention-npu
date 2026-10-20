@@ -1,0 +1,700 @@
+{
+  "library": "/data/wys/kda-finalize-a2-hybrid-20261020/h2.so",
+  "library_sha256": "ee9432d230d2b0e4d7715ad4ad0fe4ae452f4b6419acf34139f50c785cb25b8f",
+  "reference_sha256": "1a5e5d498ce1cc5474f628c4279d871e305a3b9cb4b31b2bcba48e7109f6c706",
+  "cases": [
+    {
+      "case_id": 0,
+      "seed": 20261013,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9998376886869015,
+            "mean_re_ratio": 0.9998376886869015,
+            "rmse_ratio": 0.751953125,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.17176288292540237,
+            "mean_re_ratio": 0.005077373987085034,
+            "rmse_ratio": 3.717779993292312e-05,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0010346001902366048,
+            "mean_re_ratio": 0.0010346001902366048,
+            "rmse_ratio": 0.000244140625,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.17176288292540237,
+            "mean_re_ratio": 0.005077373987085034,
+            "rmse_ratio": 3.717779993292312e-05,
+            "small_err_ratio": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 2,
+      "seed": 20261015,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.2541121717832414,
+            "rmse_ratio": 0.020915692021467702,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9988742601338575,
+            "mean_re_ratio": 0.999798554744426,
+            "rmse_ratio": 1.0000379440313114,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9998678462140507,
+            "mean_re_ratio": 1.000043389590981,
+            "rmse_ratio": 0.01380053145501859,
+            "small_err_ratio": 0.9985063480209111
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0017183574743882,
+            "mean_re_ratio": 1.0015234247070959,
+            "rmse_ratio": 0.6900763590167088,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9998915382920671,
+            "mean_re_ratio": 0.9999024703133426,
+            "rmse_ratio": 0.15144541130397843,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 3,
+      "seed": 20261016,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.00011626554921505496,
+            "rmse_ratio": 0.0019774619778057303,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.6069606740419516,
+            "rmse_ratio": 0.10940116127683656,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0002524882669395,
+            "mean_re_ratio": 1.0009871870843625,
+            "rmse_ratio": 1.0008565190882701,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.999897972370918,
+            "mean_re_ratio": 0.9998815863530057,
+            "rmse_ratio": 0.003178826714592315,
+            "small_err_ratio": 1.0006856359273226
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0053567080594106,
+            "mean_re_ratio": 0.9923965560458685,
+            "rmse_ratio": 0.13092347215137276,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0006563605530199,
+            "mean_re_ratio": 0.9998029376818597,
+            "rmse_ratio": 0.07592724141369593,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 4,
+      "seed": 20261017,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 5.12404184420671e-05,
+            "rmse_ratio": 5.403502192142598e-05,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.1966501343834777,
+            "rmse_ratio": 0.06206745732838385,
+            "small_err_ratio": 0.9937106918238994
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9194915254237288,
+            "mean_re_ratio": 4.205581990120825e-05,
+            "rmse_ratio": 0.000778321601382447,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0000669474288995,
+            "mean_re_ratio": 1.0000095968595697,
+            "rmse_ratio": 0.9999342935077002,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.999722457339989,
+            "mean_re_ratio": 1.002138320646095,
+            "rmse_ratio": 0.02810159454756331,
+            "small_err_ratio": 1.0646609042553192
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0002908667830135,
+            "mean_re_ratio": 0.9975213479367563,
+            "rmse_ratio": 0.9985755360364184,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9980524352215254,
+            "mean_re_ratio": 0.9996338833891224,
+            "rmse_ratio": 0.12824953275386097,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 5,
+      "seed": 20261018,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.24680292277336427,
+            "rmse_ratio": 0.014602136830484877,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 1.0849827119024214e-05,
+            "rmse_ratio": 0.00018601355242325908,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0001949700342372,
+            "mean_re_ratio": 0.9998398703590412,
+            "rmse_ratio": 0.961777209489708,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9994385258223787,
+            "mean_re_ratio": 1.0002416558726963,
+            "rmse_ratio": 0.015531826650590063,
+            "small_err_ratio": 0.9989560714882245
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9969568263420614,
+            "mean_re_ratio": 1.0004668782969528,
+            "rmse_ratio": 0.976895445281789,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.00924188396269,
+            "mean_re_ratio": 1.000067542706875,
+            "rmse_ratio": 0.17130910625602605,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 6,
+      "seed": 20261019,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.3466477039775654,
+            "rmse_ratio": 0.02300117957414302,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0009209501775547,
+            "mean_re_ratio": 1.0003011117973624,
+            "rmse_ratio": 0.9999779082635063,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.999971819800433,
+            "mean_re_ratio": 1.000118164685871,
+            "rmse_ratio": 0.015163030578374983,
+            "small_err_ratio": 0.9997649823736781
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.019845008213523,
+            "mean_re_ratio": 1.0148658503128132,
+            "rmse_ratio": 1.002637900227249,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0169040199744257,
+            "mean_re_ratio": 1.002951781427013,
+            "rmse_ratio": 0.21698709644380787,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 7,
+      "seed": 20261020,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.7323782256143456,
+            "rmse_ratio": 0.11897742998047113,
+            "small_err_ratio": 1.0015588464536243
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0007090352442534,
+            "mean_re_ratio": 1.0007492014324466,
+            "rmse_ratio": 1.0003685534034945,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0003261750192023,
+            "mean_re_ratio": 1.0000386114384237,
+            "rmse_ratio": 0.004401745964303173,
+            "small_err_ratio": 1.00049687677456
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9991240145163308,
+            "mean_re_ratio": 0.9998646835704396,
+            "rmse_ratio": 0.9993542276568583,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0002941633203948,
+            "mean_re_ratio": 1.0002731481945608,
+            "rmse_ratio": 0.39609104233277886,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 23,
+      "seed": 20261036,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 3.2920998669130644e-05,
+            "rmse_ratio": 0.00010358390320211538,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.7400447145948169,
+            "rmse_ratio": 0.11980421838153292,
+            "small_err_ratio": 1.0007751937984497
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 2.9454075745991916e-05,
+            "rmse_ratio": 0.00011057718664583244,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.998988105210253,
+            "mean_re_ratio": 0.9994324981851263,
+            "rmse_ratio": 1.0018239201132553,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9996069714530266,
+            "mean_re_ratio": 0.9999513361030358,
+            "rmse_ratio": 0.004995713327879979,
+            "small_err_ratio": 1.0001358695652174
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9517862626676222,
+            "mean_re_ratio": 0.9614299723041696,
+            "rmse_ratio": 0.3121413482478712,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0154784316985077,
+            "mean_re_ratio": 1.0068364203940652,
+            "rmse_ratio": 0.4544385097922885,
+            "small_err_ratio": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": 103,
+      "seed": 20261116,
+      "passed": true,
+      "outputs": [
+        {
+          "name": "dq",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9162011173184358,
+            "mean_re_ratio": 1.955971987424934e-05,
+            "rmse_ratio": 0.0002311361449518746,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "dk",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0,
+            "mean_re_ratio": 0.7470598082884948,
+            "rmse_ratio": 0.12107970708097432,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dv",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.0,
+            "mean_re_ratio": 0.0,
+            "rmse_ratio": 0.0,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "db",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0003758380748633,
+            "mean_re_ratio": 0.9998567669294247,
+            "rmse_ratio": 0.9999786061488244,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "dg",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0007171212703292,
+            "mean_re_ratio": 0.9999982003934282,
+            "rmse_ratio": 0.005019879107490737,
+            "small_err_ratio": 1.0
+          }
+        },
+        {
+          "name": "da_log",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 1.0006054687500001,
+            "mean_re_ratio": 1.0003922095535123,
+            "rmse_ratio": 0.7548403158908755,
+            "small_err_ratio": 0.0
+          }
+        },
+        {
+          "name": "ddt_bias",
+          "passed": true,
+          "ratios": {
+            "max_re_ratio": 0.9951533536439198,
+            "mean_re_ratio": 0.9997189209832191,
+            "rmse_ratio": 0.38124720814280594,
+            "small_err_ratio": 0.0
+          }
+        }
+      ]
+    }
+  ]
+}
