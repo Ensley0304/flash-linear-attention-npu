@@ -103,3 +103,15 @@ H3的20case门禁通过后才启动H4。对照库使用已验收H3，不能仅�
 仅完整finalize且`lowerBound∈[-5,0)`时启用，其余保持直接计算正指数。合法safe-gate累计量在32行带内跨度不超过155（自然对数单位），居中后绝对值不超过77.5；正负指数都在FP32正规数范围内。此证明依赖gk符合前向累计gate契约，不能推广到任意不一致的gk输入。
 
 新增存储为零，复用[160,176) KiB的band exponent，先负后正。舍入会变化，必须重新跑原精度门禁，不能用公式等价代替验证。只有H4精度通过后才开始此实验。
+
+## H6候选：等待Stage 7期间提前算下一work的dW/zV
+
+仅完整生产路径启用。当前循环为work i，后段处理i-1；下一项i+1的h/v/dv_scan已由原预取放在L1。发出i-1的S6_READY后，先算i+1的dW、zV，再进入i-1的Stage 8。i+1正式进入Stage 0时只算dk_state_raw、dv_b。
+
+- dW：使用原L1 [8,24) KiB。work i的Stage 2已消费旧dW，直到i+1的Stage 2前没有其它写者。
+- zV：使用i+1 bank的GM [64,80) KiB，它与i-1同bank。i-1的VECTOR_ACK已证明Stage 3读完旧zV；H3以后生产Stage 7不再向此区写BF16 lower。因此可单独提前复用这一子区。
+- dq/dk/dG及其它仍活跃的bank区域不提前复用；不增加workspace代数，不放宽原S5_DONE/WORK_OPEN信用限制。
+- 复用现有inputReady确认未来state预取完成；dW仍由dwReady交给未来Stage 2。L0操作数/结果双槽按原ready/free事件复用。未来state的l1Free必须留到未来Stage 0完成剩余两项读取后才归还。
+- 前两次循环和最后排空不提前消费不存在的产品；下一work的奇数head按原有效head判断。capture及短前缀保持原路径。
+
+此项只完成离线草案，尚未上板。需要重点验证单核多work回绕、奇数head、变长尾块，再与最新验收库交替A/B；收益稳定后仍须原20case七输出。草案在工作区`validation/hybrid-20261020/h6-*-draft.*`。
