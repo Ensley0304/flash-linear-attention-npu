@@ -763,10 +763,15 @@ public:
         auto gateProduct = ub_[132 * 1024].ReinterpretCast<float>();
         auto rowSums = ub_[148 * 1024].ReinterpretCast<float>();
         Mul(gateProduct, dg, ub_[112 * 1024].ReinterpretCast<float>(), 32 * 128);
-        for (uint32_t row = 0; row < 32; ++row) {
-            Add(partial[8], partial[8], dg[row * 128], 128);
+        // e is retired here; preserve dg for writeback while reducing 32 rows.
+        auto biasSum = ub_[32 * 1024].ReinterpretCast<float>();
+        Add(biasSum, dg, dg[2048], 2048);
+        PipeBarrier<PIPE_V>();
+        for (uint32_t count = 1024; count >= 256; count /= 2) {
+            Add(biasSum, biasSum, biasSum[count], count);
             PipeBarrier<PIPE_V>();
         }
+        Add(partial[8], biasSum, biasSum[128], 128);
         WholeReduceSum(rowSums, gateProduct, 64, 64, 1, 1, 8);
         PipeBarrier<PIPE_V>();
         WholeReduceSum(partial, rowSums, 64, 1, 1, 1, 8);

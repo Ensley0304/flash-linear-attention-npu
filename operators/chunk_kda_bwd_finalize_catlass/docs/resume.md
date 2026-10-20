@@ -1,3 +1,19 @@
+# 当前检查点：P5c已验收
+
+P5c参数梯度树形归约已验收：三组各六个冒烟（各20次）、原20case七输出均通过。八配置两轮提速2.21%～2.81%，目标8K 14035.321→13640.507us。仅改变dt_bias局部归约结合顺序，FP32标杆、FP64 golden和精度阈值不变。第二轮一条已验收基线报ACL507033，无profiling数据；原进程退出后仅补采缺失项成功，失败记录保留、原因未确定。证据见evidence/p5c-*。
+
+基线run-r2/bin/finalize-p5c，hash0126dd2a731decc4dea01cf1f56bd2bef39d9a4fc093b48c397ca082ae740d60。下一项P6 rH转Cube见rh-cube-design.md，尚未实施。目标及最终全量验收未完成。
+
+以下为历史。
+
+P5c更新：补采结束，32条完整A/B性能门禁通过，八配置提速2.21%～2.81%；目标8K 14035.321→13640.507us。原20case七输出正在运行PID1718193，恢复shell1626468，日志reports/p5c-resume.log，报告p5c-precision20/report.json。未提交；先等全部精度通过。所有性能及三组smoke报告已下载validation/workflow-review-20261019/p5c-*。失败基线ACL507033原日志保留，重采成功但原因未确定。
+
+P5c恢复记录：第二轮r1-t8192-n1-b1-A基线进程报ACL507033、无profiling数据，原driver/profile已退出；失败日志保留，原因未确定。已确认设备空闲后用resume_p5c.sh --resume仅补缺失项，shell PID1626468、profile PID1626539；日志reports/p5c-resume.log。失败基线已成功重采，当前进入第二轮16K，完整32条后自动gate_and_check20。候选未提交，不重启整个driver（避免覆盖报告）。
+
+P5c进度：full-chunk-smoke、普通smoke、单核smoke各六例20次均通过。八配置两轮A/B进行中，profile PID1440869、driver1415213；候选hash0126dd2a731decc4dea01cf1f56bd2bef39d9a4fc093b48c397ca082ae740d60。首轮已到16K，门禁后自动原20case七输出；不能提前保留。下一候选rh-cube-design.md仅设计，未改代码。
+
+当前P5c试验：在65d22659已验收P5e基线上，仅把S9 dt_bias的32次串行Add改为五层树形Add，scratch复用UB32KiB的8KiB，不覆盖dg。已上传stage1.h并启动run_p5e.py p5c finalize-p5e --single-core-smoke --device 4，驱动PID1415213，日志run-r2/reports/p5c-driver.log。构建和full-chunk-smoke六例20次已通过；普通/单核、八配置两轮A/B、门禁后原20case仍需完成。未提交。P5e已提交推送65d22659，远端bin/finalize-p5e可回退。
+
 # 当前检查点：P5e已验收
 
 P5e完整64行chunk模板路径已验收：新增完整块/混合尾块定向六例、普通六例、单核六例（各20次）与原20case七输出全部通过。八配置两轮A/B各配置提速0.76%～1.46%，8K无附加反向14112.276→14004.816us。按实际metadata路由，原FP32运算次序和精度阈值不变；证据见evidence/p5e-*。
