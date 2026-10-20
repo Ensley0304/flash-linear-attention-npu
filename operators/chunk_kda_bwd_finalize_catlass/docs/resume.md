@@ -1,3 +1,15 @@
+# 当前检查点：P5d已验收
+
+P5d rH两片各64行已验收：S1七个边界中间量、普通及单核多work各六个冒烟（每例20次）、原20case七输出均通过。设备4八配置两轮交替A/B平均降时3.41%，单轮最小1.84%；8K无附加反向15361.780→14753.984us。每行FP32归约次序不变，workspace总量不变；原FP32标杆、CT和附加精度策略不变。证据见evidence/p5d-*。
+
+基线bin/finalize-p5d，hash=34131cf653bd9e208cd50b1ee2d606e5d0d4a2a7275c4477b6c9dd96fb5243fe。下一项P5f扩大S9 tile，见s9-tile-design.md，尚未实施。服务器设备4此前空闲，启动前仍需复查。最终目标9.604ms、200case三seed及工作流完整验收均未完成。
+
+以下为历史检查点，以以上为准。
+
+2026-10-20设备4恢复空闲，已启动run_p5d.py。S1七个边界case、六个普通冒烟及六个单核冒烟（各20次）均通过，报告已下载validation。候选hash34131cf653bd9e208cd50b1ee2d606e5d0d4a2a7275c4477b6c9dd96fb5243fe；正在p5d-eight八配置两轮A/B，驱动PID430407，profile PID452914。门禁通过后自动原20case；未提交。当前状态以此为准。
+
+P5b已提交c123f8af。当前P5d候选（rH双AIV分担）已修改stage1.h并上传，build-r1的finalize_stage0和finalize都构建通过，日志reports/p5d-build.log；尚未复制到bin/finalize，也未设备验证。所有卡存在其他ATK PID2163022/2163023，未启动设备工作。恢复后先检查空闲卡，跑新build-r1/finalize_stage0的check_stage0.py --prefix 1（device按实际空闲卡），再run_candidate.py p5d finalize-p5b --single-core-smoke --device D，按八配置/20case门禁。不要使用DATA下旧kernel构建结果。S1测试用DATA/source-r1的原check_stage0.py和固定reference，适用新snapshot布局。
+
 # 当前检查点：P5b已验收
 
 P5b S7采用16行tile已验收：六个冒烟每例20次及原20case七输出全部通过；设备4八配置两轮交替A/B平均降时1.03%，单轮最小0.35%；8K无附加反向15557.913→15469.834us。复用e区，输出双buffer，UB总量188KiB不变；原FP32标杆和精度阈值不变。证据见evidence/p5b-*。

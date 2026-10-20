@@ -478,3 +478,6 @@ P5已验收：S7每个8行tile只计算有效前缀。kn限于band末行之前�
 
 
 P5b已验收：S7采用16行tile；复用结束生命周期的e区32～48KiB存kf/delta，输出双槽132～180KiB，center/edge180～181KiB。S9入口先排空两个MTE3槽再复用scratch。具体地址和同步见p5b-design.md，已通过性能及原20case验收。
+
+
+P5d已验收：S1两片各计算64行rH，分别写relay153KiB起的256B；S9末行owner从152KiB连续读取384个FP32。沿用S3→S6就绪依赖和S9跨片完成协议，workspace不增加。具体依赖及S1观察点见rh-split-design.md，已通过性能及原20case验收。

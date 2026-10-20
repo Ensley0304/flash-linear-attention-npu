@@ -85,7 +85,6 @@ public:
         const uint32_t sub = GetSubBlockIdx();
         const uint32_t first = sub * 32;
         const uint32_t active = rows > first ? (rows - first < 32 ? rows - first : 32) : 0;
-        const uint32_t lastOwner = rows > 32 ? 1 : 0;
         auto q = ub_.ReinterpretCast<bfloat16_t>();
         auto k = ub_[8 * 1024].ReinterpretCast<bfloat16_t>();
         auto g = ub_[16 * 1024].ReinterpretCast<float>();
@@ -211,23 +210,22 @@ public:
         SetFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
         WaitFlag<HardEvent::V_MTE2>(vectorPhaseFree_);
         WaitFlag<HardEvent::MTE3_MTE2>(phaseFree_);
-        if (sub == lastOwner) {
-            StateRows(rh);
-        }
+        StateRows(rh, sub * 64);
         for (uint32_t slot = 0; slot < 2; ++slot) {
             WaitFlag<HardEvent::MTE3_V>(outputFree_[slot]);
         }
+        GlobalTensor<float> sharedRh;
+        sharedRh.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(relay + 153 * 1024));
+        SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
+        DataCopy(sharedRh[sub * 64], rh, 64);
         if (snapshot != nullptr) {
             GlobalTensor<float> capture;
             capture.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(snapshot));
-            SetFlag<HardEvent::V_MTE3>(outputReady_[0]);
-            WaitFlag<HardEvent::V_MTE3>(outputReady_[0]);
             DataCopy(capture[first * 128], e, 32 * 128);
             DataCopy(capture[8448 + first * 128], factor, 32 * 128);
             DataCopy(capture[16640 + first * 128], x, 32 * 128);
-            if (sub == lastOwner) {
-                DataCopy(capture[8192], rh, 128);
-            }
+            DataCopy(capture[8192 + sub * 64], rh, 64);
             if (sub == 0) {
                 DataCopy(capture[8320], gLast, 128);
             }
@@ -641,7 +639,7 @@ public:
         // Apply the state correction before the local terms, matching CPU association.
         if (sub == (rows > 32 ? 1U : 0U)) {
             WaitFlag<HardEvent::V_MTE2>(inputFree_[0]);
-            DataCopy(qf, source[152 * 1024 / 4], 256);
+            DataCopy(qf, source[152 * 1024 / 4], 384);
             SetFlag<HardEvent::MTE2_V>(inputReady_[0]);
             WaitFlag<HardEvent::MTE2_V>(inputReady_[0]);
             Add(kf, qf, qf[128], 128);
@@ -649,7 +647,7 @@ public:
             PipeBarrier<PIPE_V>();
             Exp(factor, factor, 128);
             PipeBarrier<PIPE_V>();
-            Mul(factor, factor, small[160], 128);
+            Mul(factor, factor, qf[256], 128);
             PipeBarrier<PIPE_V>();
             Add(kf, kf, factor, 128);
             PipeBarrier<PIPE_V>();
@@ -929,7 +927,7 @@ private:
         }
     }
 
-    __aicore__ inline void StateRows(LocalTensor<float> result)
+    __aicore__ inline void StateRows(LocalTensor<float> result, uint32_t first)
     {
         constexpr uint32_t ELEMENTS = 16 * 128;
         auto hf = ub_[148 * 1024].ReinterpretCast<float>();
@@ -939,21 +937,21 @@ private:
         for (uint32_t slot = 0; slot < 2; ++slot) {
             auto input = ub_[132 * 1024 + slot * 8192].ReinterpretCast<bfloat16_t>();
             WaitFlag<HardEvent::V_MTE2>(inputFree_[slot]);
-            DataCopy(input, h_[slot * ELEMENTS], ELEMENTS);
-            DataCopy(input[ELEMENTS], dh_[slot * ELEMENTS], ELEMENTS);
+            DataCopy(input, h_[uint64_t(first) * 128 + slot * ELEMENTS], ELEMENTS);
+            DataCopy(input[ELEMENTS], dh_[uint64_t(first) * 128 + slot * ELEMENTS], ELEMENTS);
             SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
         }
-        for (uint32_t tile = 0; tile < 8; ++tile) {
+        for (uint32_t tile = 0; tile < 4; ++tile) {
             const uint32_t slot = tile & 1;
             auto input = ub_[132 * 1024 + slot * 8192].ReinterpretCast<bfloat16_t>();
             WaitFlag<HardEvent::MTE2_V>(inputReady_[slot]);
             Cast(hf, input, RoundMode::CAST_NONE, ELEMENTS);
             Cast(df, input[ELEMENTS], RoundMode::CAST_NONE, ELEMENTS);
             SetFlag<HardEvent::V_MTE2>(inputFree_[slot]);
-            if (tile + 2 < 8) {
+            if (tile + 2 < 4) {
                 WaitFlag<HardEvent::V_MTE2>(inputFree_[slot]);
-                DataCopy(input, h_[(tile + 2) * ELEMENTS], ELEMENTS);
-                DataCopy(input[ELEMENTS], dh_[(tile + 2) * ELEMENTS], ELEMENTS);
+                DataCopy(input, h_[uint64_t(first) * 128 + (tile + 2) * ELEMENTS], ELEMENTS);
+                DataCopy(input[ELEMENTS], dh_[uint64_t(first) * 128 + (tile + 2) * ELEMENTS], ELEMENTS);
                 SetFlag<HardEvent::MTE2_V>(inputReady_[slot]);
             }
             PipeBarrier<PIPE_V>();
