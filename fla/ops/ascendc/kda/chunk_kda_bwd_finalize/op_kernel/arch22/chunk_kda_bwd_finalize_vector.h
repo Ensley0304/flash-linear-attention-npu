@@ -593,8 +593,6 @@ public:
         auto center = ub_[82 * 1024 + 768].ReinterpretCast<float>();
         auto value = ub_[104 * 1024].ReinterpretCast<float>();
         auto rebuilt = ub_[112 * 1024].ReinterpretCast<float>();
-        auto operand = ub_[136 * 1024].ReinterpretCast<float>();
-        auto exponent = ub_[144 * 1024].ReinterpretCast<float>();
         auto bandExp = ub_[160 * 1024].ReinterpretCast<float>();
         auto broadcast = ub_[176 * 1024].ReinterpretCast<float>();
         auto indices = ub_[84 * 1024 + 768].ReinterpretCast<int32_t>();
@@ -713,6 +711,8 @@ public:
         if constexpr (FINALIZE_K) {
             BeginStage11<Q_NORM>(head, token, rows);
         }
+        constexpr uint32_t BAND_ROWS = CAPTURE ? 16 : 32;
+        constexpr uint32_t BAND_ELEMENTS = BAND_ROWS * HEAD_DIM;
         for (int32_t start = ((rows - 1) / 32) * 32; start >= 0; start -= 32) {
             const uint32_t end = (static_cast<uint32_t>(start + 32) < rows ? start + 32 : rows);
             const uint32_t saved = CAPTURE_BANDS + (start / 32) * CAPTURE_BAND_BYTES;
@@ -722,8 +722,8 @@ public:
             AscendC::Duplicate(bandExp, 0.0f, 32 * HEAD_DIM);
             // qPos and bkPos use the same positive exponent in each tile.
             for (uint32_t phase = 0; phase < (CONSUME_BANDS ? 2 : 1); ++phase) {
-                for (uint32_t tile = 0; tile < 4; ++tile) {
-                    const uint32_t first = tile * ROWS;
+                for (uint32_t tile = 0; tile < CHUNK_SIZE / BAND_ROWS; ++tile) {
+                    const uint32_t first = tile * BAND_ROWS;
                     for (uint32_t matrix = CONSUME_BANDS && phase == 1 ? 1 : 0;
                          matrix < (CONSUME_BANDS && phase == 0 ? 1 : 3); ++matrix) {
                         const uint32_t dst = matrix == 0 ? WS_KNEG : (matrix == 1 ? WS_QPOS : WS_BKPOS);
@@ -731,12 +731,21 @@ public:
                         const uint32_t slot = CONSUME_BANDS && phase == 1 ? matrix - 1 : (3 * tile + matrix) & 1;
                         const uint32_t limit = matrix == 0 ? end : rows;
                         const uint32_t active = first < limit && (matrix == 0 || first >= start) ?
-                                                    (limit - first < ROWS ? limit - first : ROWS) :
+                                                    (limit - first < BAND_ROWS ? limit - first : BAND_ROWS) :
                                                     0;
                         auto output = ub_[120 * 1024 + slot * 8 * 1024].ReinterpretCast<bfloat16_t>();
+                        // Production stores FP32 directly from the double-buffered
+                        // output slot; it also holds the temporary exponent operand.
+                        auto value = ub_[(CAPTURE ? 104 : 88 + slot * 16) * 1024].ReinterpretCast<float>();
+                        auto operand = ub_[(CAPTURE ? 136 : 88 + slot * 16) * 1024].ReinterpretCast<float>();
+                        auto rebuilt = ub_[(CAPTURE ? 112 : 136) * 1024].ReinterpretCast<float>();
+                        auto exponent = ub_[(CAPTURE ? 144 : 120) * 1024].ReinterpretCast<float>();
+                        if constexpr (!CAPTURE) {
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                        }
                         if (active != 0) {
-                            if (active < ROWS) {
-                                AscendC::Duplicate(value, 0.0f, ELEMENTS);
+                            if (active < BAND_ROWS) {
+                                AscendC::Duplicate(value, 0.0f, BAND_ELEMENTS);
                             }
                             // Never evaluate Exp on masked rows or reconstruct gk from Stage
                             // 1's exponent.
@@ -792,18 +801,20 @@ public:
                         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
                         AscendC::PipeBarrier<PIPE_V>();
                         {
-                            auto fp32Output = ub_[(88 + slot * 8) * 1024].ReinterpretCast<float>();
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                            auto fp32Output = ub_[(88 + slot * (CAPTURE ? 8 : 16)) * 1024].ReinterpretCast<float>();
+                            if constexpr (CAPTURE) {
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
+                            }
                             if (active == 0) {
-                                AscendC::Duplicate(fp32Output, 0.0f, ELEMENTS);
-                            } else {
-                                AscendC::Adds(fp32Output, value, 0.0f, ELEMENTS);
+                                AscendC::Duplicate(fp32Output, 0.0f, BAND_ELEMENTS);
+                            } else if constexpr (CAPTURE) {
+                                AscendC::Adds(fp32Output, value, 0.0f, BAND_ELEMENTS);
                             }
                             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                             const uint32_t fp32Dst = matrix == 0 ? WS_KNEG_FP32 : dst;
                             AscendC::DataCopy(out[fp32Dst + first * HEAD_DIM * 4],
-                                              fp32Output.ReinterpretCast<uint8_t>(), ELEMENTS * 4);
+                                              fp32Output.ReinterpretCast<uint8_t>(), BAND_ELEMENTS * 4);
                             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(fp32Free[slot]);
                         }
                         if constexpr (!CAPTURE) {
@@ -812,27 +823,28 @@ public:
                         }
                         if (active == 0) {
                             // Both BF16 planes are zero; no residual decomposition is needed.
-                            AscendC::Duplicate(output.ReinterpretCast<float>(), 0.0f, ELEMENTS);
+                            AscendC::Duplicate(output.ReinterpretCast<float>(), 0.0f, BAND_ELEMENTS);
                         } else {
-                            AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, ELEMENTS);
+                            AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, BAND_ELEMENTS);
                             AscendC::PipeBarrier<PIPE_V>();
-                            AscendC::Cast(rebuilt, output, AscendC::RoundMode::CAST_NONE, ELEMENTS);
+                            AscendC::Cast(rebuilt, output, AscendC::RoundMode::CAST_NONE, BAND_ELEMENTS);
                             AscendC::PipeBarrier<PIPE_V>();
-                            AscendC::Sub(rebuilt, value, rebuilt, ELEMENTS);
+                            AscendC::Sub(rebuilt, value, rebuilt, BAND_ELEMENTS);
                             AscendC::PipeBarrier<PIPE_V>();
-                            AscendC::Cast(output[ELEMENTS], rebuilt, AscendC::RoundMode::CAST_RINT, ELEMENTS);
+                            AscendC::Cast(output[BAND_ELEMENTS], rebuilt, AscendC::RoundMode::CAST_RINT, BAND_ELEMENTS);
                         }
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
                         for (uint32_t part = 0; part < 2; ++part) {
                             if (matrix == 0) {
                                 AscendC::DataCopy(out[dst + part * 16384 + first * HEAD_DIM * 2],
-                                                  output[part * ELEMENTS].ReinterpretCast<uint8_t>(), ELEMENTS * 2);
+                                                  output[part * BAND_ELEMENTS].ReinterpretCast<uint8_t>(),
+                                                  BAND_ELEMENTS * 2);
                             }
                             if constexpr (CAPTURE) {
                                 AscendC::DataCopy(
                                     snapshot[saved + matrix * 32768 + part * 16384 + first * HEAD_DIM * 2],
-                                    output[part * ELEMENTS].ReinterpretCast<uint8_t>(), ELEMENTS * 2);
+                                    output[part * BAND_ELEMENTS].ReinterpretCast<uint8_t>(), BAND_ELEMENTS * 2);
                             }
                         }
                         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);

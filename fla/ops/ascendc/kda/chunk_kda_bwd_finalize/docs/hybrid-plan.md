@@ -86,4 +86,20 @@ Stage 7生产路径不再拆分所有后段BF16残差，FP32输出仍双槽。�
 
 目标case Vector忙碌时间约8.24→7.41 ms，占比69.3%→66.7%；加速来自减少计算和搬运，并未达到80%占比。尚未达到10 ms或70% A5目标；此版本尚未重跑完整200case三seed及公开入口验收。原始profiling在远端`/data/wys/kda-finalize-a2-hybrid-20261020/h3-*-prof`，摘要与精度报告见`hybrid-evidence/h3-*.json`。
 
-后续候选（H3通过后独立测试）：Stage 7的band按32行处理，lower仍按16行。生产路径FP32输出双槽放[88,120) KiB，exponent放[120,136)，power放[136,152)；输出槽在计算期间兼作临时operand，提交MTE3后由独立free事件保护。band exponent保留[160,176)，beta broadcast保留[176,178)，供Stage 9/11按原地址消费。这样无需新增UB，也无需额外一次value到输出槽拷贝。capture继续用原16行路径。
+## H4：Stage 7 band改32行并直接生成FP32输出（已保留）
+
+Stage 7的band按32行处理，lower仍按16行。生产路径FP32输出双槽放[88,120) KiB，exponent放[120,136)，power放[136,152)；输出槽在计算期间兼作临时operand，提交MTE3后由独立free事件保护。band exponent保留[160,176)，beta broadcast保留[176,178)，供Stage 9/11按原地址消费。这样无需新增UB，也无需额外一次value到输出槽拷贝。capture继续用原16行路径。
+
+H3的20case门禁通过后才启动H4。对照库使用已验收H3，不能仅与原12ms版本比较后就判定有增量收益。
+
+9个边界、原20case七输出全部通过。两轮八配置均改善1.90%～3.87%。目标case同轮H3为11.320 ms，H4为10.889 ms；四功能配置依次为8K：10.889/11.619/10.856/11.605 ms，16K：21.637/23.210/21.651/23.172 ms。统计口径与H3相同。
+
+动态库SHA256：`fe8ea5f8001da7e928bb18beb1282d548a1a5517a8f73e5df7e040a9c540b2b1`。性能与精度产物hash一致，证据见`hybrid-evidence/h4-*.json`。仍未达到10 ms，完整200case三seed及公开入口验收未重跑。
+
+## H5候选：同一带复用正负指数
+
+先保存本带有效行的`exp2(center-gk)`，qPos用FP32除法求其倒数，再把band exponent替换为正指数供Stage 9/11使用。kNeg的带外行不进入缓存；无效行不做除法。
+
+仅完整finalize且`lowerBound∈[-5,0)`时启用，其余保持直接计算正指数。合法safe-gate累计量在32行带内跨度不超过155（自然对数单位），居中后绝对值不超过77.5；正负指数都在FP32正规数范围内。此证明依赖gk符合前向累计gate契约，不能推广到任意不一致的gk输入。
+
+新增存储为零，复用[160,176) KiB的band exponent，先负后正。舍入会变化，必须重新跑原精度门禁，不能用公式等价代替验证。只有H4精度通过后才开始此实验。
