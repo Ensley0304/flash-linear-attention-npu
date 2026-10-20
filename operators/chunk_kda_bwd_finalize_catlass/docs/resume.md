@@ -1,3 +1,17 @@
+# 当前检查点：P5f已验收
+
+P5f S9采用16行tile已验收：普通及单核多work各六例20次、原20case七输出全部通过。设备4八配置两轮交替A/B平均降时5.07%，单轮最小3.60%；8K无附加反向14725.871→14164.177us。输入和输出均保留双buffer，缩放因子全部消费后复用g/e，原运算次序及精度阈值不变。证据见evidence/p5f-*。运行目录已迁至/data/wys/kda-finalize-a2-cannbot-20261019/run-r2；此前/tmp/wys消失，原因未知，已从c55a2fb7重建基线，hash与原验收完全一致且六例冒烟通过，所有本项性能重新采集。
+
+当前远端根目录/data/wys/kda-finalize-a2-cannbot-20261019/run-r2，基线bin/finalize-p5f，hash862e8c6177c64f194203a6981126a6db6d8546f5cedc816929c1dc2bf380fec8。下一项P5e完整64行chunk模板路径，见full-chunk-design.md；尚未实施。原DATA参考/输入仍在，旧/tmp已不存在。最终目标9.604ms及全量验收均未完成。
+
+以下为历史，以以上为准。
+
+run-r2恢复成功：重建P5d六例20次冒烟通过，hash与原验收34131cf...完全一致。P5f普通及单核六例20次冒烟均通过，报告已下载；正在run-r2/reports/p5f-eight采集，profile PID787382。恢复驱动765179、candidate驱动776620，日志recovery-driver.log。门禁通过后自动20case；未提交，不重复启动。
+
+重要恢复状态：2026-10-20 /tmp/wys整个目录在本轮操作期间消失，原因未知；此前P5f启动未发生。已迁移到/data/wys/kda-finalize-a2-cannbot-20261019/run-r2持久目录。source-baseline为git c55a2fb7导出的kernel/host/CMake；source-r1在此基础上替换P5f stage1.h。recover_p5f.py已nohup启动：配置两套Release/dav2201构建→重建P5d→六例20次基线冒烟→run_candidate.py p5f finalize-p5d --single-core-smoke --device 4。新日志run-r2/reports/recovery-driver.log和recovery-build.log；不要找旧/tmp进程，也不要重复启动。新run_candidate/profile/gate脚本根路径均为run-r2。原DATA输入/reference-cache和本地Git报告保留；旧/tmp的二进制及原始profiling不再可用，性能必须重采。P5f未提交。
+
+当前P5f候选已实现并上传：S9 16行tile，设计见s9-tile-design.md。启动run_candidate.py p5f finalize-p5d --single-core-smoke --device 4；日志reports/p5f-driver.log。按构建、普通六例、单核六例、八配置A/B、原20case顺序验证；未提交。q/k输出双槽各8KiB位于132和148KiB，避免packedBeta144KiB重叠；beta/diag仍186/187KiB。启动前设备4空闲、根分区26GiB。不要重复启动。
+
 # 当前检查点：P5d已验收
 
 P5d rH两片各64行已验收：S1七个边界中间量、普通及单核多work各六个冒烟（每例20次）、原20case七输出均通过。设备4八配置两轮交替A/B平均降时3.41%，单轮最小1.84%；8K无附加反向15361.780→14753.984us。每行FP32归约次序不变，workspace总量不变；原FP32标杆、CT和附加精度策略不变。证据见evidence/p5d-*。

@@ -481,3 +481,6 @@ P5b已验收：S7采用16行tile；复用结束生命周期的e区32～48KiB存k
 
 
 P5d已验收：S1两片各计算64行rH，分别写relay153KiB起的256B；S9末行owner从152KiB连续读取384个FP32。沿用S3→S6就绪依赖和S9跨片完成协议，workspace不增加。具体依赖及S1观察点见rh-split-design.md，已通过性能及原20case验收。
+
+
+P5f已验收：S9扩大为16行tile，两组24KiB输入在132～180KiB。先在g区生成全部factor并恢复两组输入，再将g/e区复用为qf/kf/term/product；状态修正临时区132KiB在DMA前释放。norm和最终输出同为16行，q/k输出双槽各8KiB位于132和148KiB，避开packedBeta。详情见s9-tile-design.md，已通过性能及原20case验收。
