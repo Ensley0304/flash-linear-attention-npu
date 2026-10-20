@@ -1,0 +1,86 @@
+[
+  {
+    "round": 0,
+    "version": "old",
+    "sha256": "75c165084f40a2edbc4cb0f83872a7e408750015a1e178b6d79e2234bebd4748",
+    "device": 4,
+    "mean_us": 11987.8535,
+    "median_us": 11988.289499999999,
+    "min_us": 11961.019,
+    "max_us": 12028.76,
+    "samples": 20,
+    "kernels": {
+      "_ZN10ascend_ops18KdaFinalizeStage0113Stage01KernelILj12ELb0EEEvPhS2_S2_S2_S2_S2_S2_S2_S2_S2_S2_S2_fS2_S2_S2_S2_S2_S2_S2_N3KDA6Arch2217Stage01TilingDataENS4_16FinalizeTailArgsE": {
+        "mean_us": 11970.7101,
+        "median_us": 11971.239
+      },
+      "_ZN10ascend_ops18KdaFinalizeStage0113Stage12KernelEN3KDA6Arch2216FinalizeTailArgsENS2_17Stage01TilingDataE": {
+        "mean_us": 17.1434,
+        "median_us": 17.0805
+      }
+    }
+  },
+  {
+    "round": 0,
+    "version": "new",
+    "sha256": "0126dd2a731decc4dea01cf1f56bd2bef39d9a4fc093b48c397ca082ae740d60",
+    "device": 4,
+    "mean_us": 13624.28725,
+    "median_us": 13615.011999999999,
+    "min_us": 13566.930999999999,
+    "max_us": 13681.834,
+    "samples": 20,
+    "kernels": {
+      "_Z15FinalizeCatlassILb1EEvN18KdaFinalizeCatlass9ArgumentsE": {
+        "mean_us": 13600.7757,
+        "median_us": 13592.331
+      },
+      "_Z21FinalizeCatlassReducePhS_S_mm": {
+        "mean_us": 23.51155,
+        "median_us": 23.3305
+      }
+    }
+  },
+  {
+    "round": 1,
+    "version": "old",
+    "sha256": "75c165084f40a2edbc4cb0f83872a7e408750015a1e178b6d79e2234bebd4748",
+    "device": 4,
+    "mean_us": 12096.03365,
+    "median_us": 12098.712,
+    "min_us": 12069.341,
+    "max_us": 12118.882,
+    "samples": 20,
+    "kernels": {
+      "_ZN10ascend_ops18KdaFinalizeStage0113Stage01KernelILj12ELb0EEEvPhS2_S2_S2_S2_S2_S2_S2_S2_S2_S2_S2_fS2_S2_S2_S2_S2_S2_S2_N3KDA6Arch2217Stage01TilingDataENS4_16FinalizeTailArgsE": {
+        "mean_us": 12077.3572,
+        "median_us": 12079.921
+      },
+      "_ZN10ascend_ops18KdaFinalizeStage0113Stage12KernelEN3KDA6Arch2216FinalizeTailArgsENS2_17Stage01TilingDataE": {
+        "mean_us": 18.67645,
+        "median_us": 18.64
+      }
+    }
+  },
+  {
+    "round": 1,
+    "version": "new",
+    "sha256": "0126dd2a731decc4dea01cf1f56bd2bef39d9a4fc093b48c397ca082ae740d60",
+    "device": 4,
+    "mean_us": 13664.452,
+    "median_us": 13657.473,
+    "min_us": 13613.271999999999,
+    "max_us": 13761.435000000001,
+    "samples": 20,
+    "kernels": {
+      "_Z15FinalizeCatlassILb1EEvN18KdaFinalizeCatlass9ArgumentsE": {
+        "mean_us": 13644.139449999999,
+        "median_us": 13637.592
+      },
+      "_Z21FinalizeCatlassReducePhS_S_mm": {
+        "mean_us": 20.312549999999998,
+        "median_us": 20.0205
+      }
+    }
+  }
+]
