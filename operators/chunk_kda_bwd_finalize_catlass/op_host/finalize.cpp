@@ -89,6 +89,7 @@ int main(int argc, char **argv)
             }
         }
         uint64_t chunk = 0;
+        bool fullChunks = true;
         for (uint64_t seq = 0; seq < cfg.batches; ++seq) {
             const uint64_t begin = cfg.variable ? boundaries[seq] : 0;
             const uint64_t end = cfg.variable ? boundaries[seq + 1] : cfg.tokens;
@@ -97,6 +98,7 @@ int main(int argc, char **argv)
                     metadata[chunk * 4 + 2] != std::min(uint64_t(64), end - first) || metadata[chunk * 4 + 3] != chunk) {
                     throw std::runtime_error("Invalid chunk metadata");
                 }
+                fullChunks = fullChunks && metadata[chunk * 4 + 2] == 64;
             }
         }
         if (chunk != cfg.chunks) {
@@ -154,7 +156,11 @@ int main(int argc, char **argv)
             if (iteration == warmup) {
                 Check(aclrtRecordEvent(startEvent, stream));
             }
-            FinalizeCatlass<<<cores, nullptr, stream>>>(args);
+            if (fullChunks) {
+                FinalizeCatlass<true><<<cores, nullptr, stream>>>(args);
+            } else {
+                FinalizeCatlass<false><<<cores, nullptr, stream>>>(args);
+            }
             FinalizeCatlassReduce<<<cfg.heads, nullptr, stream>>>(
                 static_cast<uint8_t *>(buffers[PARTIAL]), static_cast<uint8_t *>(buffers[DA]),
                 static_cast<uint8_t *>(buffers[DBIAS]), cfg.heads, cfg.chunks);
@@ -163,7 +169,8 @@ int main(int argc, char **argv)
         Check(aclrtSynchronizeStream(stream));
         float milliseconds = 0;
         Check(aclrtEventElapsedTime(&milliseconds, startEvent, stopEvent));
-        std::cout << "combined_event_ms=" << milliseconds / repeats << ", cores=" << cores << '\n';
+        std::cout << "combined_event_ms=" << milliseconds / repeats << ", cores=" << cores
+                  << ", full_chunks=" << fullChunks << '\n';
         const char *outputs[] = {"dq", "dk", "dv", "db", "dg", "da_log", "ddt_bias"};
         for (size_t i = DQ; i < COUNT; ++i) {
             std::vector<uint8_t> data(sizes[i]);

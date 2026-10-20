@@ -22,6 +22,7 @@ struct Arguments {
 };
 } // namespace KdaFinalizeCatlass
 
+template <bool FULL_CHUNK>
 __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
@@ -42,7 +43,7 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
             const uint64_t head = work % cfg.heads;
             const uint64_t seq = cfg.variable ? 0 : metadata.GetValue(chunk * 4);
             const uint64_t first = metadata.GetValue(chunk * 4 + 1);
-            const uint32_t rows = metadata.GetValue(chunk * 4 + 2);
+            const uint32_t rows = FULL_CHUNK ? 64 : metadata.GetValue(chunk * 4 + 2);
             const uint64_t token = (seq * cfg.heads + head) * cfg.tokens + first;
             const uint64_t state = (chunk * cfg.heads + head) * 128 * 128 * 2;
             cube.Run(reinterpret_cast<GM_ADDR>(args.input.v + token * 256),
@@ -88,7 +89,7 @@ __global__ __aicore__ void FinalizeCatlass(KdaFinalizeCatlass::Arguments args)
             const uint64_t head = work % cfg.heads;
             const uint64_t seq = cfg.variable ? 0 : metadata.GetValue(chunk * 4);
             const uint64_t first = metadata.GetValue(chunk * 4 + 1);
-            const uint32_t rows = metadata.GetValue(chunk * 4 + 2);
+            const uint32_t rows = FULL_CHUNK ? 64 : metadata.GetValue(chunk * 4 + 2);
             const uint64_t token = (seq * cfg.heads + head) * cfg.tokens + first;
             const uint64_t state = (chunk * cfg.heads + head) * 128 * 128 * 2;
             auto input = args.input;

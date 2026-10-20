@@ -1,3 +1,15 @@
+# 当前检查点：P5e已验收
+
+P5e完整64行chunk模板路径已验收：新增完整块/混合尾块定向六例、普通六例、单核六例（各20次）与原20case七输出全部通过。八配置两轮A/B各配置提速0.76%～1.46%，8K无附加反向14112.276→14004.816us。按实际metadata路由，原FP32运算次序和精度阈值不变；证据见evidence/p5e-*。
+
+基线run-r2/bin/finalize-p5e，hash d0a58be3d02e1819af0318c6aa758addcabb6cc7bf1a874884ef6fb2fdfba0de。下一项P5c参数树形归约见parameter-reduce-design.md，尚未实施。目标9.604ms及最终全量验收仍未达成。
+
+以下为历史。
+
+P5e更新：八配置两轮32条A/B已全部完成，性能门禁通过，各配置平均提速0.76%～1.46%；目标8K为14112.276→14004.816us。原20case七输出已启动，PID1290164，驱动1141411仍运行，reports/p5e-precision20；已见case55通过。未提交，等待完整精度，不能重复启动。证据已下载validation/workflow-review-20261019/p5e-eight-*。下一项候选设计parameter-reduce-design.md已写，未改kernel。
+
+当前试验P5e：完整64行chunk模板路径已实现，host按所有metadata rows判定；混合尾块仍通用路径。构建、新增六个full-chunk-smoke、普通六例、单核六例（均20次）全部通过。正在设备4八配置两轮A/B，profile PID1161752，驱动PID1141411；日志run-r2/reports/p5e-driver.log。基线finalize-p5f，候选bin/finalize。门禁通过后驱动自动跑原20case七输出，未提交，不重复启动。canonical DATA/source-r1的check_full.py仅新增定向用例及路由断言，原smoke/20case/标杆不变。
+
 # 当前检查点：P5f已验收
 
 P5f S9采用16行tile已验收：普通及单核多work各六例20次、原20case七输出全部通过。设备4八配置两轮交替A/B平均降时5.07%，单轮最小3.60%；8K无附加反向14725.871→14164.177us。输入和输出均保留双buffer，缩放因子全部消费后复用g/e，原运算次序及精度阈值不变。证据见evidence/p5f-*。运行目录已迁至/data/wys/kda-finalize-a2-cannbot-20261019/run-r2；此前/tmp/wys消失，原因未知，已从c55a2fb7重建基线，hash与原验收完全一致且六例冒烟通过，所有本项性能重新采集。

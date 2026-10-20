@@ -45,6 +45,16 @@ if args.cases == 'smoke':
         dict(matrix[0], B=1, H=3, T=128, lengths=[0, 1, 64, 0, 63], norm=True, beta_mode=2, output_layout='TND'),
     ]
     selected = [(i, cases[i]) for i in map(int, args.smoke_ids.split(','))]
+elif args.cases == 'full-chunk-smoke':
+    cases = [
+        dict(matrix[0], B=1, H=1, T=64, lengths=None, norm=False, beta_mode=0, output_layout='BNSD'),
+        dict(matrix[0], B=2, H=3, T=128, lengths=None, norm=True, beta_mode=2, output_layout='BSND'),
+        dict(matrix[0], B=1, H=3, T=192, lengths=[0, 64, 128, 0], norm=False, beta_mode=1, output_layout='NTD'),
+        dict(matrix[0], B=1, H=3, T=192, lengths=[0, 64, 128, 0], norm=True, beta_mode=2, output_layout='TND'),
+        dict(matrix[0], B=1, H=3, T=192, lengths=[0, 63, 129, 0], norm=True, beta_mode=2, output_layout='TND'),
+        dict(matrix[0], B=1, H=3, T=65, lengths=None, norm=False, beta_mode=0, output_layout='BNSD'),
+    ]
+    selected = [(i, cases[i]) for i in map(int, args.smoke_ids.split(','))]
 else:
     indices = range(len(matrix)) if args.cases == 'all' else map(int, args.cases.split(','))
     selected = [(i, matrix[i]) for i in indices]
@@ -75,6 +85,9 @@ for case_id, spec in selected:
                                 '0', str(args.repeat)], capture_output=True, text=True, timeout=60)
     (directory / 'host.log').write_text(completed.stdout + completed.stderr)
     assert completed.returncode == 0, (case_id, completed.stderr)
+    if args.cases == 'full-chunk-smoke':
+        expected_full = int(all(rows == 64 for _, _, _, rows in chunks))
+        assert f'full_chunks={expected_full}' in completed.stdout, completed.stdout
     print(f'case={case_id} NPU done; CPU golden', flush=True)
     reference_hash = hashlib.sha256((atk / 'reference.py').read_bytes()).hexdigest()
     cache_key = hashlib.sha256(json.dumps([reference_hash, spec, args.seed + case_id], sort_keys=True).encode()).hexdigest()
