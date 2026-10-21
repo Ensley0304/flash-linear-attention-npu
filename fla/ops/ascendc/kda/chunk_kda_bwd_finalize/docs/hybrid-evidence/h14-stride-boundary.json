@@ -1,0 +1,159 @@
+{
+  "library_sha256": "421e5f480fd173a212a11a67e42dc03e63f0c7fe3893bf0cbaec5d9539d5b3e0",
+  "cases": [
+    {
+      "heads": 4096,
+      "seed": 20265117,
+      "outputs": [
+        {
+          "name": "dq",
+          "dtype": "torch.bfloat16",
+          "shape": [
+            1,
+            4096,
+            2,
+            128
+          ],
+          "sha256": "5ce771f710c05c8d8f6305f5d46100b56b6da02f37fdc3dfff069da90db3261e"
+        },
+        {
+          "name": "dk",
+          "dtype": "torch.bfloat16",
+          "shape": [
+            1,
+            4096,
+            2,
+            128
+          ],
+          "sha256": "f61057b5758845004521f102cadd27033f3c48384394c32c5e48369bd5bb085b"
+        },
+        {
+          "name": "dv",
+          "dtype": "torch.bfloat16",
+          "shape": [
+            1,
+            4096,
+            2,
+            128
+          ],
+          "sha256": "e7b7c08b54be7b475df40b1177e18185f81162e23c0fe1671091a1862bfcac83"
+        },
+        {
+          "name": "db",
+          "dtype": "torch.float32",
+          "shape": [
+            1,
+            2,
+            4096
+          ],
+          "sha256": "a5143ce2c014efe105b8c1550807d6669413d26042a07cd5ef15b1660f038d43"
+        },
+        {
+          "name": "dg",
+          "dtype": "torch.float32",
+          "shape": [
+            1,
+            2,
+            4096,
+            128
+          ],
+          "sha256": "3e1fb3f60fe036fcbf73100177cdd5ee551acdfec6f6d4741a700265b3794bf7"
+        },
+        {
+          "name": "da_log",
+          "dtype": "torch.float32",
+          "shape": [
+            4096
+          ],
+          "sha256": "e174c4302cf7fadc7af23a34b27e6143be4d3dd8e7cb291a197346936c13c30e"
+        },
+        {
+          "name": "ddt_bias",
+          "dtype": "torch.float32",
+          "shape": [
+            4096,
+            128
+          ],
+          "sha256": "a53b8bfd6008e2758c39aaef37124d5737c38ca187556a70c5e059a29a75f69c"
+        }
+      ]
+    },
+    {
+      "heads": 4097,
+      "seed": 20265118,
+      "outputs": [
+        {
+          "name": "dq",
+          "dtype": "torch.bfloat16",
+          "shape": [
+            1,
+            4097,
+            2,
+            128
+          ],
+          "sha256": "c0ffe58fb1e04f4fa8b1e412ffbb56294f0b7b3ee680c7ce99dc910cf5bd4720"
+        },
+        {
+          "name": "dk",
+          "dtype": "torch.bfloat16",
+          "shape": [
+            1,
+            4097,
+            2,
+            128
+          ],
+          "sha256": "e5187d0537a01847f9c3c056b2031e2620a552be1a1e4f86f4fe6cd67d060121"
+        },
+        {
+          "name": "dv",
+          "dtype": "torch.bfloat16",
+          "shape": [
+            1,
+            4097,
+            2,
+            128
+          ],
+          "sha256": "a40e5c65579a1d3ed609fd89a5fc739afe4c7350b12b0863d9c786082ae2d1e4"
+        },
+        {
+          "name": "db",
+          "dtype": "torch.float32",
+          "shape": [
+            1,
+            2,
+            4097
+          ],
+          "sha256": "6f9681f38bb1dd998a84785fa9f1a6ae8e056612be85168accdf1313adc4133e"
+        },
+        {
+          "name": "dg",
+          "dtype": "torch.float32",
+          "shape": [
+            1,
+            2,
+            4097,
+            128
+          ],
+          "sha256": "3467abe0b884074079497bba8ff168ec929828379390f5eeec8669b28a740c49"
+        },
+        {
+          "name": "da_log",
+          "dtype": "torch.float32",
+          "shape": [
+            4097
+          ],
+          "sha256": "557fc1e3c991f17cfe84011ed1df80d2879412f314bc818dd1a8f9a7d1dc03ce"
+        },
+        {
+          "name": "ddt_bias",
+          "dtype": "torch.float32",
+          "shape": [
+            4097,
+            128
+          ],
+          "sha256": "92ad3ed0b12a8dd2bea810bb5984c7ea54611c58a825b85cd2282cebc7c65457"
+        }
+      ]
+    }
+  ]
+}

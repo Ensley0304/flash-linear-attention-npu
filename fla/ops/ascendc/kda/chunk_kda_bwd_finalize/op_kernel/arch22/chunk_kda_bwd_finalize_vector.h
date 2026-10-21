@@ -1453,9 +1453,18 @@ public:
                 } else {
                     AscendC::DataCopy(dk_[(token + first) * HEAD_DIM], packedDk, active * HEAD_DIM);
                 }
-                AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gateOut,
-                                     {static_cast<uint16_t>(active), HEAD_DIM * 4, 0,
-                                      static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * 4), 0});
+                // dG rows are 512-byte aligned. DataCopy strides use 32-byte
+                // blocks; keep the byte-stride path when uint16_t would overflow.
+                if (!CAPTURE && tiling.heads <= 4096) {
+                    AscendC::DataCopy(
+                        dg_[outputToken * HEAD_DIM], gateOut,
+                        AscendC::DataCopyParams{static_cast<uint16_t>(active), HEAD_DIM / 8, 0,
+                                                static_cast<uint16_t>((tiling.heads - 1) * (HEAD_DIM / 8))});
+                } else {
+                    AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gateOut,
+                                         {static_cast<uint16_t>(active), HEAD_DIM * 4, 0,
+                                          static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * 4), 0});
+                }
                 AscendC::DataCopyPad(
                     db_[outputToken], packedDb,
                     {static_cast<uint16_t>(active), 4, 0, static_cast<uint32_t>((tiling.heads - 1) * 4), 0});

@@ -405,3 +405,11 @@ gateearly-norm原自动性能gate=false，按已说明的稳定小收益复核�
 原验收源码及两处加载库未改动，隔离目录恢复tile16，库SHA256仍为75c165084f40a2edbc4cb0f83872a7e408750015a1e178b6d79e2234bebd4748。本轮无代码提交或push。原版8K为12.000/12.565/12.069/12.556ms，16K为23.988/25.101/23.960/25.086ms，顺序为无附加反向、仅norm、仅beta sigmoid、两者开启；最高Vector约73.5%，未达80%。
 
 证据：工作区validation/perf-overlap-20261017/report.md与evidence.zip，A2的/data/wys/kda-finalize-a2-stage9-20261012下同名目录。包含五组有效op_summary、逐项源码/库、性能门禁及边界报告；原始profiler目录在/dev/shm/wys/kda-finalize-overlap-20261017。
+
+## Hybrid H14 验收（2026-10-21）
+
+H14仅调整Stage 11的dG对齐跨行写回；数据布局、双buffer、事件及算术不变。已通过9个边界case和原20case、每case七输出的冻结FP32/FP64双标杆CT L1；另测H=4096/4097、T=2，stride上限两侧七输出与H10逐位一致。参考hash保持`1a5e5d498ce1cc5474f628c4279d871e305a3b9cb4b31b2bcba48e7109f6c706`。
+
+八配置两轮交替A/B全部改善，目标B1/H96/T8192/K=V128/BF16/BNSD、无附加反向，主核+归约核从同轮H10的10.8495降至10.7074 ms（1.31%）。目标Vector约66.5%，最高配置约70.7%，未达到8 ms或80%。库hash `421e5f480fd173a212a11a67e42dc03e63f0c7fe3893bf0cbaec5d9539d5b3e0`，性能、精度及归档清单一致。完整200case三seed和公开入口验收未重跑。
+
+H12/H13精度边界通过但性能门禁失败，未保留，未进入20case。设计、生命周期、失败记录及H14八配置表见[hybrid-plan](hybrid-plan.md)；精度、性能、指令段及完整模拟器摘要见`hybrid-evidence/h14-*.json`。H15仅为下一项候选，尚未验收。

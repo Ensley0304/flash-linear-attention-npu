@@ -1,0 +1,457 @@
+{
+  "library_sha256": "c052ab21475cfbf4843726fb35606874fc24ef7905ee264952980f1a7a4a18b3",
+  "shape": {
+    "B": 1,
+    "H": 96,
+    "T": 8192,
+    "K": 128,
+    "V": 128,
+    "dtype": "BF16",
+    "layout": "BNSD",
+    "norm": false,
+    "beta": false
+  },
+  "records": [
+    {
+      "group": "PipeUtilization",
+      "csv": "h10-metrics/PipeUtilization/PROF_000001_20261021170424325_02884427HGNNARAO/mindstudio_profiler_output/op_summary_20261021170433.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573465784791.2,
+            "Task Duration(us)": 10841.4265,
+            "Task Wait Time(us)": 234.34449999999998,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10752.114000000001,
+            "aic_total_cycles": 387076112.5,
+            "aic_mac_time(us)": 1341.6325,
+            "aic_mac_ratio": 0.125,
+            "aic_scalar_time(us)": 3542.352,
+            "aic_scalar_ratio": 0.329,
+            "aic_mte1_time(us)": 1605.4755,
+            "aic_mte1_ratio": 0.149,
+            "aic_mte2_time(us)": 2449.2285,
+            "aic_mte2_ratio": 0.228,
+            "aic_fixpipe_time(us)": 2078.0795,
+            "aic_fixpipe_ratio": 0.193,
+            "aic_icache_miss_rate": 0.0,
+            "aiv_time(us)": 10751.319,
+            "aiv_total_cycles": 774094994.5,
+            "aiv_vec_time(us)": 7071.2595,
+            "aiv_vec_ratio": 0.658,
+            "aiv_scalar_time(us)": 4933.723,
+            "aiv_scalar_ratio": 0.459,
+            "aiv_mte2_time(us)": 3106.0370000000003,
+            "aiv_mte2_ratio": 0.289,
+            "aiv_mte3_time(us)": 2507.9415,
+            "aiv_mte3_ratio": 0.233,
+            "aiv_icache_miss_rate": 0.109,
+            "cube_utilization(%)": 99.2175
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573465795643.0,
+            "Task Duration(us)": 17.750999999999998,
+            "Task Wait Time(us)": 0.9335,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aic_mac_time(us)": 0.0,
+            "aic_mac_ratio": 0.0,
+            "aic_scalar_time(us)": 0.0,
+            "aic_scalar_ratio": 0.0,
+            "aic_mte1_time(us)": 0.0,
+            "aic_mte1_ratio": 0.0,
+            "aic_mte2_time(us)": 0.0,
+            "aic_mte2_ratio": 0.0,
+            "aic_fixpipe_time(us)": 0.0,
+            "aic_fixpipe_ratio": 0.0,
+            "aic_icache_miss_rate": 0.0,
+            "aiv_time(us)": 13.8245,
+            "aiv_total_cycles": 995343.5,
+            "aiv_vec_time(us)": 4.695,
+            "aiv_vec_ratio": 0.34,
+            "aiv_scalar_time(us)": 3.215,
+            "aiv_scalar_ratio": 0.233,
+            "aiv_mte2_time(us)": 7.583,
+            "aiv_mte2_ratio": 0.55,
+            "aiv_mte3_time(us)": 0.455,
+            "aiv_mte3_ratio": 0.033,
+            "aiv_icache_miss_rate": 0.011,
+            "cube_utilization(%)": 0.0
+          }
+        }
+      }
+    },
+    {
+      "group": "ArithmeticUtilization",
+      "csv": "h10-metrics/ArithmeticUtilization/PROF_000001_20261021170443303_02887617LMEQMLQJ/mindstudio_profiler_output/op_summary_20261021170453.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573484905104.5,
+            "Task Duration(us)": 10844.217,
+            "Task Wait Time(us)": 216.994,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10770.563999999998,
+            "aic_total_cycles": 387740303.5,
+            "aic_mac_fp16_ratio": 0.132,
+            "aic_mac_int8_ratio": 0.0,
+            "aic_cube_fops": 418376933376.0,
+            "aiv_time(us)": 10769.781500000001,
+            "aiv_total_cycles": 775424254.5,
+            "aiv_vec_fp32_ratio": 0.278,
+            "aiv_vec_fp16_ratio": 0.0,
+            "aiv_vec_int32_ratio": 0.006,
+            "aiv_vec_misc_ratio": 0.022,
+            "aiv_vector_fops": 14648979968.0
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573484915951.5,
+            "Task Duration(us)": 17.78,
+            "Task Wait Time(us)": 0.9485,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aic_mac_fp16_ratio": 0.0,
+            "aic_mac_int8_ratio": 0.0,
+            "aic_cube_fops": 0.0,
+            "aiv_time(us)": 13.8,
+            "aiv_total_cycles": 993590.5,
+            "aiv_vec_fp32_ratio": 0.037,
+            "aiv_vec_fp16_ratio": 0.0,
+            "aiv_vec_int32_ratio": 0.0,
+            "aiv_vec_misc_ratio": 0.0505,
+            "aiv_vector_fops": 3971072.0
+          }
+        }
+      }
+    },
+    {
+      "group": "Memory",
+      "csv": "h10-metrics/Memory/PROF_000001_20261021170503526_02890544CGBKCPRQ/mindstudio_profiler_output/op_summary_20261021170514.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573505144665.0,
+            "Task Duration(us)": 10793.1455,
+            "Task Wait Time(us)": 218.07999999999998,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10751.494999999999,
+            "aic_total_cycles": 387053813.5,
+            "aic_l1_read_bw(GB/s)": 61.038,
+            "aic_l1_write_bw(GB/s)": 11.197,
+            "aic_main_mem_read_bw(GB/s)": 0.313,
+            "aic_main_mem_write_bw(GB/s)": 0.207,
+            "aic_l2_read_bw(GB/s)": 0.0,
+            "aic_l2_write_bw(GB/s)": 0.0,
+            "aiv_time(us)": 10750.7245,
+            "aiv_total_cycles": 774052168.0,
+            "aiv_ub_read_bw(GB/s)": 97.0915,
+            "aiv_ub_write_bw(GB/s)": 81.3385,
+            "aiv_main_mem_read_bw(GB/s)": 0.39,
+            "aiv_main_mem_write_bw(GB/s)": 0.224,
+            "aiv_l2_read_bw(GB/s)": 0.0,
+            "aiv_l2_write_bw(GB/s)": 0.0
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573505155483.5,
+            "Task Duration(us)": 17.98,
+            "Task Wait Time(us)": 1.014,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aic_l1_read_bw(GB/s)": 0.0,
+            "aic_l1_write_bw(GB/s)": 0.0,
+            "aic_main_mem_read_bw(GB/s)": 0.0,
+            "aic_main_mem_write_bw(GB/s)": 0.0,
+            "aic_l2_read_bw(GB/s)": 0.0,
+            "aic_l2_write_bw(GB/s)": 0.0,
+            "aiv_time(us)": 14.346,
+            "aiv_total_cycles": 1032927.0,
+            "aiv_ub_read_bw(GB/s)": 12.7235,
+            "aiv_ub_write_bw(GB/s)": 18.1075,
+            "aiv_main_mem_read_bw(GB/s)": 0.182,
+            "aiv_main_mem_write_bw(GB/s)": 0.003,
+            "aiv_l2_read_bw(GB/s)": 0.0,
+            "aiv_l2_write_bw(GB/s)": 0.0
+          }
+        }
+      }
+    },
+    {
+      "group": "MemoryL0",
+      "csv": "h10-metrics/MemoryL0/PROF_000001_20261021170524471_02894013HRDQGOFG/mindstudio_profiler_output/op_summary_20261021170534.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573526084323.0,
+            "Task Duration(us)": 10900.628,
+            "Task Wait Time(us)": 243.52949999999998,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10789.9445,
+            "aic_total_cycles": 388437992.5,
+            "aic_l0a_read_bw(GB/s)": 14.771,
+            "aic_l0a_write_bw(GB/s)": 17.377000000000002,
+            "aic_l0b_read_bw(GB/s)": 86.8865,
+            "aic_l0b_write_bw(GB/s)": 43.443,
+            "aic_l0c_read_bw_cube(GB/s)": 1.738,
+            "aic_l0c_write_bw_cube(GB/s)": 17.377000000000002,
+            "aiv_time(us)": 10789.142,
+            "aiv_total_cycles": 776818213.0,
+            "aiv_l0c_read_bw(GB/s)": 0.0,
+            "aiv_l0c_write_bw(GB/s)": 0.0
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573526095218.5,
+            "Task Duration(us)": 18.09,
+            "Task Wait Time(us)": 0.992,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aic_l0a_read_bw(GB/s)": 0.0,
+            "aic_l0a_write_bw(GB/s)": 0.0,
+            "aic_l0b_read_bw(GB/s)": 0.0,
+            "aic_l0b_write_bw(GB/s)": 0.0,
+            "aic_l0c_read_bw_cube(GB/s)": 0.0,
+            "aic_l0c_write_bw_cube(GB/s)": 0.0,
+            "aiv_time(us)": 14.466000000000001,
+            "aiv_total_cycles": 1041549.0,
+            "aiv_l0c_read_bw(GB/s)": 0.0,
+            "aiv_l0c_write_bw(GB/s)": 0.0
+          }
+        }
+      }
+    },
+    {
+      "group": "MemoryUB",
+      "csv": "h10-metrics/MemoryUB/PROF_000001_20261021170544692_02897686QLCHOORC/mindstudio_profiler_output/op_summary_20261021170555.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573546148581.5,
+            "Task Duration(us)": 10808.206,
+            "Task Wait Time(us)": 366.635,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10761.5285,
+            "aic_total_cycles": 387415028.5,
+            "aic_ub_read_bw_scalar(GB/s)": 0.0,
+            "aic_ub_write_bw_scalar(GB/s)": 0.0,
+            "aiv_time(us)": 10760.743,
+            "aiv_total_cycles": 774773487.5,
+            "aiv_ub_read_bw_vector(GB/s)": 22.0475,
+            "aiv_ub_write_bw_vector(GB/s)": 15.9715,
+            "aiv_ub_read_bw_scalar(GB/s)": 0.0,
+            "aiv_ub_write_bw_scalar(GB/s)": 0.0
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573546159381.0,
+            "Task Duration(us)": 18.0,
+            "Task Wait Time(us)": 0.899,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aic_ub_read_bw_scalar(GB/s)": 0.0,
+            "aic_ub_write_bw_scalar(GB/s)": 0.0,
+            "aiv_time(us)": 13.928999999999998,
+            "aiv_total_cycles": 1002866.0,
+            "aiv_ub_read_bw_vector(GB/s)": 3.2504999999999997,
+            "aiv_ub_write_bw_vector(GB/s)": 1.9925000000000002,
+            "aiv_ub_read_bw_scalar(GB/s)": 0.0,
+            "aiv_ub_write_bw_scalar(GB/s)": 0.0
+          }
+        }
+      }
+    },
+    {
+      "group": "L2Cache",
+      "csv": "h10-metrics/L2Cache/PROF_000001_20261021170605840_02901543JQQBMCLG/mindstudio_profiler_output/op_summary_20261021170616.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573567442009.0,
+            "Task Duration(us)": 10822.266500000002,
+            "Task Wait Time(us)": 384.59950000000003,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10769.484499999999,
+            "aic_total_cycles": 387701447.0,
+            "aic_write_cache_hit": 5898240.0,
+            "aic_write_cache_miss_allocate": 20.0,
+            "aic_r0_read_cache_hit": 12193945.5,
+            "aic_r0_read_cache_miss_allocate": 5893857.5,
+            "aic_r1_read_cache_hit": 12194167.5,
+            "aic_r1_read_cache_miss_allocate": 5893962.0,
+            "aiv_time(us)": 10768.69,
+            "aiv_total_cycles": 775345668.0,
+            "aiv_write_cache_hit": 10867445.0,
+            "aiv_write_cache_miss_allocate": 1981235.0,
+            "aiv_r0_read_cache_hit": 30193665.0,
+            "aiv_r0_read_cache_miss_allocate": 7090466.0,
+            "aiv_r1_read_cache_hit": 30193174.0,
+            "aiv_r1_read_cache_miss_allocate": 7090145.0
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573567452837.0,
+            "Task Duration(us)": 17.8505,
+            "Task Wait Time(us)": 1.0385,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aic_write_cache_hit": 0.0,
+            "aic_write_cache_miss_allocate": 0.0,
+            "aic_r0_read_cache_hit": 0.0,
+            "aic_r0_read_cache_miss_allocate": 0.0,
+            "aic_r1_read_cache_hit": 0.0,
+            "aic_r1_read_cache_miss_allocate": 0.0,
+            "aiv_time(us)": 13.935,
+            "aiv_total_cycles": 1003346.5,
+            "aiv_write_cache_hit": 135.0,
+            "aiv_write_cache_miss_allocate": 97.0,
+            "aiv_r0_read_cache_hit": 1801.5,
+            "aiv_r0_read_cache_miss_allocate": 24790.5,
+            "aiv_r1_read_cache_hit": 1801.0,
+            "aiv_r1_read_cache_miss_allocate": 24791.0
+          }
+        }
+      }
+    },
+    {
+      "group": "ResourceConflictRatio",
+      "csv": "h10-metrics/ResourceConflictRatio/PROF_000001_20261021170627428_02906029FEPRBBKA/mindstudio_profiler_output/op_summary_20261021170636.csv",
+      "kernels": {
+        "Stage01Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 59.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573589214615.5,
+            "Task Duration(us)": 10834.447,
+            "Task Wait Time(us)": 411.524,
+            "Block Num": 20.0,
+            "Mix Block Num": 40.0,
+            "Context ID": 0.0,
+            "aicore_time(us)": 10764.389,
+            "aic_total_cycles": 387518005.0,
+            "aiv_time(us)": 10763.6,
+            "aiv_total_cycles": 774979205.5,
+            "aiv_vec_bankgroup_cflt_ratio": 0.116,
+            "aiv_vec_bank_cflt_ratio": 0.045,
+            "aiv_vec_resc_cflt_ratio": 0.0
+          }
+        },
+        "Stage12Kernel": {
+          "samples": 20,
+          "median": {
+            "Device_id": 4.0,
+            "Model ID": 4294967295.0,
+            "Task ID": 60.0,
+            "Stream ID": 46.0,
+            "Task Start Time(us)": 1792573589225437.0,
+            "Task Duration(us)": 18.141,
+            "Task Wait Time(us)": 0.9385,
+            "Block Num": 40.0,
+            "Mix Block Num": 0.0,
+            "aicore_time(us)": 0.0,
+            "aic_total_cycles": 0.0,
+            "aiv_time(us)": 13.875499999999999,
+            "aiv_total_cycles": 999035.5,
+            "aiv_vec_bankgroup_cflt_ratio": 0.024,
+            "aiv_vec_bank_cflt_ratio": 0.0,
+            "aiv_vec_resc_cflt_ratio": 0.0
+          }
+        }
+      }
+    }
+  ]
+}
