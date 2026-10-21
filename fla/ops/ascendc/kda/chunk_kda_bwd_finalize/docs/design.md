@@ -1,5 +1,7 @@
 # A2/A3 Finalize Stage 划分
 
+2026-10-21续测：H15～H18均通过边界精度，但未通过八配置双轮性能门禁，全部未采用；当前设计和实现仍保持H14。实验记录见[两版融合优化](hybrid-plan.md)。
+
 当前hybrid分支以H14为验收基线：Stage 8/10使用关闭HF32的FP32操作数，两个lower矩阵在L1跨带复用；Stage 7生产路径按32行生成band操作数，FP32输出双槽兼作运算临时区。完整生产路径的Stage 8先产生两个head的dq并通知Stage 9，再产生两个left；两个AIV在进入Stage 11前等待left就绪。Stage 11的dG在H≤4096时用对齐多行DataCopy写回，更大H及capture保持DataCopyPad；原双槽和写回事件不变。下文历史设计按日期保留，当前地址、生命周期、通知语义和验收证据见[两版融合优化](hybrid-plan.md)的H3/H4/H10/H14章节。H5b～H9、H11～H13未保留。
 
 2026-10-21性能目标：A2，B=1/H=96/T=8192/K=V=128/BF16，定长BNSD，无l2norm和beta sigmoid反向，Stage01Kernel与Stage12Kernel的Task Duration之和低于8 ms。采用同输入、20次预热及20次采样、两轮交替A/B；算子语义和原精度门禁不变。
