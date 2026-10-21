@@ -889,9 +889,9 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(BAND_READY);
                 }
                 if constexpr (FINALIZE_Q) {
-                    Stage9<CAPTURE, Q_NORM, FULL_CHUNK>(tiling, chunk, chunkIndex, head, owner, core, capture, bank,
-                                                        start, end);
-                    if (owner == 0) {
+                    Stage9<CAPTURE, Q_NORM, FULL_CHUNK, (FINALIZE_K && !CAPTURE)>(
+                        tiling, chunk, chunkIndex, head, owner, core, capture, bank, start, end);
+                    if (owner == 0 || (FINALIZE_K && !CAPTURE)) {
                         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
                     }
                 }
@@ -932,7 +932,7 @@ public:
         qRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
     }
 
-    template <bool CAPTURE, bool Q_NORM, bool FULL_CHUNK = false>
+    template <bool CAPTURE, bool Q_NORM, bool FULL_CHUNK = false, bool DEFER_LEFT = false>
     __aicore__ inline void Stage9(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank,
                                   uint32_t start, uint32_t end)
@@ -982,8 +982,10 @@ public:
             AscendC::DataCopy(input[2 * ELEMENTS], dgBase[first * HEAD_DIM], ELEMENTS);
         }
         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_READY);
-        if (owner != 0) {
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
+        if constexpr (!DEFER_LEFT) {
+            if (owner != 0) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_SECOND_READY);
+            }
         }
         for (uint32_t slot = 0; slot < 2; ++slot) {
             auto input = ub_[(88 + slot * 24) * 1024].ReinterpretCast<float>();

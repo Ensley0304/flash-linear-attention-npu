@@ -6,7 +6,7 @@
 
 ## 8 ms目标与下一轮实验
 
-当前H4目标case为10.889 ms，需要再减少约26.5%。主核AIV时间约10.774 ms，Vector忙碌时间约7.077 ms，Vector占比65.7%。这说明还有待检查的等待与重叠空间，但各pipe时间相互重叠，不能把差值直接当作可消除气泡。
+当前验收库为H10：四轮目标case均值10.807 ms，需再减少约26.0%才到8 ms。H4的时间线仍用作诊断基线：主核AIV时间约10.774 ms，Vector忙碌时间约7.077 ms，Vector占比65.7%。各pipe时间相互重叠，不能把差值直接当作可消除气泡。
 
 如果Vector工作量不变，8 ms总耗时要求其忙碌时间占总耗时约88.5%；计入归约与启动后，主核需要更高的重叠程度。因此同时评估减少运算与调度重排，不以占比上升代替耗时改善。
 
@@ -14,9 +14,12 @@
 |---|---|---|---|
 | 1 | H5b：仅当前32行带复用正负指数 | 带后qPos继续直接算指数；原失败case 4、长序列和极值gate | 边界通过，性能无收益，不保留 |
 | 2 | H6：Stage 7期间提前计算下一work的dW/zV | GM子区最后读取、L1驻留、事件配对、单核回绕和奇数head | 边界通过，性能回退，不保留 |
-| 3 | H7：Stage 8先写先算完的left，再写dq | L0C双槽事件不变；让left的Fixpipe与dq的MMAD有机会重叠 | 已启动构建与验证 |
-| 4 | 按最新验收库采集稳态指令时间线及逐核周期 | 区分Stage 7/9/11的等待、搬运、Scalar发射和核间不均 | 待前述测试结束，避免采集互扰 |
-| 5 | 根据时间线选择更大的跨work窗口或后段分块调整 | 先给出UB/L1峰值、workspace代次及ready/free闭环，再实现一个变量 | 尚未确定，不叠加到前述候选 |
+| 3 | H7：Stage 8先写先算完的left，再写dq | L0C双槽事件不变；让left的Fixpipe与dq的MMAD有机会重叠 | 边界通过，性能基本持平，不保留 |
+| 4 | H8：优先产生dq并提前通知head0的Stage 9 | Stage 11仍等两head的left完成；奇数head及回绕验证 | 边界通过，无norm配置回退，不保留 |
+| 5 | H4生产库指令时间线，H2/T256/单核组 | 区分Stage 7/9/11的等待、搬运、Scalar发射 | 完整采集并归档，含三条lane |
+| 6 | H9：末带Stage 9预取Stage 11独立输入 | 死区复用，dG依赖保持 | 边界通过，八配置回退，不保留 |
+| 7 | H10：先产出两个head的dq | 两类结果分开发通知，原双槽及奇数head事件闭环 | 四轮性能复核、20case七输出通过，已保留 |
+| 8 | H11：Stage 7指数拆分复用mask | 相同32位长度、repeat≤64、恢复mask | 基于H10启动独立验证 |
 
 H5b和H6当前均独立对照H4；若先保留其中一项，另一项须重新基于新验收库构建和比较。每项先边界精度，再八配置两轮交替A/B；收益稳定后跑原20case七输出，全过才保留。最终候选还须完整200case三seed和公开入口验收，未完成时不标记工作流complete。
 
@@ -144,8 +147,44 @@ H3之后Stage 8先算slot 1的left，再算slot 0的dq，但Fixpipe循环先等�
 
 该顺序在源码上允许更多M/FIX重叠，实际能否降低耗时仍须A/B。它不减少总计算和搬运量，不预先声称收益。候选与H5b/H6分别验证，不同时修改三项。
 
+实测：9个边界case七输出通过；八配置两轮改善范围为-0.119%～0.404%，不满足稳定收益门禁。目标case两轮H4均值10.859 ms，H7为10.860 ms，基本持平；不保留，也不进入20case门禁。证据见`hybrid-evidence/h7-*.json`，库hash为`267a78ed6c53eddd4a0c622efabc3fb585c1688796da156f4e1e9c78ad53cc4d`。
+
 ## H8候选：优先产生Stage 9需要的dq
 
 与H7分别比较。Stage 8先算dq(slot 0)，再算left(slot 1)，按0→1写回；head0的dq写完即发S8_READY，提前启动Stage 9。head1仍在dq/left都写完后发S8_SECOND_READY。owner0在Stage 9后本来就等待S8_SECOND_READY，owner1在Stage 9前等待它，因此两侧进入Stage 11读取left时，两个head的left均已写完。奇数head由原空owner分支补发S8_SECOND_READY，位置仍在head0的left写完之后。
 
 不增加flag或buffer，GM/L1/L0区间和每项MMAD累加顺序不变；仅改变两项独立乘法的优先级及head0已有通知的发布位置。需要验证capture/前缀、奇数head、单核回绕及原精度门禁。未上板前不采用，也不把原S8_READY“保证两项结果完成”的含义沿用到新路径。
+
+实测：9个边界case七输出通过。八配置两轮中，无norm回退0.639%～1.731%，有norm改善1.247%～1.693%。目标case两轮H4均值10.847 ms，H8为10.979 ms；未满足保留门禁，不进入20case，也不保留。该结果说明调度收益依赖后续Vector负载；具体原因待时间线确认。证据见`hybrid-evidence/h8-*.json`，库hash为`e82938806602abe06a79a170ad1fd59bccd9c60f991428b47f26fc127fce69ec`。
+
+## H9候选：末带Stage 9预取Stage 11的独立输入
+
+H4生产库的完整模拟器时间线（H2/T256/单核组，无norm/beta）显示，Stage 9→11附近反复出现约2～2.6 μs的Vector空隙，包含输出排空与后继输入搬运。AIV0的S8_READY等待与Vector空隙重合仅0.024 μs，单独提前此通知不是主要机会。仿真时长不等于8K设备耗时，各重合区间也不能相加为收益。
+
+仅完整64行chunk、非capture、需要Stage 11且最后一带start=0时启用。在Stage 9两槽raw输入排入MTE2后，预取Stage 11首个16行tile（行16～31）的left、dk_base、raw_g，分别写UB [24,32)、[40,48)、[56,64) KiB。这些区间原来是已消费的后半k和gk；当前Stage 9/11只再用k的前32行[16,24)，不会覆盖。Stage 9入口原有V→MTE2桥接保证此前Vector读取已结束。
+
+left由H4原S8_READY/S8_SECOND_READY保证本head完成；dk_base来自Stage 5，raw_g来自输入，三者独立于Stage 9。Stage 11的首槽只补搬dG、dBeta和right，第二槽照旧；dG仍在Stage 9原写回排空后读取。MTE2按顺序执行，Stage 11原inputReady覆盖所有预取和补搬，不增加事件或buffer。UB仍192 KiB，GM字节数不变，每work将24 KiB搬运提前。
+
+该候选独立基于H4，不叠加H8。尾块、capture、Stage 9短前缀保持原路径；变长完整chunk可用。先9个边界七输出，再八配置两轮A/B，稳定收益后原20case七输出；未通过前不保留。
+
+实测：9个边界case七输出通过；八配置两轮回退0.497%～1.414%，不保留，也不进入20case。目标case同轮H4为10.855 ms，H9为10.934 ms；Vector忙时基本不变，MTE2忙时3.142→3.218 ms，提前搬运未带来净重叠收益。库hash `53dde753a52c41062223a786435f809c55b4d26e3cfc08b9c8fbe5cb90d29184`，证据见`hybrid-evidence/h9-*.json`。
+
+## H10：Stage 8先生成两个head的dq（已保留）
+
+H4时间线中，AIV1等待S8_SECOND_READY与Vector空隙重合约10.97 μs，高于AIV0的3.12 μs；该通知当前同时保证head1的dq/left完成。候选把两类结果分开发布：先算dq0/dq1、写回并发S8_READY，再算left0/left1、写回并发S8_SECOND_READY。两个AIV都在S8_READY后做Stage 9，在Stage 9后消费S8_SECOND_READY，保证Stage 11读取left安全。奇数head的空owner仍消费每个通知一次。
+
+仅Stage 11/12非capture路径启用；前缀及capture保持原顺序。两相中L0双槽分别对应head0/head1；每相都先发两项MMAD，再按槽写回，下一相复用由原resultFree保护。L1两head操作数保持到各自left读取完才归还keFree，keReady仅在dq相消费一次。GM地址、每项MMAD顺序、HF32关闭、buffer容量和事件数量不变。Stage 10仍等本带Stage 8完成后启动。
+
+代价是head0的dq通知较晚；能否补偿head1等待须实测。独立基于H4，不叠加H8/H9。按原边界→八配置两轮→有收益再20case七输出门禁执行。
+
+首两轮八配置全部正收益，目标case为0.353%/0.288%；因后一轮略低于0.3%，原自动门禁保持false，不直接保留。追加同hash库的两轮交替A/B，预先约定复核条件：四轮每配置均为正收益、每配置四轮平均收益超过0.3%；满足后仍须原20case七输出全过。精度标准不改，两轮追加原始报告及单独复核结论均保留。
+
+四轮复核通过，各配置平均改善0.349%～1.354%；9个边界和原20case七输出全部通过，参考hash不变。库hash `c052ab21475cfbf4843726fb35606874fc24ef7905ee264952980f1a7a4a18b3`。8K四配置为10.807/11.436/10.789/11.547 ms，16K为21.628/22.939/21.573/23.010 ms（无附加反向、仅norm、仅beta、两者开启）；目标Vector约65.96%，最高配置约70.4%。保留此项，仍未达到8 ms。完整200case三seed及公开入口验收尚未重跑。证据见`hybrid-evidence/h10-*.json`，包括原自动门禁false及独立四轮复核结论。
+
+## H11候选：Stage 7指数拆分复用Vector mask
+
+H4的四work时间线中，AIV0有2391条MOVEMASK。指令时长相互重叠，不能把它们的duration总和当作可消除耗时。当前CANN 9.1的dav_c220实现中，count形式的Mul/Exp每次都切换Counter模式、设置mask、计算，再恢复Normal和全mask；低层`isSetMask=false`接口允许显式复用设置。
+
+先只改Stage 7的exp2拆分连续段：Maxs、Mins、两次Cast、Sub、整数Adds/ShiftLeft、Muls、Exp、Mul。所有数据均32位，count=active×128；统一Normal mask=64，repeat=active×2（2～64，capture上限32），连续块stride=1、repeat stride=8。开始设置一次mask，段尾ResetMask；原barrier、舍入模式、中心化和算术顺序保持。尾块按实际active重复，active=0仍跳过。
+
+这是减少mask指令的单项实验，不改变buffer或调度。以届时最新验收库为基线；边界→八配置两轮→有收益再20case七输出。API依据为服务器安装的`asc/impl/basic_api/dav_c220/kernel_operator_vec_{binary,unary}_impl.h`及`asc/include/basic_api`声明，本地副本存于validation/hybrid-20261020/cann-api。

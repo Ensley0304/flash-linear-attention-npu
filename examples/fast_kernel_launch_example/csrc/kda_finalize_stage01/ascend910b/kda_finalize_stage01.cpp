@@ -178,7 +178,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                 AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S6_READY + readyBank);
                                 if constexpr (LAST_STAGE >= 8) {
                                     const int64_t readyChunk = readyWork % tiling.chunks;
-                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9), (LAST_STAGE >= 10)>(
+                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9), (LAST_STAGE >= 10), (LAST_STAGE >= 11)>(
                                         tiling, ResolveChunk(tiling, chunks, readyChunk), readyChunk, readyHead, core,
                                         readyBank, capture);
                                 }
@@ -214,7 +214,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                                 AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S6_READY + readyBank);
                                 if constexpr (LAST_STAGE >= 8) {
                                     const int64_t readyChunk = readyWork % tiling.chunks;
-                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9), (LAST_STAGE >= 10)>(
+                                    cube.Stage8<CAPTURE, (LAST_STAGE >= 9), (LAST_STAGE >= 10), (LAST_STAGE >= 11)>(
                                         tiling, ResolveChunk(tiling, chunks, readyChunk), readyChunk, readyHead, core,
                                         readyBank, capture);
                                 }

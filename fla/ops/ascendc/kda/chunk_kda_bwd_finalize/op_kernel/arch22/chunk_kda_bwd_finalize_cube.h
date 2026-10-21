@@ -317,7 +317,7 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
     }
 
-    template <bool CAPTURE = false, bool FINALIZE_Q = false, bool COMPUTE_RIGHT = false>
+    template <bool CAPTURE = false, bool FINALIZE_Q = false, bool COMPUTE_RIGHT = false, bool FINALIZE_K = false>
     __aicore__ inline void Stage8(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t firstHead, uint32_t core, uint32_t bank, GM_ADDR capture)
     {
@@ -345,44 +345,85 @@ public:
                 // Stage 9 also waits for S8_READY, protecting the FP32 GM inputs.
                 AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(BAND_LOADED);
             }
-            for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
-                if (firstHead + owner >= tiling.heads) {
-                    if constexpr (FINALIZE_Q) {
-                        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S8_SECOND_READY);
-                    }
-                    continue;
-                }
-                auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
-                auto b = l1[32768].ReinterpretCast<float>();
-                AscendC::SetHF32Mode(false);
-                LoadBandFp32<false>(l1[16384].ReinterpretCast<float>()[start * 8], b, 1);
-                Multiply<float>(32, 128, 64, 1);
-                LoadBandFp32<false>(l1.ReinterpretCast<float>()[start * 8], b, 0);
-                Multiply<float>(32, 128, 64, 0);
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
-                auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
-                fix.quantPre = QuantMode_t::NoQuant;
+            if constexpr (FINALIZE_K && !CAPTURE) {
+                // Publish both dq results before computing the two left results.
+                // Each phase uses one L0 slot per head and keeps the two MMADs in flight.
                 for (uint32_t matrix = 0; matrix < 2; ++matrix) {
-                    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[matrix]);
-                    auto result = l0CBuf_.Get<float>()[matrix * L0_C_SLOT_BYTES / 4];
-                    AscendC::GlobalTensor<float> output;
-                    output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-                        workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES +
-                        bank * WS_BANK_BYTES + WS_DQ_LOCAL + matrix * 32768));
-                    AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
-                    if constexpr (CAPTURE) {
-                        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-                            capture +
-                            static_cast<uint64_t>((firstHead + owner) * tiling.chunks + chunkIndex) * CAPTURE_BYTES +
-                            CAPTURE_DQ_LOCAL + matrix * 32768));
-                        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+                    for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                        if (firstHead + owner >= tiling.heads) {
+                            continue;
+                        }
+                        auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
+                        if (matrix == 0) {
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+                        }
+                        AscendC::SetHF32Mode(false);
+                        auto a = l1[matrix * 16384].ReinterpretCast<float>();
+                        auto b = l1[32768].ReinterpretCast<float>();
+                        LoadBandFp32<false>(a[start * 8], b, owner);
+                        Multiply<float>(32, 128, 64, owner);
+                        if (matrix == 1) {
+                            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                        }
                     }
-                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[matrix]);
+                    auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
+                    fix.quantPre = QuantMode_t::NoQuant;
+                    for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                        if (firstHead + owner >= tiling.heads) {
+                            continue;
+                        }
+                        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[owner]);
+                        auto result = l0CBuf_.Get<float>()[owner * L0_C_SLOT_BYTES / 4];
+                        AscendC::GlobalTensor<float> output;
+                        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES +
+                            bank * WS_BANK_BYTES + WS_DQ_LOCAL + matrix * 32768));
+                        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+                        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[owner]);
+                    }
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(matrix == 0 ? S8_READY : S8_SECOND_READY);
                 }
-                if constexpr (FINALIZE_Q) {
-                    // Publish each head after its own Fixpipe, not after the pair.
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(owner == 0 ? S8_READY : S8_SECOND_READY);
+            } else {
+                for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
+                    if (firstHead + owner >= tiling.heads) {
+                        if constexpr (FINALIZE_Q) {
+                            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(S8_SECOND_READY);
+                        }
+                        continue;
+                    }
+                    auto l1 = l1Buf_.Get<uint8_t>()[L1_STAGE8 + owner * L1_STAGE8_HEAD_BYTES];
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(keReady_[owner]);
+                    auto b = l1[32768].ReinterpretCast<float>();
+                    AscendC::SetHF32Mode(false);
+                    LoadBandFp32<false>(l1[16384].ReinterpretCast<float>()[start * 8], b, 1);
+                    Multiply<float>(32, 128, 64, 1);
+                    LoadBandFp32<false>(l1.ReinterpretCast<float>()[start * 8], b, 0);
+                    Multiply<float>(32, 128, 64, 0);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(keFree_[owner]);
+                    auto fix = AscendC::FixpipeParamsV220(128, 32, 32, 128, false);
+                    fix.quantPre = QuantMode_t::NoQuant;
+                    for (uint32_t matrix = 0; matrix < 2; ++matrix) {
+                        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[matrix]);
+                        auto result = l0CBuf_.Get<float>()[matrix * L0_C_SLOT_BYTES / 4];
+                        AscendC::GlobalTensor<float> output;
+                        output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                            workspace_ + static_cast<uint64_t>(core) * WS_CORE_BYTES + owner * WS_HEAD_BYTES +
+                            bank * WS_BANK_BYTES + WS_DQ_LOCAL + matrix * 32768));
+                        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+                        if constexpr (CAPTURE) {
+                            output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                                capture +
+                                static_cast<uint64_t>((firstHead + owner) * tiling.chunks + chunkIndex) *
+                                    CAPTURE_BYTES +
+                                CAPTURE_DQ_LOCAL + matrix * 32768));
+                            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(output[start * 128], result, fix);
+                        }
+                        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[matrix]);
+                    }
+                    if constexpr (FINALIZE_Q) {
+                        // Publish each head after its own Fixpipe, not after the pair.
+                        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(owner == 0 ? S8_READY : S8_SECOND_READY);
+                    }
                 }
             }
             if constexpr (!FINALIZE_Q) {
