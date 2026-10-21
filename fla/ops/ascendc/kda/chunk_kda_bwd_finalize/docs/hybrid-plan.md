@@ -19,7 +19,7 @@
 | 5 | H4生产库指令时间线，H2/T256/单核组 | 区分Stage 7/9/11的等待、搬运、Scalar发射 | 完整采集并归档，含三条lane |
 | 6 | H9：末带Stage 9预取Stage 11独立输入 | 死区复用，dG依赖保持 | 边界通过，八配置回退，不保留 |
 | 7 | H10：先产出两个head的dq | 两类结果分开发通知，原双槽及奇数head事件闭环 | 四轮性能复核、20case七输出通过，已保留 |
-| 8 | H11：Stage 7指数拆分复用mask | 相同32位长度、repeat≤64、恢复mask | 基于H10启动独立验证 |
+| 8 | H11：Stage 7指数拆分复用mask | 相同32位长度、repeat≤64、恢复mask | 边界通过，收益不稳定，不保留 |
 
 H5b和H6当前均独立对照H4；若先保留其中一项，另一项须重新基于新验收库构建和比较。每项先边界精度，再八配置两轮交替A/B；收益稳定后跑原20case七输出，全过才保留。最终候选还须完整200case三seed和公开入口验收，未完成时不标记工作流complete。
 
@@ -188,3 +188,7 @@ H4的四work时间线中，AIV0有2391条MOVEMASK。指令时长相互重叠，�
 先只改Stage 7的exp2拆分连续段：Maxs、Mins、两次Cast、Sub、整数Adds/ShiftLeft、Muls、Exp、Mul。所有数据均32位，count=active×128；统一Normal mask=64，repeat=active×2（2～64，capture上限32），连续块stride=1、repeat stride=8。开始设置一次mask，段尾ResetMask；原barrier、舍入模式、中心化和算术顺序保持。尾块按实际active重复，active=0仍跳过。
 
 这是减少mask指令的单项实验，不改变buffer或调度。以届时最新验收库为基线；边界→八配置两轮→有收益再20case七输出。API依据为服务器安装的`asc/impl/basic_api/dav_c220/kernel_operator_vec_{binary,unary}_impl.h`及`asc/include/basic_api`声明，本地副本存于validation/hybrid-20261020/cann-api。
+
+实测：基于H10构建，9个边界case七输出通过。首次msprof因/data满而没有导出CSV，此次无效；重跑时新旧库的输出和临时目录统一使用/dev/shm/wys/kda-finalize-h11-20261021。有效八配置两轮收益-0.309%～1.077%，目标仅0.047%/0.107%，不保留，也不进入20case。目标H10为10.835 ms，H11为10.827 ms，Vector忙时7.071→7.068 ms，未获得稳定的目标收益。
+
+H11库hash `5bd776bf5efe8e770a14cb7bb0520c35faa5a15b6d5ac2ee78490211711b0af7`。四份有效op_summary均含320个主核及320个归约核记录，已下载并按SHA256核对，工作区归档为validation/hybrid-20261020/h11-valid-performance.tar.gz；摘要和精度见`hybrid-evidence/h11-*.json`。当前验收库保持H10。/data仍满，golden20缓存删除须用户单独授权；未删除任何缓存。
