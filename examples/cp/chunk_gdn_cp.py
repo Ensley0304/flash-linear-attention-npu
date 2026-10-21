@@ -10,8 +10,8 @@
 不是自动求导封装。完整 CPU 输入仅用于对照，每个进程只把自己的切片放到 NPU。
 
 前向：Prepare -> CP pre_fwd -> all_gather/merge -> FwdH -> FwdO。
-反向：DvLocal -> CP pre_bwd -> all_gather/merge -> 边界适配 -> Dhu -> Finalize。
-当前 Dhu 忽略 dht，因此非末尾进程追加两个虚拟分块 注入边界梯度，随后裁剪输出。
+反向：DvLocal -> CP pre_bwd -> all_gather/merge -> Dhu(dht) -> Finalize。
+Merge 得到的末端梯度直接传给 Dhu，算子包需包含 PR #933 的 dht 支持。
 
 A2/A3 将 Prepare 和反向 Finalize 展开为独立小算子，普通 GDN 阶段使用
 自然对数门控，仅 CP 预处理使用转换后的 log2 门控。
@@ -168,44 +168,12 @@ def merge_boundary(summary, *, forward, rank, world):
     return boundary.unsqueeze(0).to(torch.bfloat16)
 
 
-def append_terminal_boundary(q, k, w, do, dv, gate, dht, scale):
-    """用两个虚拟分块向当前从零末状态开始的 Dhu 注入 dht。
-
-    当前仓库中的 Dhu 内核忽略 dht 参数。在 K=128、BT=64 时追加 128 个词元，
-    设置 Q=I、dO=dht/scale、K=W=dV=gate=0。反向扫描先经过这些词元，
-    在进入真实序列之前累加 scale * I.T @ (dht/scale) = dht。
-    此适配会增加两个分块的计算和 BF16 舍入，但能复用现有 NPU 内核传递边界梯度。
-    """
-    if scale == 0:
-        raise ValueError("terminal boundary adapter requires nonzero scale")
-    batch, heads, tokens, dim = q.shape
-    value_heads = w.shape[1]
-    if (batch != 1 or dim != 128 or k.shape != q.shape or heads <= 0
-            or value_heads < heads or value_heads % heads
-            or w.shape != (1, value_heads, tokens, 128)
-            or do.shape != dv.shape or dv.shape != (1, value_heads, tokens, 128)
-            or gate.shape != (1, value_heads, tokens)
-            or dht.shape != (1, value_heads, 128, 128)):
-        raise ValueError("边界适配要求 B=1、K=V=128、Hv 为 Hk 的整数倍，且各输入布局匹配")
-    identity = torch.eye(128, device=q.device, dtype=q.dtype)[None, None].expand(1, heads, -1, -1)
-    zero_key = torch.zeros_like(identity)
-    zero_w = torch.zeros(1, value_heads, 128, 128, device=w.device, dtype=w.dtype)
-    zero_value = torch.zeros(1, value_heads, 128, dv.shape[-1], device=dv.device, dtype=dv.dtype)
-    zero_gate = torch.zeros(*gate.shape[:2], 128, *gate.shape[3:], device=gate.device, dtype=gate.dtype)
-    tails = (identity, zero_key, zero_w, (dht.float() / scale).to(do.dtype), zero_value, zero_gate)
-    return tuple(torch.cat((x, tail), dim=2).contiguous()
-                 for x, tail in zip((q, k, w, do, dv, gate), tails))
-
-
-def dhu_with_boundary(q, k, w, do, dv, gate, dht, *, scale, has_future, use_exp2=True):
+def dhu_with_boundary(q, k, w, do, dv, gate, dht, *, scale, use_exp2=True):
     from fla_npu.ops.ascendc import chunk_gated_delta_rule_bwd_dhu
 
-    tokens = q.shape[2]
-    if has_future:
-        q, k, w, do, dv, gate = append_terminal_boundary(q, k, w, do, dv, gate, dht, scale)
     dh, _, dv_scan = chunk_gated_delta_rule_bwd_dhu(
-        q, k, w, do, dv, scale, 64, g=gate, h0=None, dht=None, use_exp2=use_exp2)
-    return dh[:, :tokens // 64].contiguous(), dv_scan[:, :, :tokens].contiguous()
+        q, k, w, do, dv, scale, 64, g=gate, h0=None, dht=dht, use_exp2=use_exp2)
+    return dh, dv_scan
 
 
 def run_gdn_a5(x, *, scale, rank, world):
@@ -235,7 +203,7 @@ def run_gdn_a5(x, *, scale, rank, world):
                                       g=gc, cu_seqlens=[0, q.shape[2]])
     dht = merge_boundary(dhm, forward=False, rank=rank, world=world)
     dh, du = dhu_with_boundary(q, k, w, do, dv_local, gc, dht,
-                              scale=scale, has_future=rank + 1 < world)
+                              scale=scale)
     gradients = chunk_gated_delta_rule_bwd_finalize(
         q, k, v, v_new, do, du, gc, beta_eff, h, dh, a,
         scale=scale, use_exp2=True)
@@ -275,7 +243,7 @@ def run_gdn_a2_a3(x, *, scale, rank, world):
                                       g=gc_cp, cu_seqlens=[0, q.shape[2]])
     dht = merge_boundary(dhm, forward=False, rank=rank, world=world)
     dh, du = dhu_with_boundary(q, k, w, do, dv_local, gc, dht,
-                              scale=scale, has_future=rank + 1 < world, use_exp2=False)
+                              scale=scale, use_exp2=False)
     dq, dk, dw, dg = chunk_bwd_dqkwg(q, k, v_new, gc, h, do, dh, du, 64,
                                     scale=scale, use_exp2=False)
     da = prepare_wy_repr_bwd_da(k, v, beta, a, dw, du, gc, chunk_size=64)

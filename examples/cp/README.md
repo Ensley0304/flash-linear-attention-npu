@@ -15,6 +15,8 @@ export HCCL_EXEC_TIMEOUT=120
 
 包需提供 `pre_process_fwd_kernel_merged`、`chunk_delta_h_bwd_preprocess`（反向预处理旧名）、`merge_fwd_bwd_kernel`。KDA 在 A2/A3/A5 上均需 `aclnnChunkKdaBwdPrepare` 和 `aclnnChunkKdaBwdFinalize`；A2/A3 请使用包含 [PR #915](https://github.com/flashserve/flash-linear-attention-npu/pull/915) 的算子包（含正向 Prepare 精度修复）。
 
+GDN/KDA 均直接向 Dhu 传入 Merge 得到的 `dht`，算子包还需包含 [PR #933](https://github.com/flashserve/flash-linear-attention-npu/pull/933) 的修复；旧 Dhu 会忽略该参数，不能用于本示例。
+
 ## 运行
 
 在仓库根目录执行，将设备 `0,1` 替换为分配到的卡。脚本自动识别平台；双卡时全局 T=256，每卡处理 128 个 token。
@@ -102,6 +104,6 @@ python examples/cp/chunk_kda_cp.py --tokens 128 --heads 2 --cpu-reference-only
 
 - `chunk_size=64`，保存中间量、不开重计算。GDN 支持 GVA；KDA 示例要求 Hk=Hv。
 - KDA 在 A2/A3/A5 上均使用原生 `BwdPrepare → CP 预处理/通信/Merge → Dhu → BwdFinalize`，不再使用 PyTorch 拼接反向计算。
-- A2/A5 已通过 GDN/KDA 单卡、双卡及 GDN GVA 精度验证；A3 共用分支由 A2 验证，未做 A3 实机验证。
+- 直接传入 dht 的版本已在 A2 验证 GDN/KDA 单卡、双卡、GDN GVA，以及 KDA 全局 T=131072、CP=2 的正反向精度；A5 此次未重测，A3 未做实机验证。
 - 不覆盖 varlen/packed、zigzag、不等长切分、外部非零初始状态、末状态损失和多机验证。
-- 当前 Dhu 的 dht 接入通过追加两个虚拟 chunk 后裁剪实现，有额外开销；未做性能验收。
+- Dhu 直接使用 `dht`，不追加虚拟 chunk；未做性能验收。

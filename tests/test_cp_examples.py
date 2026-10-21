@@ -16,26 +16,31 @@ import chunk_gdn_cp
 
 
 class BoundaryChecks:
-    def test_synthetic_chunks_inject_terminal_state(self):
-        torch.set_num_threads(1)
-        gen = torch.Generator().manual_seed(19)
-        q = torch.randn(1, 2, 64, 128, generator=gen).bfloat16()
-        dht = torch.randn(1, 2, 128, 128, generator=gen).bfloat16()
-        for key_gate in (self.kind == "kda",):
-            gate = torch.zeros_like(q, dtype=torch.float32) if key_gate else torch.zeros(1, 2, 64)
-            extended = self.example.append_terminal_boundary(q, q, q, q, q, gate, dht, 128 ** -0.5)
-            qe, ke, we, doe, dve, ge = extended
-            for value in extended[:5]:
-                torch.testing.assert_close(value[:, :, :64], q)
-            self.assertEqual(ke[:, :, 64:].count_nonzero().item(), 0)
-            self.assertEqual(we[:, :, 64:].count_nonzero().item(), 0)
-            self.assertEqual(dve[:, :, 64:].count_nonzero().item(), 0)
-            self.assertEqual(ge[:, :, 64:].count_nonzero().item(), 0)
-            state = torch.zeros_like(dht, dtype=torch.float32)
-            for begin in (128, 64):  # 仅反向扫描追加的两个虚拟分块
-                state += (qe[:, :, begin:begin + 64].float().transpose(-1, -2)
-                          @ doe[:, :, begin:begin + 64].float()) * (128 ** -0.5)
-            torch.testing.assert_close(state, dht.float(), rtol=0.004, atol=0.0001)
+    def test_dht_reaches_dhu_without_padding(self):
+        x = self.example.make_inputs(128, 2, 19)
+        dht = torch.randn(1, 2, 128, 128).bfloat16()
+        dv = torch.zeros_like(x["v"])
+        dh = torch.zeros(1, 2, 2, 128, 128).bfloat16()
+        fake = types.ModuleType("fla_npu.ops.ascendc")
+        calls = []
+
+        def dhu(*args, **kwargs):
+            calls.append((args, kwargs))
+            return dh, None, dv
+
+        fake.chunk_gated_delta_rule_bwd_dhu = dhu
+        with patch.dict(sys.modules, {"fla_npu.ops.ascendc": fake}):
+            for terminal in (dht, torch.zeros_like(dht)):
+                actual = self.example.dhu_with_boundary(
+                    x["q"], x["k"], x["k"], x["do"], dv, x["g"], terminal,
+                    scale=128 ** -0.5)
+                args, kwargs = calls[-1]
+                self.assertIs(kwargs["dht"], terminal)
+                self.assertIs(kwargs["gK" if self.kind == "kda" else "g"], x["g"])
+                for got, expected in zip(args[:5], (x["q"], x["k"], x["k"], x["do"], dv)):
+                    self.assertIs(got, expected)
+                self.assertIs(actual[0], dh)
+                self.assertIs(actual[1], dv)
 
     def test_prefix_suffix_and_empty_neighbours(self):
         # 使用不同且不可交换的状态变换，保证颠倒任一合并顺序都会改变结果。
@@ -123,7 +128,7 @@ class GdnGvaTests(unittest.TestCase):
             with self.subTest(hv=hv), self.assertRaises(SystemExit):
                 chunk_gdn_cp.parse_args(["--heads", "2", "--value-heads", str(hv)])
 
-    def test_grouped_reference_and_terminal_boundary(self):
+    def test_grouped_reference(self):
         """逐 value head 独立计算，核对共享 Q/K 的梯度求和及不同 head 的边界。"""
         torch.set_num_threads(1)
         for ratio in (2, 3, 4):
@@ -145,17 +150,6 @@ class GdnGvaTests(unittest.TestCase):
                     torch.testing.assert_close(actual[name], expected[name], rtol=1e-5, atol=1e-6)
                 # 组内贡献必须求和而不是平均；此错误应被当前精度判据拒绝。
                 self.assertFalse(chunk_gdn_cp.metric(actual["dk"] / ratio, expected["dk"], 0.008)[0])
-                dht = dstates[1].bfloat16()
-                qe, ke, we, doe, dve, ge = chunk_gdn_cp.append_terminal_boundary(
-                    x["q"], x["k"], torch.zeros_like(x["v"]), x["do"],
-                    torch.zeros_like(x["v"]), x["g"], dht, 128 ** -0.5)
-                for hv in range(2 * ratio):
-                    injected = qe[:, hv // ratio, -128:].float().transpose(-1, -2) @ doe[:, hv, -128:].float()
-                    torch.testing.assert_close(injected * (128 ** -0.5), dht[:, hv].float(),
-                                               rtol=0.004, atol=0.0001)
-                self.assertEqual(tuple(we.shape), (1, 2 * ratio, 256, 128))
-                for tail in (ke, we, dve, ge):
-                    self.assertEqual(tail[:, :, -128:].count_nonzero().item(), 0)
 
 
 if __name__ == "__main__":
