@@ -1,5 +1,9 @@
 # A2/A3 Finalize Stage 划分
 
+当前hybrid分支以H4为验收基线：Stage 8/10使用关闭HF32的FP32操作数，两个lower矩阵在L1跨带复用；Stage 7生产路径按32行生成band操作数，FP32输出双槽兼作运算临时区。下文首版及历史实验按日期保留，最新地址、生命周期和验收证据见[两版融合优化](hybrid-plan.md)的H3/H4章节。H5b未保留，H6/H7仍是隔离候选。
+
+2026-10-21性能目标：A2，B=1/H=96/T=8192/K=V=128/BF16，定长BNSD，无l2norm和beta sigmoid反向，Stage01Kernel与Stage12Kernel的Task Duration之和低于8 ms。采用同输入、20次预热及20次采样、两轮交替A/B；算子语义和原精度门禁不变。
+
 2026-10-17 协作实验：Stage9 两 AIV 各处理同一 head 的半带，先 head0 后 head1；Stage7 经 GM 交接原 FP32 指数，Stage11 保留原归属。八配置两轮 A/B 耗时增加9.47%～16.15%，不采用，代码已恢复 tile16。候选及证据在工作区 `validation/perf-coop-20261017`，不改变下述已验收设计。
 
 方案来源：用户确认的 A2/A3 设计稿（2026-10-11）。通用规则参考仓库 V2；任务映射、Vector 分块和数据路径以本方案及 [A2/A3 准则](a2a3/A2A3stage划分准则.md) 为准。
