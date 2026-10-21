@@ -1,0 +1,13 @@
+{
+  "label": "h23",
+  "performance_valid": false,
+  "precision_report_valid": true,
+  "library_sha256": "cd71c024faca3fa9f4bf65f7f606427aec326a03505b2300fc585738d0ddcacb",
+  "device": 0,
+  "reason": "Another test process was found on device 0 after capture; its start time overlaps these measurements. Do not use these performance results for acceptance or speedup claims.",
+  "other_process_start": "2026-10-21 20:30:57 +0800",
+  "performance_gate_file_time": "2026-10-21 20:35:31.596 +0800",
+  "replacement_label": "h23d2",
+  "replacement_device": 2,
+  "original_reports_preserved": true
+}

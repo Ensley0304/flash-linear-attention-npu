@@ -96,8 +96,9 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
             }
             for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                 if (firstHead + owner < tiling.heads) {
-                    cube.Stage0<CAPTURE>(tiling, chunk, chunkIndex, firstHead + owner, owner, core, capture, bank,
-                                         LAST_STAGE >= 4 ? bank : 0);
+                    cube.Stage0<CAPTURE, (LAST_STAGE >= 5 && !CAPTURE)>(tiling, chunk, chunkIndex, firstHead + owner,
+                                                                        owner, core, capture, bank,
+                                                                        LAST_STAGE >= 4 ? bank : 0);
                     if constexpr (LAST_STAGE < 2) {
                         cube.WaitDw(owner);
                         cube.ReleaseAkk(owner);
@@ -276,11 +277,11 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                 if (head < tiling.heads) {
                     const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                     if (chunk.validRows == CHUNK_SIZE) {
-                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5), true>(tiling, chunk, chunkIndex, head, owner, core,
-                                                                        capture, bank);
+                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5), true, (LAST_STAGE >= 5 && !CAPTURE)>(
+                            tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                     } else {
-                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5)>(tiling, chunk, chunkIndex, head, owner, core, capture,
-                                                                  bank);
+                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5), false, (LAST_STAGE >= 5 && !CAPTURE)>(
+                            tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                     }
                 }
             }
@@ -309,11 +310,11 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         if (previousHead < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
                             if (chunk.validRows == CHUNK_SIZE) {
-                                vector.Stage5<CAPTURE, true>(tiling, chunk, previousChunk, previousHead, owner, core,
-                                                             capture, bank ^ 1);
+                                vector.Stage5<CAPTURE, true, !CAPTURE>(tiling, chunk, previousChunk, previousHead,
+                                                                       owner, core, capture, bank ^ 1);
                             } else {
-                                vector.Stage5<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
-                                                       bank ^ 1);
+                                vector.Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, previousChunk, previousHead,
+                                                                        owner, core, capture, bank ^ 1);
                             }
                         }
                         if constexpr (LAST_STAGE >= 7) {
@@ -361,10 +362,11 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         if (head < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                             if (chunk.validRows == CHUNK_SIZE) {
-                                vector.Stage5<CAPTURE, true>(tiling, chunk, chunkIndex, head, owner, core, capture,
-                                                             bank);
+                                vector.Stage5<CAPTURE, true, !CAPTURE>(tiling, chunk, chunkIndex, head, owner, core,
+                                                                       capture, bank);
                             } else {
-                                vector.Stage5<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                                vector.Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, chunkIndex, head, owner, core,
+                                                                        capture, bank);
                             }
                         }
                         if constexpr (LAST_STAGE >= 7) {

@@ -85,7 +85,7 @@ public:
     }
 
     // Four GEMMs, two independent operand/result slots. Wait only at consumption.
-    template <bool CAPTURE = false>
+    template <bool CAPTURE = false, bool CUBE_RH = false>
     __aicore__ inline void Stage0(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0, uint32_t akkBank = 0)
@@ -143,7 +143,9 @@ public:
 
         // zV = dv_scan @ v^T; its MMAD overlaps the BF16 dW export below.
         auto zv = Multiply(CHUNK_SIZE, CHUNK_SIZE, HEAD_DIM, 1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_[owner]);
+        if constexpr (!CUBE_RH) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_[owner]);
+        }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[0]);
         // The only production dW destination is BF16 NZ L1, retained for Stage 2.
         auto dwFix = AscendC::FixpipeParamsV220(HEAD_DIM, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, false);
@@ -167,6 +169,23 @@ public:
             AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(snapshot[CAPTURE_ZV / sizeof(float)], zv, matrixFix);
         }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[1]);
+        if constexpr (CUBE_RH) {
+            // Four diagonal 32x32 blocks trade extra arithmetic for fewer small-GEMM launches.
+            auto rhFix = AscendC::FixpipeParamsV220(32, 32, 32, 32, false);
+            rhFix.quantPre = QuantMode_t::NoQuant;
+            for (uint32_t block = 0; block < HEAD_DIM / 32; ++block) {
+                const uint32_t slot = block & 1;
+                LoadOperands<false, true>(hL1[block * 2 * FRACTAL_ELEMENTS], dhL1[block * 2 * FRACTAL_ELEMENTS], 32, 32,
+                                          HEAD_DIM, slot, HEAD_DIM, HEAD_DIM);
+                auto dots = Multiply(32, 32, HEAD_DIM, slot);
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[slot]);
+                AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
+                    output[WS_DQ_LOCAL / sizeof(float) + block * 4 * FRACTAL_ELEMENTS], dots, rhFix);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
+            }
+            // Next-work h/dh preload may start only after the final operand read.
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1Free_[owner]);
+        }
     }
 
     __aicore__ inline void LoadKe(uint32_t owner, uint32_t core, uint32_t bank = 0)
@@ -564,7 +583,8 @@ private:
 
     template <bool TRANSPOSE_A, bool TRANSPOSE_B, bool RESIDUAL = false>
     __aicore__ inline void LoadOperands(AscendC::LocalTensor<bfloat16_t> a, AscendC::LocalTensor<bfloat16_t> b,
-                                        uint32_t m, uint32_t n, uint32_t k, uint32_t slot, uint32_t aRows = 0)
+                                        uint32_t m, uint32_t n, uint32_t k, uint32_t slot, uint32_t aRows = 0,
+                                        uint32_t bRows = 0)
     {
         auto l0A = l0ABuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
         auto l0B = l0BBuf_.Get<bfloat16_t>()[slot * L0_AB_SLOT_BYTES / sizeof(bfloat16_t)];
@@ -593,10 +613,20 @@ private:
             }
             if constexpr (TRANSPOSE_B) {
                 // ND [n,k] -> L1 NZ directly matches the transposed L0B order.
-                load.repeatTimes = (k / 16) * (n / 16);
-                load.srcStride = 1;
                 load.ifTranspose = false;
-                AscendC::LoadData(bDst, bSrc, load);
+                if (bRows == 0) {
+                    load.repeatTimes = (k / 16) * (n / 16);
+                    load.srcStride = 1;
+                    AscendC::LoadData(bDst, bSrc, load);
+                } else {
+                    // Diagonal slices retain their parent's source stride; interleave L0B columns.
+                    load.repeatTimes = k / 16;
+                    load.srcStride = bRows / 16;
+                    load.dstGap = n / 16 - 1;
+                    for (uint32_t column = 0; column < n / 16; ++column) {
+                        AscendC::LoadData(bDst[column * FRACTAL_ELEMENTS], bSrc[column * FRACTAL_ELEMENTS], load);
+                    }
+                }
             } else {
                 load.repeatTimes = n / 16;
                 load.srcStride = k / 16;

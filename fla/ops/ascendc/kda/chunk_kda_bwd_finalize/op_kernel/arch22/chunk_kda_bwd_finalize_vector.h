@@ -32,7 +32,7 @@ public:
         }
     }
 
-    template <bool CAPTURE = false, bool SAVE_RH = false, bool FULL_CHUNK = false>
+    template <bool CAPTURE = false, bool SAVE_RH = false, bool FULL_CHUNK = false, bool CUBE_RH = false>
     __aicore__ inline void Stage1(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0)
@@ -56,34 +56,37 @@ public:
         auto dhFloat = ub_[UB_WORK + 6 * UB_WORK_SLOT_BYTES].ReinterpretCast<float>();
         auto product = ub_[UB_WORK + 8 * UB_WORK_SLOT_BYTES].ReinterpretCast<float>();
         auto partial = ub_[UB_WORK + 10 * UB_WORK_SLOT_BYTES].ReinterpretCast<float>();
-        for (uint32_t slot = 0; slot < 2; ++slot) {
-            auto input = ub_[UB_WORK + slot * 2 * UB_WORK_SLOT_BYTES].ReinterpretCast<bfloat16_t>();
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-            AscendC::DataCopy(input, h_[stateOffset + slot * TILE_ELEMENTS], TILE_ELEMENTS);
-            AscendC::DataCopy(input[TILE_ELEMENTS], dh_[stateOffset + slot * TILE_ELEMENTS], TILE_ELEMENTS);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
-        }
-        // Release each input after Cast, so the next DMA overlaps Mul/reduction.
-        for (uint32_t tile = 0; tile < HEAD_DIM / TILE_ROWS; ++tile) {
-            const uint32_t slot = tile & 1;
-            auto input = ub_[UB_WORK + slot * 2 * UB_WORK_SLOT_BYTES].ReinterpretCast<bfloat16_t>();
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
-            AscendC::Cast(hFloat, input, AscendC::RoundMode::CAST_NONE, TILE_ELEMENTS);
-            AscendC::Cast(dhFloat, input[TILE_ELEMENTS], AscendC::RoundMode::CAST_NONE, TILE_ELEMENTS);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-            if (tile + 2 < HEAD_DIM / TILE_ROWS) {
+        if constexpr (!CUBE_RH) {
+            for (uint32_t slot = 0; slot < 2; ++slot) {
+                auto input = ub_[UB_WORK + slot * 2 * UB_WORK_SLOT_BYTES].ReinterpretCast<bfloat16_t>();
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-                AscendC::DataCopy(input, h_[stateOffset + (tile + 2) * TILE_ELEMENTS], TILE_ELEMENTS);
-                AscendC::DataCopy(input[TILE_ELEMENTS], dh_[stateOffset + (tile + 2) * TILE_ELEMENTS], TILE_ELEMENTS);
+                AscendC::DataCopy(input, h_[stateOffset + slot * TILE_ELEMENTS], TILE_ELEMENTS);
+                AscendC::DataCopy(input[TILE_ELEMENTS], dh_[stateOffset + slot * TILE_ELEMENTS], TILE_ELEMENTS);
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
             }
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Mul(product, hFloat, dhFloat, TILE_ELEMENTS);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::WholeReduceSum(partial, product, 64, TILE_ROWS, 1, 1, 16);
-            AscendC::WholeReduceSum(partial[64], product[64], 64, TILE_ROWS, 1, 1, 16);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(rH[tile * TILE_ROWS], partial, partial[64], TILE_ROWS);
+            // Release each input after Cast, so the next DMA overlaps Mul/reduction.
+            for (uint32_t tile = 0; tile < HEAD_DIM / TILE_ROWS; ++tile) {
+                const uint32_t slot = tile & 1;
+                auto input = ub_[UB_WORK + slot * 2 * UB_WORK_SLOT_BYTES].ReinterpretCast<bfloat16_t>();
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+                AscendC::Cast(hFloat, input, AscendC::RoundMode::CAST_NONE, TILE_ELEMENTS);
+                AscendC::Cast(dhFloat, input[TILE_ELEMENTS], AscendC::RoundMode::CAST_NONE, TILE_ELEMENTS);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+                if (tile + 2 < HEAD_DIM / TILE_ROWS) {
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+                    AscendC::DataCopy(input, h_[stateOffset + (tile + 2) * TILE_ELEMENTS], TILE_ELEMENTS);
+                    AscendC::DataCopy(input[TILE_ELEMENTS], dh_[stateOffset + (tile + 2) * TILE_ELEMENTS],
+                                      TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+                }
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Mul(product, hFloat, dhFloat, TILE_ELEMENTS);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::WholeReduceSum(partial, product, 64, TILE_ROWS, 1, 1, 16);
+                AscendC::WholeReduceSum(partial[64], product[64], 64, TILE_ROWS, 1, 1, 16);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Add(rH[tile * TILE_ROWS], partial, partial[64], TILE_ROWS);
+            }
         }
 
         // Retain k, exp2_gk and gk_last in their final resident addresses.
@@ -178,7 +181,7 @@ public:
             AscendC::DataCopy(snapshot[CAPTURE_RH], rH.ReinterpretCast<uint8_t>(), HEAD_DIM * sizeof(float));
             AscendC::DataCopy(snapshot[CAPTURE_GK_LAST], gLast.ReinterpretCast<uint8_t>(), HEAD_DIM * sizeof(float));
         }
-        if constexpr (SAVE_RH) {
+        if constexpr (SAVE_RH && !CUBE_RH) {
             AscendC::GlobalTensor<float> saved;
             saved.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + slotOffset + WS_RH));
             AscendC::DataCopy(saved, rH, HEAD_DIM);
@@ -361,9 +364,17 @@ public:
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
         dqRaw_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dqRaw));
         scale_ = scale;
+        auto rhIndices = ub_[85 * 1024 + 256].ReinterpretCast<uint32_t>();
+        for (uint32_t row = 0; row < HEAD_DIM; ++row) {
+            rhIndices.SetValue(row, ((row / 32) * 4 * FRACTAL_ELEMENTS + (row % 32) * 33) * sizeof(float));
+        }
+        const auto indicesReady = pipe_->AllocEventID<AscendC::HardEvent::S_V>();
+        AscendC::SetFlag<AscendC::HardEvent::S_V>(indicesReady);
+        AscendC::WaitFlag<AscendC::HardEvent::S_V>(indicesReady);
+        pipe_->ReleaseEventID<AscendC::HardEvent::S_V>(indicesReady);
     }
 
-    template <bool CAPTURE = false, bool FULL_CHUNK = false>
+    template <bool CAPTURE = false, bool FULL_CHUNK = false, bool CUBE_RH = false>
     __aicore__ inline void Stage5(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
@@ -382,7 +393,7 @@ public:
         dk.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DK_BASE));
         dg.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DG_BASE));
         dbOut.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DB_BASE));
-        savedRh.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_RH));
+        savedRh.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + (CUBE_RH ? WS_DQ_LOCAL : WS_RH)));
         AscendC::GlobalTensor<uint8_t> snapshot;
         if constexpr (CAPTURE) {
             snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(
@@ -405,9 +416,21 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
         }
         AscendC::DataCopy(last, gk_[(token + rows - 1) * HEAD_DIM], HEAD_DIM);
-        AscendC::DataCopy(rh, savedRh, HEAD_DIM);
+        if constexpr (CUBE_RH) {
+            AscendC::DataCopy(ub_[UB_WORK].ReinterpretCast<float>(), savedRh, HEAD_DIM * 32);
+        } else {
+            AscendC::DataCopy(rh, savedRh, HEAD_DIM);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
+        if constexpr (CUBE_RH) {
+            AscendC::Gather(rh, ub_[UB_WORK].ReinterpretCast<float>(), ub_[85 * 1024 + 256].ReinterpretCast<uint32_t>(),
+                            0, HEAD_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+            // Gather must finish before the first Stage 5 input overwrites its source.
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
+        }
         AscendC::Muls(gate, last, LN2, HEAD_DIM);
         AscendC::Brcb(broadcast, ub_[UB_BETA].ReinterpretCast<float>(), 8, {1, 8});
         AscendC::PipeBarrier<PIPE_V>();

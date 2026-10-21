@@ -1,0 +1,35 @@
+{
+  "label": "h24",
+  "complete": true,
+  "lanes": [
+    "core0.cubecore0",
+    "core0.veccore0",
+    "core0.veccore1"
+  ],
+  "source_lines": false,
+  "log_sha256": "ff0e002b7585969afd4f201f9e147e2c24af98c11bcf33c4b811e19f99cf170a",
+  "shape": {
+    "B": 1,
+    "H": 2,
+    "T": 256,
+    "K": 128,
+    "V": 128,
+    "cores": 1,
+    "norm": false,
+    "beta": 0
+  },
+  "library_sha256": "4f93391f97e4e4219787eb73a6436a94c14e9efd82300c6faf8a2d7b1f02d281",
+  "files": {
+    "simulator/visualize_data.bin": "2fe6ca1f55c32b1c580bc38535d6e1bf88cfe8511d04fc2ed04c6d3f0930c720",
+    "simulator/trace.json": "5ea44aea269ca7de496fe43204bd545530a0c31e686a8cc5e68ef5b8a7a13242",
+    "simulator/core0.veccore0/core0.veccore0_instr_exe.csv": "52a28b5ac749999e21bc30c1f012ab8df978d4e75aaeee785a3d5c2d6ce20637",
+    "simulator/core0.veccore0/trace.json": "3f882bb1f6d8fe4111ed44ec8a23f694713b2bc5c08412ae0fb7886e4b647bd0",
+    "simulator/core0.veccore0/core0.veccore0_code_exe.csv": "244c34dd98bee2ea57c8dcfbdf239d766b8494440d8d7c858e9663c797bd58e6",
+    "simulator/core0.veccore1/core0.veccore1_instr_exe.csv": "999c70fc9ee0b5a781638b666339ce9682f28c912912d617f3303b8e55a07a86",
+    "simulator/core0.veccore1/core0.veccore1_code_exe.csv": "244c34dd98bee2ea57c8dcfbdf239d766b8494440d8d7c858e9663c797bd58e6",
+    "simulator/core0.veccore1/trace.json": "7714aee43381986c432217c5bc808cee44967938ce49bce912984425974d4dc5",
+    "simulator/core0.cubecore0/core0.cubecore0_code_exe.csv": "244c34dd98bee2ea57c8dcfbdf239d766b8494440d8d7c858e9663c797bd58e6",
+    "simulator/core0.cubecore0/trace.json": "d2edaf70b512210c303b6ce9cb4bb28c5c0adf2db39a8b4114e6800c5d626704",
+    "simulator/core0.cubecore0/core0.cubecore0_instr_exe.csv": "3bd42b6d3d79e9a08782ddf1c07de876127f070dc67fd77bdf03eb47edc0cc47"
+  }
+}
