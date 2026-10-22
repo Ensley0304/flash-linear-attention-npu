@@ -1,5 +1,7 @@
 # A2 KDA backward Finalize 精度验证
 
+2026-10-22 增量 S1：Stage 11 前带无 norm 16 行布局，九个边界及原 20 case 的 140 输出均通过原 FP32/FP64 CT L1，参考 hash 和种子未变。设备 4 两轮 A/B 的无 norm 四配置均稳定改善，norm 指令与 R2b 相同。目标 B1/H96/T8192/K=V128/BF16 无附加反向 10.4700→10.3655 ms；仍未达 9 ms。本轮不是完整 200×3 或公开入口验收。库、原始证据及适用条件见[实验记录](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/compact-stage11.md)。
+
 测试入口为 `torch.ops.ascend_ops.kda_finalize_stage01(last_stage=12)`，使用关闭
 capture 的实际设备动态库，验证完整七个输出。当前是 A2 开发入口验收，不代表公开
 ACLNN/OPP 接口、A3、GPU 双标杆或整模型训练验收。
