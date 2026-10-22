@@ -384,3 +384,7 @@ head 0 在 Stage 11 结束前也消费 BAND_LOADED，保留整对 workspace 的�
 ## 局部流水候选复核（2026-10-17，均未采用）
 
 依次测试最终dq私有写回裁剪、Stage7高低位合并搬运、第三BF16输出槽、Stage8搬32行、Stage10搬32列、整条band零区裁剪，并复核三个仅无norm版本。九版均未通过八配置双轮性能门禁，不改变当前双buffer、数据布局及计算路径。边界七输出逐位一致，但没有候选进入原20case正式精度验收。完整证据见工作区validation/perf-local-20261017/README.md。
+
+## Stage 5→9 的 dq_base 局部驻留（2026-10-22）
+
+完整 chunk、无 l2norm、非 capture 的 Stage 11/12 路径，将 dq_base 最后八行保留在 UB[188,192) KiB，Stage 9 首带消费后再复用为 product。少一次 GM 写回和读回，双缓冲、公式、舍入及其他路径不变。带 norm 指令与 h24 一致。八配置两轮实测、专项性能门禁及原 20 case 七输出通过，采用；资源、失败候选和数据见 [resident-transfer.md](resident-transfer.md)。

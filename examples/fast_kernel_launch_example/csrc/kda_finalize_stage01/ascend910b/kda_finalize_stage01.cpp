@@ -310,8 +310,8 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         if (previousHead < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
                             if (chunk.validRows == CHUNK_SIZE) {
-                                vector.Stage5<CAPTURE, true, !CAPTURE>(tiling, chunk, previousChunk, previousHead,
-                                                                       owner, core, capture, bank ^ 1);
+                                vector.Stage5<CAPTURE, true, !CAPTURE, (LAST_STAGE >= 11 && !CAPTURE && !Q_NORM)>(
+                                    tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                             } else {
                                 vector.Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, previousChunk, previousHead,
                                                                         owner, core, capture, bank ^ 1);
@@ -362,8 +362,8 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                         if (head < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                             if (chunk.validRows == CHUNK_SIZE) {
-                                vector.Stage5<CAPTURE, true, !CAPTURE>(tiling, chunk, chunkIndex, head, owner, core,
-                                                                       capture, bank);
+                                vector.Stage5<CAPTURE, true, !CAPTURE, (LAST_STAGE >= 11 && !CAPTURE && !Q_NORM)>(
+                                    tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                             } else {
                                 vector.Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, chunkIndex, head, owner, core,
                                                                         capture, bank);

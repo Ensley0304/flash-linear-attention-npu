@@ -374,7 +374,7 @@ public:
         pipe_->ReleaseEventID<AscendC::HardEvent::S_V>(indicesReady);
     }
 
-    template <bool CAPTURE = false, bool FULL_CHUNK = false, bool CUBE_RH = false>
+    template <bool CAPTURE = false, bool FULL_CHUNK = false, bool CUBE_RH = false, bool SAVE_DQ = false>
     __aicore__ inline void Stage5(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
@@ -525,7 +525,18 @@ public:
             }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
-            AscendC::DataCopy(dq[offset], dqOut, ELEMENTS);
+            if constexpr (SAVE_DQ && FULL_CHUNK && !CAPTURE) {
+                if (tile == 3) {
+                    // Preserve the final eight rows until the first Stage 9 remap.
+                    AscendC::Adds(ub_[188 * 1024].ReinterpretCast<float>(), dqOut[8 * HEAD_DIM], 0.0f,
+                                  8 * HEAD_DIM);
+                    AscendC::DataCopy(dq[offset], dqOut, 8 * HEAD_DIM);
+                } else {
+                    AscendC::DataCopy(dq[offset], dqOut, ELEMENTS);
+                }
+            } else {
+                AscendC::DataCopy(dq[offset], dqOut, ELEMENTS);
+            }
             AscendC::DataCopy(dk[offset], dkOut, ELEMENTS);
             AscendC::DataCopy(dg[offset], dgOut, ELEMENTS);
             if constexpr (CAPTURE) {
@@ -1001,7 +1012,18 @@ public:
             auto input = ub_[(88 + slot * 24) * 1024].ReinterpretCast<float>();
             const uint32_t first = start + slot * ROWS;
             // Both bases are from Stage 5; prefetch them before waiting for Cube.
-            AscendC::DataCopy(input[ELEMENTS], dqBase[first * HEAD_DIM], ELEMENTS);
+            if constexpr (FULL_CHUNK && !CAPTURE && DEFER_LEFT && !Q_NORM) {
+                if (first == 48) {
+                    AscendC::DataCopy(input[ELEMENTS], dqBase[first * HEAD_DIM], 8 * HEAD_DIM);
+                    // Consume the cache before product[184,192) reuses its storage.
+                    AscendC::Adds(input[ELEMENTS + 8 * HEAD_DIM], ub_[188 * 1024].ReinterpretCast<float>(),
+                                  0.0f, 8 * HEAD_DIM);
+                } else {
+                    AscendC::DataCopy(input[ELEMENTS], dqBase[first * HEAD_DIM], ELEMENTS);
+                }
+            } else {
+                AscendC::DataCopy(input[ELEMENTS], dqBase[first * HEAD_DIM], ELEMENTS);
+            }
             AscendC::DataCopy(input[2 * ELEMENTS], dgBase[first * HEAD_DIM], ELEMENTS);
         }
         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S8_READY);
