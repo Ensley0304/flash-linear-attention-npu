@@ -1,5 +1,7 @@
 # A2 KDA backward Finalize 精度验证
 
+本轮最终库为 S3（`26d551ca`），累计保留 S1/S1b/S3，各自原 20 case、140 输出全过。最终与起始 R2b 两轮八配置直接对照均改善，原始模型 10.473→9.988 ms（4.63%）。完整 200×3、公开入口、A5 未重跑；9 ms 目标未达到。详见[本轮结果及库哈希](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/attachment-optimization-20261022.md)。
+
 2026-10-22 最新增量 S3：Stage 7 lower 32 行批量生成，九边界和原 20 case、140 输出全过，冻结 FP32/FP64、CT L1、种子均不变；八配置两轮均改善 0.706%～2.694%，目标 10.1387→10.0514 ms。库哈希和报告见[验收记录](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/stage7-lower-batch.md)。9 ms 和完整 200×3 验收未完成。
 
 2026-10-22 后续增量 S1b：提前 raw_g 搬运，九边界和原 20 case、140 输出全部通过原 CT L1 双标杆；无 norm 两轮稳定改善 2.63%～2.86%，norm 主核指令不变。目标同轮 S1 10.4804→10.1867 ms。报告和库哈希见下方[实验记录](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/compact-stage11.md)，完整 200×3 未重跑。

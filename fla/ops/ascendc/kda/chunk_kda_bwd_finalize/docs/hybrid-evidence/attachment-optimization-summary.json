@@ -1,0 +1,92 @@
+{
+  "baseline": "3db5e900 / R2b",
+  "accepted": "26d551ca / S3",
+  "library_sha256": "84df9828475c1aa434ac80d79fee68a6070666445db2814ac03077b06228ce22",
+  "cases": [
+    {
+      "T": 8192,
+      "norm": false,
+      "beta_mode": 0,
+      "baseline_ms": 10.47325975,
+      "final_ms": 9.988294750000001,
+      "improvement_percent": 4.630506753162489,
+      "vector_percent": 63.92500000000001
+    },
+    {
+      "T": 8192,
+      "norm": true,
+      "beta_mode": 0,
+      "baseline_ms": 11.140172750000001,
+      "final_ms": 10.8701725,
+      "improvement_percent": 2.4236630441839435,
+      "vector_percent": 68.55
+    },
+    {
+      "T": 8192,
+      "norm": false,
+      "beta_mode": 1,
+      "baseline_ms": 10.468964,
+      "final_ms": 9.996165000000001,
+      "improvement_percent": 4.516196636075909,
+      "vector_percent": 64.0
+    },
+    {
+      "T": 8192,
+      "norm": true,
+      "beta_mode": 1,
+      "baseline_ms": 11.168353000000002,
+      "final_ms": 10.936674,
+      "improvement_percent": 2.0744240444405815,
+      "vector_percent": 68.35
+    },
+    {
+      "T": 16384,
+      "norm": false,
+      "beta_mode": 0,
+      "baseline_ms": 20.936098,
+      "final_ms": 20.021859750000004,
+      "improvement_percent": 4.3668034511492815,
+      "vector_percent": 63.800000000000004
+    },
+    {
+      "T": 16384,
+      "norm": true,
+      "beta_mode": 0,
+      "baseline_ms": 22.306045750000003,
+      "final_ms": 21.75398925,
+      "improvement_percent": 2.47491871121982,
+      "vector_percent": 68.5
+    },
+    {
+      "T": 16384,
+      "norm": false,
+      "beta_mode": 1,
+      "baseline_ms": 20.95070375,
+      "final_ms": 20.036645250000003,
+      "improvement_percent": 4.362901174620426,
+      "vector_percent": 63.7
+    },
+    {
+      "T": 16384,
+      "norm": true,
+      "beta_mode": 1,
+      "baseline_ms": 22.293235499999998,
+      "final_ms": 21.79832525,
+      "improvement_percent": 2.22000189250231,
+      "vector_percent": 68.4
+    }
+  ],
+  "retained": [
+    "s1",
+    "s1b",
+    "s3"
+  ],
+  "rejected": [
+    "s4",
+    "s2",
+    "s5",
+    "s6"
+  ],
+  "validation": "Each retained candidate passed original 20 cases / 140 outputs; full 200x3 not rerun",
+  "target_9ms_met": false
+}
