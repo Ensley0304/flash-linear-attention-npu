@@ -1188,7 +1188,8 @@ public:
     {
         static_assert(!COMPACT || (FULL_CHUNK && !CAPTURE && !K_NORM && ROWS == 16));
         // Compact first band: two four-plane slots [88,120)/[120,152) KiB.
-        // left -> scan scratch -> raw gate; right -> q -> derivative -> packed dk.
+        // left -> raw gate; right -> q -> derivative -> packed dk.
+        // key becomes scan scratch after dk formation, overlapping the raw gate load.
         // dk stays FP32 until the final Cast; dg becomes the gated output in place.
         constexpr uint32_t TILES = 32 / ROWS;
         constexpr uint32_t E = ROWS * HEAD_DIM;
@@ -1325,6 +1326,13 @@ public:
                 AscendC::Sub(product, left, right, count);
                 AscendC::Add(dk, dk, left, count);
                 AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (COMPACT) {
+                    // left is dead; fetch raw_g while dk and the scan finish.
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
+                    AscendC::DataCopy(raw, rawG_[(token + first) * HEAD_DIM], E);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
+                }
                 AscendC::Mul(product, product, key, count);
                 AscendC::Add(dk, dk, right, count);
                 AscendC::Brcb(rowScale, ub_[80 * 1024 + 512].ReinterpretCast<float>()[first], ROWS / 8, {1, 8});
@@ -1370,7 +1378,8 @@ public:
                     // Keep the two original eight-row scans in reverse order.
                     for (int32_t group = 8; group >= 0; group -= 8) {
                         auto scanSrc = dg[group * HEAD_DIM];
-                        auto scanDst = left[group * HEAD_DIM];
+                        // key is dead after dk formation on the compact path.
+                        auto scanDst = COMPACT ? key[group * HEAD_DIM] : left[group * HEAD_DIM];
                         for (uint32_t step = 1; step < 8; step *= 2) {
                             const uint32_t prefix = (8 - step) * HEAD_DIM;
                             AscendC::Add(scanDst, scanSrc, scanSrc[step * HEAD_DIM], prefix);
@@ -1412,11 +1421,6 @@ public:
                     }
                 }
                 if constexpr (COMPACT) {
-                    // The scan no longer reads left. Load raw_g into that plane.
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-                    AscendC::DataCopy(raw, rawG_[(token + first) * HEAD_DIM], E);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
                 }
                 if constexpr (FULL_CHUNK && !CAPTURE && K_NORM && ROWS == 8) {
