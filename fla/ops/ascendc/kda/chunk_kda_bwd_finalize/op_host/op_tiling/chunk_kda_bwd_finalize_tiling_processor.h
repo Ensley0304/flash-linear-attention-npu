@@ -240,7 +240,7 @@ private:
         // The two AIV sub-blocks split its 64 token rows; the same logical
         // core keeps that head across all chunks so the eight mode-0x2
         // generations can be reused without cross-core reordering.
-        constexpr size_t kResidentSlotBytes = 180U * 1024U;
+        constexpr size_t kResidentSlotBytes = 372U * 1024U;
         constexpr size_t kResidentSlotDepth = 2U;
         constexpr size_t kGateScanMatrixBytes = 8U * 1024U;
         constexpr size_t kPaRecordBytes = 32U;
