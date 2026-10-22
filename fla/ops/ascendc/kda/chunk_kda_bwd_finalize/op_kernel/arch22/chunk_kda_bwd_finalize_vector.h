@@ -572,9 +572,9 @@ public:
         // CreateVecIndex starts with scalar stores on A2. Initialize once in a
         // persistent region, outside every Stage 1/3/5 scratch lifetime.
         auto indices = ub_[84 * 1024 + 768].ReinterpretCast<int32_t>();
-        AscendC::CreateVecIndex(indices, 0, 16);
+        AscendC::CreateVecIndex(indices, 0, 32);
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Muls(indices, indices, static_cast<int32_t>((CHUNK_SIZE + 1) * 4), 16);
+        AscendC::Muls(indices, indices, static_cast<int32_t>((CHUNK_SIZE + 1) * 4), 32);
         AscendC::PipeBarrier<PIPE_V>();
     }
 
@@ -598,7 +598,7 @@ public:
     __aicore__ inline void Stage7Impl(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                       int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
-        constexpr uint32_t ROWS = 16;
+        constexpr uint32_t ROWS = FULL_CHUNK && !CAPTURE ? 32 : 16;
         constexpr uint32_t ELEMENTS = ROWS * HEAD_DIM;
         constexpr float LN2 = 0.6931471805599453f;
         const uint32_t rows = FULL_CHUNK ? CHUNK_SIZE : chunk.validRows;
@@ -615,8 +615,9 @@ public:
                 capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES));
         }
         // 0--64 KiB: q/k/original gk; 64--80: persistent strict-lower mask.
-        // 88--104: two input pairs; 104--120: value/reconstruction;
-        // 120--136: two hi/lo outputs; 136--160: arithmetic scratch;
+        // Full-chunk lower: inputs [88,120), value [120,128), FP32 outputs [144,160).
+        // Tail/capture lower retains the 16-row input/value/hi-lo layout.
+        // Bands: FP32 outputs [88,120), exponent/power scratch [120,160).
         // 160--176: band exponent; 176--178: beta broadcast; gather offsets stay
         // at 84.75 KiB.
         auto q = ub_.ReinterpretCast<bfloat16_t>();
@@ -625,15 +626,15 @@ public:
         auto lower = ub_[64 * 1024].ReinterpretCast<float>();
         auto diag = ub_[80 * 1024 + 512].ReinterpretCast<float>();
         auto center = ub_[82 * 1024 + 768].ReinterpretCast<float>();
-        auto value = ub_[104 * 1024].ReinterpretCast<float>();
+        auto value = ub_[(ROWS == 32 ? 120 : 104) * 1024].ReinterpretCast<float>();
         auto rebuilt = ub_[112 * 1024].ReinterpretCast<float>();
         auto bandExp = ub_[160 * 1024].ReinterpretCast<float>();
         auto broadcast = ub_[176 * 1024].ReinterpretCast<float>();
         auto indices = ub_[84 * 1024 + 768].ReinterpretCast<int32_t>();
         // Drain old layouts before remapping. Input and output permissions remain
         // independent.
-        // FP32 stores use [178,186) KiB for lower matrices, then reuse retired
-        // inputs at [88,104) KiB for bands, independently of BF16 outputs.
+        // Full lower stores use [144,160); 16-row lower stores use [178,186) KiB.
+        // Bands then reuse retired inputs, independently of capture BF16 outputs.
         AscendC::TEventID fp32Free[2];
         for (uint32_t slot = 0; slot < 2; ++slot) {
             fp32Free[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
@@ -652,7 +653,7 @@ public:
         AscendC::DataCopy(g, gk_[token * HEAD_DIM], rows * HEAD_DIM);
         AscendC::Brcb(broadcast, ub_[UB_BETA].ReinterpretCast<float>(), 8, {1, 8});
         for (uint32_t slot = 0; slot < 2; ++slot) {
-            auto input = ub_[UB_WORK + slot * 8 * 1024].ReinterpretCast<float>();
+            auto input = ub_[UB_WORK + slot * ROWS * CHUNK_SIZE * 2 * sizeof(float)].ReinterpretCast<float>();
             const uint32_t active = rows > slot * ROWS ? (rows - slot * ROWS < ROWS ? rows - slot * ROWS : ROWS) : 0;
             if (active != 0) {
                 AscendC::DataCopy(input, dAqk_[(token + slot * ROWS) * CHUNK_SIZE], active * CHUNK_SIZE);
@@ -667,11 +668,11 @@ public:
         }
         // Chunk-wide strict lower matrices are generated once. Output planes are hi
         // then lo.
-        for (uint32_t tile = 0; tile < 4; ++tile) {
+        for (uint32_t tile = 0; tile < CHUNK_SIZE / ROWS; ++tile) {
             const uint32_t first = tile * ROWS;
             const uint32_t slot = tile & 1;
             const uint32_t active = rows > first ? (rows - first < ROWS ? rows - first : ROWS) : 0;
-            auto input = ub_[UB_WORK + slot * 8 * 1024].ReinterpretCast<float>();
+            auto input = ub_[UB_WORK + slot * ROWS * CHUNK_SIZE * 2 * sizeof(float)].ReinterpretCast<float>();
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
             if (active < ROWS) {
                 AscendC::Duplicate(input[active * CHUNK_SIZE], 0.0f, (ROWS - active) * CHUNK_SIZE);
@@ -690,7 +691,8 @@ public:
                 {
                     // Preserve both FP32 lower matrices for Stage 10.
                     const uint32_t fp32Slot = tile & 1;
-                    auto fp32Output = ub_[(178 + fp32Slot * 4) * 1024].ReinterpretCast<float>();
+                    auto fp32Output =
+                        ub_[(ROWS == 32 ? 144 + fp32Slot * 8 : 178 + fp32Slot * 4) * 1024].ReinterpretCast<float>();
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(fp32Free[fp32Slot]);
                     AscendC::Adds(fp32Output, value, 0.0f, ROWS * CHUNK_SIZE);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[outputSlot]);
@@ -728,7 +730,7 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
             }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-            if (tile + 2 < 4) {
+            if (tile + 2 < CHUNK_SIZE / ROWS) {
                 const uint32_t next = first + 2 * ROWS;
                 const uint32_t count = rows > next ? (rows - next < ROWS ? rows - next : ROWS) : 0;
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);

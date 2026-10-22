@@ -1,5 +1,7 @@
 # A2 KDA backward Finalize 精度验证
 
+2026-10-22 最新增量 S3：Stage 7 lower 32 行批量生成，九边界和原 20 case、140 输出全过，冻结 FP32/FP64、CT L1、种子均不变；八配置两轮均改善 0.706%～2.694%，目标 10.1387→10.0514 ms。库哈希和报告见[验收记录](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/stage7-lower-batch.md)。9 ms 和完整 200×3 验收未完成。
+
 2026-10-22 后续增量 S1b：提前 raw_g 搬运，九边界和原 20 case、140 输出全部通过原 CT L1 双标杆；无 norm 两轮稳定改善 2.63%～2.86%，norm 主核指令不变。目标同轮 S1 10.4804→10.1867 ms。报告和库哈希见下方[实验记录](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/compact-stage11.md)，完整 200×3 未重跑。
 
 2026-10-22 增量 S1：Stage 11 前带无 norm 16 行布局，九个边界及原 20 case 的 140 输出均通过原 FP32/FP64 CT L1，参考 hash 和种子未变。设备 4 两轮 A/B 的无 norm 四配置均稳定改善，norm 指令与 R2b 相同。目标 B1/H96/T8192/K=V128/BF16 无附加反向 10.4700→10.3655 ms；仍未达 9 ms。本轮不是完整 200×3 或公开入口验收。库、原始证据及适用条件见[实验记录](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/compact-stage11.md)。
