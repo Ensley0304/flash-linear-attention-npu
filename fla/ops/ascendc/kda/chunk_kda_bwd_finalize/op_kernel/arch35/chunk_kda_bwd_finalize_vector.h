@@ -1039,7 +1039,8 @@ public:
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 if ((generation & 1U) != subBlockIdx_) continue;
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                RunDwResidual(static_cast<uint32_t>(head - headBegin), slot);
+                RunDwResidual(static_cast<uint32_t>(head - headBegin), slot,
+                              logicalCore, groupGeneration);
             }
 
             generation -= static_cast<uint64_t>(headEnd - headBegin);
@@ -1050,7 +1051,7 @@ public:
                     continue;
                 }
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                RunStage2(chunk, head, owner, slot);
+                RunStage2(chunk, head, owner, slot, logicalCore, groupGeneration);
             }
 
             // StatePre reinterprets nearly the whole UB and therefore
@@ -1085,7 +1086,8 @@ public:
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 if ((generation & 1U) != subBlockIdx_) continue;
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                RunTzaResidual(static_cast<uint32_t>(head - headBegin), slot);
+                RunTzaResidual(static_cast<uint32_t>(head - headBegin), slot,
+                               logicalCore, groupGeneration);
             }
             // Drain StateAndBase egress before Stage5 reuses [16,144) KiB.
             // Retained q/k/exp/beta above that range remain live.
@@ -1175,7 +1177,21 @@ private:
         return l1[offset].ReinterpretCast<bfloat16_t>();
     }
 
-    __aicore__ inline void RunTzaResidual(uint32_t owner, uint32_t slot)
+    template <typename T>
+    __aicore__ inline void LoadA2Relay(
+        AscendC::LocalTensor<T> dst, uint64_t ws, uint32_t relayOffset,
+        uint32_t elements, uint32_t slot)
+    {
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        AscendC::DataCopy(
+            dst, workspace_[ws + relayOffset].ReinterpretCast<T>(), elements);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+#endif
+    }
+
+    __aicore__ inline void RunTzaResidual(
+        uint32_t owner, uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
     {
         // StatePre egress and the following BaseFinalize loads share this UB.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
@@ -1183,6 +1199,9 @@ private:
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZW_READY_BASE + slot);
         auto raw = UbBytes(0).ReinterpretCast<float>();
         auto low = UbBytes(16 * 1024).ReinterpretCast<bfloat16_t>();
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+        LoadA2Relay(raw, ws, KDA_FINALIZE_WS_A2_RELAY_DW,
+                    KDA_FINALIZE_MATRIX_ELEMS, slot);
         FinalizeResidualVF(reinterpret_cast<__ubuf__ bfloat16_t *>(low.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()), 64);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
@@ -1195,13 +1214,17 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
     }
 
-    __aicore__ inline void RunDwResidual(uint32_t owner, uint32_t slot)
+    __aicore__ inline void RunDwResidual(
+        uint32_t owner, uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
     {
         // Hold the next phase's MTE2 credit until the overlapping raw UB is consumed.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZB_READY_BASE + slot);
         auto raw = UbBytes(64 * 1024).ReinterpretCast<float>();
         auto low = UbBytes(96 * 1024).ReinterpretCast<bfloat16_t>();
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+        LoadA2Relay(raw, ws, KDA_FINALIZE_WS_A2_RELAY_DW,
+                    KDA_FINALIZE_VECTOR_ELEMS, slot);
         FinalizeDwResidualVF(reinterpret_cast<__ubuf__ bfloat16_t *>(low.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()));
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
@@ -1275,7 +1298,8 @@ private:
     }
 
     __aicore__ inline void RunStage2(
-        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot)
+        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot,
+        int64_t coreIdx, uint64_t groupGeneration)
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
@@ -1288,6 +1312,15 @@ private:
                       .ReinterpretCast<float>();
         auto betaUb = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>();
         auto zBNd = UbBytes(KDA_FINALIZE_UB_WORK).ReinterpretCast<bfloat16_t>();
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        AscendC::DataCopy(zV,
+            workspace_[ws + KDA_FINALIZE_WS_A2_RELAY_ZV].ReinterpretCast<float>(),
+            KDA_FINALIZE_MATRIX_ELEMS);
+        AscendC::DataCopy(zW,
+            workspace_[ws + KDA_FINALIZE_WS_A2_RELAY_ZW].ReinterpretCast<float>(),
+            KDA_FINALIZE_MATRIX_ELEMS);
+#endif
         const int64_t betaOffset = FinalizeTokenOffset(*tiling_, chunk, head, 1);
         // beta is a scalar per token.  The last chunk is not necessarily
         // 32-byte aligned. DMA pads only to a block boundary; Stage2 masks
@@ -1463,6 +1496,8 @@ private:
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const uint32_t vectorElems = chunk.validRows * KDA_FINALIZE_DIM;
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+        LoadA2Relay(dAkkRaw, ws, KDA_FINALIZE_WS_A2_RELAY_ZV,
+                    KDA_FINALIZE_MATRIX_ELEMS, slot);
         // State/Base have consumed the unshifted exp2(g). Reload the original
         // log gates: rebasing an already-underflowed exp2 value cannot recover it.
         AscendC::DataCopy(exp2Gk, gk_[token], vectorElems);
@@ -1577,6 +1612,8 @@ private:
             KDA_FINALIZE_DQ_LOCAL_FREE_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
             KDA_FINALIZE_DQ_LOCAL_READY_BASE + slot);
+        LoadA2Relay(result, ws, KDA_FINALIZE_WS_A2_RELAY_ZV,
+                    2 * KDA_FINALIZE_INTRA_ROWS * KDA_FINALIZE_DIM, slot);
         FinalizeStage7VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(dqOut.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
@@ -1589,6 +1626,8 @@ private:
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()));
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_KE_READY_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZW_READY_BASE + slot);
+        LoadA2Relay(right, ws, KDA_FINALIZE_WS_A2_RELAY_ZW,
+                    KDA_FINALIZE_INTRA_ROWS * KDA_FINALIZE_DIM, slot);
         FinalizeStage9VF(
             reinterpret_cast<__ubuf__ float *>(left.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(right.GetPhyAddr()),

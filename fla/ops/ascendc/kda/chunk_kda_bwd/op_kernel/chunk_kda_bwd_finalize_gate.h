@@ -229,6 +229,8 @@ public:
         } else {
             ProcessAccumulatedGate();
         }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(vToMte3_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(mte3ToV_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(
@@ -355,10 +357,17 @@ private:
             tiling_, task.batchIdx, head, task.begin, 128);
         auto src = input_.Get<float>();
         auto dst = scan_.Get<float>();
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::DataCopyPad(
             src, dgGm_[offset],
             {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
             {false, 0, 0, 0});
+#else
+        AscendC::DataCopyPad(
+            src, dgGm_[offset],
+            {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
+            {false, 0, 0, 0});
+#endif
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -377,9 +386,6 @@ private:
             }
         }
 #endif
-        // Use a six-step UB scan on A5 as well.  The former single-pass
-        // register recurrence carried one accumulator through a dynamic row
-        // loop and could intermittently lose a dependency on cold launches.
         bool srcIsInput = true;
         for (uint32_t step = 1; step < validC; step <<= 1U) {
             auto in = srcIsInput ? src : dst;
@@ -422,19 +428,43 @@ private:
         auto x = raw_.Get<float>();
         auto tmp = tmp_.Get<float>();
         auto aux = aux_.Get<float>();
+        auto bias = reduce_.Get<float>()[144];
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if (tiling_.hasDtBias != 0) {
+            AscendC::Duplicate(bias, 0.0f, 128);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(0);
+        }
+#endif
         if (tiling_.rawGateIsBf16 == 0) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             AscendC::DataCopyPad(
                 x, rawGFloatGm_[offset],
                 {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
                 {false, 0, 0, 0});
+#else
+            AscendC::DataCopyPad(
+                x, rawGFloatGm_[offset],
+                {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
+                {false, 0, 0, 0});
+#endif
         } else {
             // tmp is dead until the chain-rule arithmetic below.  Use its
             // first half as the BF16 staging area and avoid another UB plane.
             auto rawStage = tmp_.Get<bfloat16_t>();
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             AscendC::DataCopyPad(
                 rawStage, rawGBf16Gm_[offset],
                 {1, static_cast<uint32_t>(count * sizeof(bfloat16_t)), 0, 0, 0},
                 {false, 0, 0, 0});
+#else
+            AscendC::DataCopyPad(
+                rawStage, rawGBf16Gm_[offset],
+                {1, static_cast<uint32_t>(
+                        count * sizeof(bfloat16_t)), 0, 0, 0},
+                {false, 0, 0, 0});
+#endif
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -449,20 +479,44 @@ private:
 #endif
         }
         if (tiling_.hasDtBias != 0) {
-            auto bias = reduce_.Get<float>()[144];
             AscendC::DataCopy(
                 bias, dtBiasGm_[static_cast<uint64_t>(head) * 128], 128);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
         if (tiling_.hasDtBias != 0) {
-            auto bias = reduce_.Get<float>()[144];
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            AscendC::DataCopy(
+                bias, dtBiasGm_[static_cast<uint64_t>(head) * 128], 128);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (!SAFE_GATE) {
 #endif
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+            constexpr uint32_t kHalfRow = 64;
+            constexpr uint16_t kRowStride =
+                128 * sizeof(float) / 32;
+            AscendC::BinaryRepeatParams params;
+            params.dstBlkStride = 1;
+            params.src0BlkStride = 1;
+            params.src1BlkStride = 1;
+            params.dstRepStride = kRowStride;
+            params.src0RepStride = kRowStride;
+            params.src1RepStride = 0;
+            AscendC::Add(
+                x, x, bias, static_cast<uint64_t>(kHalfRow),
+                static_cast<uint8_t>(rows), params);
+            AscendC::Add(
+                x[kHalfRow], x[kHalfRow], bias[kHalfRow],
+                static_cast<uint64_t>(kHalfRow),
+                static_cast<uint8_t>(rows), params);
+#else
             for (uint32_t row = 0; row < rows; ++row) {
                 AscendC::Add(x[row * 128], x[row * 128], bias, 128);
             }
+#endif
             AscendC::PipeBarrier<PIPE_V>();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             }
@@ -501,30 +555,43 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
             Sigmoid(aux, tmp, count);
             AscendC::Muls(tmp, aux, -1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Adds(tmp, tmp, 1.0f, count);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(tmp, tmp, aux, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(tmp, tmp, upstream, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Muls(tmp, tmp, tiling_.lowerBound * a, count);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(aux, tmp, x, count);
+            AscendC::PipeBarrier<PIPE_V>();
 #endif
         } else {
             const float a = -expA;
             Sigmoid(aux, x, count);
             AscendC::Mul(tmp, upstream, aux, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Muls(tmp, tmp, a, count);
             AscendC::PipeBarrier<PIPE_V>();
 
             // Stable softplus(x) = max(x,0)+log1p(exp(-abs(x))).
             AscendC::Abs(aux, x, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Muls(aux, aux, -1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Exp(aux, aux, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Adds(aux, aux, 1.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Ln(aux, aux, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Maxs(x, x, 0.0f, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Add(aux, aux, x, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Muls(aux, aux, a, count);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(aux, aux, upstream, count);
             AscendC::PipeBarrier<PIPE_V>();
         }
@@ -547,13 +614,29 @@ private:
     {
         auto one = reduce_.Get<float>()[800];
         AscendC::Muls(dst, src, -1.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Exp(dst, dst, count);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Adds(dst, dst, 1.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Duplicate(one, 1.0f, 128);
         AscendC::PipeBarrier<PIPE_V>();
-        for (uint32_t offset = 0; offset < count; offset += 128) {
-            AscendC::Div(dst[offset], one, dst[offset], 128);
-        }
+        constexpr uint32_t kHalfRow = 64;
+        constexpr uint16_t kRowStride =
+            128 * sizeof(float) / 32;
+        AscendC::BinaryRepeatParams params;
+        params.dstBlkStride = 1;
+        params.src0BlkStride = 1;
+        params.src1BlkStride = 1;
+        params.dstRepStride = kRowStride;
+        params.src0RepStride = 0;
+        params.src1RepStride = kRowStride;
+        const uint8_t rows = static_cast<uint8_t>(count / 128U);
+        AscendC::Div(
+            dst, one, dst, static_cast<uint64_t>(kHalfRow), rows, params);
+        AscendC::Div(
+            dst[kHalfRow], one[kHalfRow], dst[kHalfRow],
+            static_cast<uint64_t>(kHalfRow), rows, params);
         AscendC::PipeBarrier<PIPE_V>();
     }
 
@@ -569,9 +652,28 @@ private:
         AscendC::LocalTensor<float> acc,
         AscendC::LocalTensor<float> values, uint32_t rows)
     {
-        for (uint32_t row = 0; row < rows; ++row) {
-            AscendC::Add(acc, acc, values[row * 128], 128);
+        constexpr uint32_t kPartialCount = 8;
+        auto partial = input_.Get<float>();
+        AscendC::Duplicate(partial, 0.0f, kPartialCount * 128);
+        AscendC::PipeBarrier<PIPE_V>();
+        for (uint32_t rowBase = 0; rowBase < rows;
+             rowBase += kPartialCount) {
+            const uint32_t batchRows =
+                rowBase + kPartialCount < rows ?
+                kPartialCount : rows - rowBase;
+            AscendC::Add(
+                partial, partial, values[rowBase * 128],
+                batchRows * 128);
+            AscendC::PipeBarrier<PIPE_V>();
         }
+        for (uint32_t stride = kPartialCount / 2; stride > 0;
+             stride >>= 1U) {
+            AscendC::Add(
+                partial, partial, partial[stride * 128],
+                stride * 128);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Add(acc, acc, partial, 128);
         AscendC::PipeBarrier<PIPE_V>();
     }
 
@@ -581,6 +683,19 @@ private:
     {
         auto partial = reduce_.Get<float>()[280];
         auto rowSum = reduce_.Get<float>()[280 + 64 * 8];
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+        constexpr uint32_t kHalfRow = 64;
+        constexpr uint8_t kRowRepStride =
+            128 * sizeof(float) / 32;
+        AscendC::Add(
+            values[kHalfRow], values, values[kHalfRow],
+            kHalfRow, static_cast<uint8_t>(rows),
+            {1, 1, 1, kRowRepStride, kRowRepStride, kRowRepStride});
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::WholeReduceSum(
+            rowSum, values[kHalfRow], kHalfRow,
+            static_cast<uint8_t>(rows), 1, 1, kRowRepStride);
+#else
         for (uint32_t row = 0; row < rows; ++row) {
             AscendC::WholeReduceSum(
                 partial[row * 8], values[row * 128],
@@ -589,6 +704,7 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::WholeReduceSum(
             rowSum, partial, 2, rows, 1, 1, 1);
+#endif
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::WholeReduceSum(
             partial, rowSum, rows, 1, 1, 1, 1);
@@ -604,13 +720,22 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
         // A5 may silently drop a full 32 KiB UB->GM DataCopyPad transfer.
-        // The aligned row-sized stores are also valid on A2/A3.
+        // Keep its row-sized stores, while A2/A3 uses one contiguous transfer
+        // to avoid issuing 64 scalar MTE3 commands per full chunk.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         const uint32_t rows = count / 128U;
         for (uint32_t row = 0; row < rows; ++row) {
             AscendC::DataCopy(
                 dgGm_[offset + static_cast<uint64_t>(row) * 128U],
                 value[row * 128U], 128U);
         }
+#else
+        const uint32_t rows = count / 128U;
+        AscendC::DataCopyPad(
+            dgGm_[offset], value,
+            {1, static_cast<uint32_t>(
+                    rows * 128U * sizeof(float)), 0, 0, 0});
+#endif
         // The next chunk loads into the same UB plane through MTE2.  Waiting
         // on MTE3_V does not protect that overwrite; use the real
         // MTE3-to-MTE2 reuse dependency so every row reaches GM first.

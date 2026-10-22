@@ -1847,23 +1847,19 @@ private:
             const WyChunkTask task = GetWyChunkTask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            // A5 has two AIV sub-blocks and the steady-state window owns two
-            // heads.  Give one complete head to each AIV instead of making
-            // both AIVs split every head and then serially visit the second
-            // head.  Each AIV still processes 64 rows in total, so the UB
-            // footprint is unchanged.  A one-head tail keeps the proven
-            // half-row split so both AIVs remain useful.
+            // A two-head window maps one complete head to each AIV. Each AIV
+            // still processes 64 rows, while partial-state reductions and
+            // per-head synchronization are removed on both architectures.
             const bool headParallel =
                 headCount == kWyFusedHeadsPerWindow &&
                 subBlockNum == kWyFusedHeadsPerWindow;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             // A one-head tail uses one AIV owner, avoiding two independent
             // partial-state paths.  Even-head/model windows retain the fast
             // one-head-per-AIV path.
             const bool singleHeadOwner =
                 headCount == 1U && subBlockNum == 2U;
 #else
-            const bool headParallel = false;
             const bool singleHeadOwner = false;
 #endif
             const bool wholeHeadRows = headParallel || singleHeadOwner;
@@ -2630,15 +2626,9 @@ private:
         if (stage == 1) {
             const uint64_t stateBase =
                 (slot + kWyStatePartialOffset) / sizeof(float) +
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                // With two-head A5 parallelism each AIV owns a different
-                // workspace slot and its complete head is partial 0 in that
-                // slot.  Using the physical sub-block index here makes AIV1
-                // publish at +128 while PrepareStateGate reads partial 0.
-                stateLane * 128U;
-#else
-                subBlockIdx * 128U;
-#endif
+                // A complete-head owner writes partial 0 in its private head
+                // slot. Row-split execution keeps one partial per AIV.
+                (subBlockNum == 1U ? stateLane : subBlockIdx) * 128U;
             Store(wsFp32_[stateBase], statePartial, 128);
         } else if (stage == 2) {
             Store(dbGm_[scalarBase + begin], Plane(7), end - begin);

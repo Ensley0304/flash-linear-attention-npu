@@ -47,6 +47,27 @@ __aicore__ inline bool CanUseA5SharedGateAnchor(
            tiling.lowerBound <= 0.0f;
 }
 
+template <typename RawGateT, bool VARLEN_TND>
+__aicore__ inline bool CanUseA2FusedGatePost(
+    const ChunkKdaBwdCTilingData &tiling)
+{
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+    if constexpr (!VARLEN_TND &&
+                  AscendC::IsSameType<RawGateT, float>::value) {
+        const uint32_t headWindows =
+            (static_cast<uint32_t>(tiling.headNum) + 1U) / 2U;
+        return tiling.useGateInKernel != 0 &&
+               tiling.rawGateIsBf16 == 0 &&
+               tiling.isVarLen == 0 && tiling.keyDim == 128 &&
+               tiling.chunkSize == kChunkSize &&
+               tiling.seqlen % kChunkSize == 0 &&
+               (static_cast<uint32_t>(tiling.headNum) & 1U) == 0U &&
+               static_cast<uint32_t>(tiling.usedCoreNum) == headWindows;
+    }
+#endif
+    return false;
+}
+
 template <uint32_t K_DIM, bool VARLEN_TND>
 struct ProcessRowBlock {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -151,6 +172,197 @@ namespace KDA {
 template <typename LayoutA, uint32_t L1_M, uint32_t L1_K>
 class CIntraSingleTileMmad {
 private:
+#if 0
+    __aicore__ inline float InitA2FusedGateHead(
+        uint32_t head, AscendC::LocalTensor<float> dbAcc,
+        AscendC::LocalTensor<float> dAAcc,
+        AscendC::LocalTensor<float> bias)
+    {
+        auto scalar = reduceTmp_.Get<float>()[7 * kPlaneElements + 136];
+        AscendC::Duplicate(dbAcc, 0.0f, K_DIM);
+        AscendC::Duplicate(dAAcc, 0.0f, 8);
+        AscendC::PipeBarrier<PIPE_V>();
+        Load(scalar, aLogGm_[head], 1U);
+        if (tiling_.hasDtBias != 0) {
+            Load(
+                bias,
+                dtBiasGm_[static_cast<uint64_t>(head) * K_DIM], K_DIM);
+        }
+        AscendC::Exp(scalar, scalar, 1U);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
+        return ((__ubuf__ float *)scalar.GetPhyAddr())[0];
+    }
+
+    template <uint32_t STEP>
+    __aicore__ inline void A2FusedGateScanStep(
+        AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<float> src)
+    {
+        constexpr uint32_t activeRows = CHUNK_SIZE - STEP;
+        AscendC::Add(
+            dst, src, src[STEP * K_DIM], activeRows * K_DIM);
+        AscendC::Adds(
+            dst[activeRows * K_DIM], src[activeRows * K_DIM], 0.0f,
+            STEP * K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void A2FusedGateSigmoid(
+        AscendC::LocalTensor<float> value, uint32_t count)
+    {
+        auto one = reduceTmp_.Get<float>()[7 * kPlaneElements + 800];
+        AscendC::Muls(value, value, -1.0f, count);
+        AscendC::Exp(value, value, count);
+        AscendC::Adds(value, value, 1.0f, count);
+        AscendC::Duplicate(one, 1.0f, K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        constexpr uint32_t vectorElements = 64;
+        constexpr uint16_t repeatStride =
+            vectorElements * sizeof(float) / 32;
+        AscendC::BinaryRepeatParams params;
+        params.dstBlkStride = 1;
+        params.src0BlkStride = 1;
+        params.src1BlkStride = 1;
+        params.dstRepStride = repeatStride;
+        params.src0RepStride = 0;
+        params.src1RepStride = repeatStride;
+        AscendC::Div(
+            value, one, value, static_cast<uint64_t>(vectorElements),
+            static_cast<uint8_t>(count / vectorElements), params);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void A2FusedGateAccumulateColumns(
+        AscendC::LocalTensor<float> acc,
+        AscendC::LocalTensor<float> values)
+    {
+        constexpr uint32_t partialRows = 8;
+        constexpr uint32_t slot = 0;
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+        auto partial = MatrixInput<float>(slot);
+        AscendC::Duplicate(partial, 0.0f, partialRows * K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+        for (uint32_t rowBase = 0; rowBase < CHUNK_SIZE;
+             rowBase += partialRows) {
+            AscendC::Add(
+                partial, partial, values[rowBase * K_DIM],
+                partialRows * K_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        for (uint32_t stride = partialRows / 2; stride > 0;
+             stride >>= 1U) {
+            AscendC::Add(
+                partial, partial, partial[stride * K_DIM],
+                stride * K_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Add(acc, acc, partial, K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+    }
+
+    __aicore__ inline void A2FusedGateAccumulateScalar(
+        AscendC::LocalTensor<float> acc,
+        AscendC::LocalTensor<float> values)
+    {
+        auto state = reduceTmp_.Get<float>()[7 * kPlaneElements];
+        auto partial = state[280];
+        auto rowSum = state[280 + CHUNK_SIZE * 8];
+        constexpr uint32_t halfRow = 64;
+        constexpr uint8_t rowStride = K_DIM * sizeof(float) / 32;
+        AscendC::Add(
+            values[halfRow], values, values[halfRow], halfRow,
+            static_cast<uint8_t>(CHUNK_SIZE),
+            {1, 1, 1, rowStride, rowStride, rowStride});
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::WholeReduceSum(
+            rowSum, values[halfRow], halfRow,
+            static_cast<uint8_t>(CHUNK_SIZE), 1, 1, rowStride);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::WholeReduceSum(
+            partial, rowSum, CHUNK_SIZE, 1, 1, 1, 1);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(acc, acc, partial, 1U);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ApplyA2FusedGateChunk(
+        const CIntraTask &task, uint32_t head, float expA,
+        AscendC::LocalTensor<float> dbAcc,
+        AscendC::LocalTensor<float> dAAcc,
+        AscendC::LocalTensor<float> bias)
+    {
+        if constexpr (!AscendC::IsSameType<RawGateT, float>::value) {
+            return;
+        }
+        constexpr uint32_t count = CHUNK_SIZE * K_DIM;
+        const uint64_t offset = CIntraTensorOffset(
+            tiling_, task.batchIdx, head, task.begin, 0);
+        auto upstream = Plane(0);
+        auto raw = Plane(8);
+        auto work = Plane(16);
+
+        Load(upstream, dgOutGm_[offset], count);
+        A2FusedGateScanStep<1U>(raw, upstream);
+        A2FusedGateScanStep<2U>(upstream, raw);
+        A2FusedGateScanStep<4U>(raw, upstream);
+        A2FusedGateScanStep<8U>(upstream, raw);
+        A2FusedGateScanStep<16U>(raw, upstream);
+        A2FusedGateScanStep<32U>(upstream, raw);
+
+        Load(raw, rawGGm_[offset], count);
+        if (tiling_.hasDtBias != 0) {
+            constexpr uint32_t halfRow = 64;
+            constexpr uint16_t rowStride = K_DIM * sizeof(float) / 32;
+            AscendC::BinaryRepeatParams params;
+            params.dstBlkStride = 1;
+            params.src0BlkStride = 1;
+            params.src1BlkStride = 1;
+            params.dstRepStride = rowStride;
+            params.src0RepStride = rowStride;
+            params.src1RepStride = 0;
+            AscendC::Add(
+                raw, raw, bias, static_cast<uint64_t>(halfRow),
+                static_cast<uint8_t>(CHUNK_SIZE), params);
+            AscendC::Add(
+                raw[halfRow], raw[halfRow], bias[halfRow],
+                static_cast<uint64_t>(halfRow),
+                static_cast<uint8_t>(CHUNK_SIZE), params);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        AscendC::Muls(work, raw, expA, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        A2FusedGateSigmoid(work, count);
+        AscendC::Mul(upstream, upstream, work, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(work, work, -1.0f, count);
+        AscendC::Adds(work, work, 1.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(upstream, upstream, work, count);
+        AscendC::Muls(
+            upstream, upstream, tiling_.lowerBound * expA, count);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        AscendC::Mul(work, upstream, raw, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        A2FusedGateAccumulateColumns(dbAcc, upstream);
+        A2FusedGateAccumulateScalar(dAAcc, work);
+
+        for (uint32_t row = 0; row < CHUNK_SIZE;
+             row += kProcessRowBlock) {
+            StoreRows(
+                dgOutGm_[offset + static_cast<uint64_t>(row) * K_DIM],
+                upstream[row * K_DIM], kProcessRowBlock, K_DIM, K_DIM);
+        }
+    }
+#endif
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using ArchTag = Catlass::Arch::Ascend950;
 #else
@@ -646,7 +858,9 @@ namespace KDA {
 
 template <
     uint32_t K_DIM, uint32_t CHUNK_SIZE, bool SAFE_GATE, bool VARLEN_TND,
-    bool PUBLIC_VARLEN, typename DataT, typename BetaT, typename RawGateT>
+    bool PUBLIC_VARLEN, typename DataT, typename BetaT, typename RawGateT,
+    typename DqDkOutT = float, typename DbOutT = float,
+    bool A2_DENSE_16 = false>
 class ChunkKdaBwdCIntraVectorProcess {
 public:
     __aicore__ ChunkKdaBwdCIntraVectorProcess(
@@ -684,9 +898,9 @@ public:
         dkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dk_));
         dbGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(db_));
         dgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dg_));
-        dqOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dqOut_));
-        dkOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dkOut_));
-        dbOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dbOut_));
+        dqOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DqDkOutT *>(dqOut_));
+        dkOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DqDkOutT *>(dkOut_));
+        dbOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DbOutT *>(dbOut_));
         dgOutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dgOut_));
         if (tiling_.useGateInKernel != 0) {
             rawGGm_.SetGlobalBuffer(reinterpret_cast<__gm__ RawGateT *>(rawG_));
@@ -850,7 +1064,9 @@ public:
                         }
                     }
 #endif
-                    FinishHead(task, headBase + headInWindow, rowStart, validRows, slot);
+                    FinishHead(
+                        task, headBase + headInWindow, rowStart, validRows,
+                        slot);
                 }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 // A parity slot contains both heads. Do not let either AIV
@@ -877,6 +1093,197 @@ public:
     }
 
 private:
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+    __aicore__ inline float InitA2FusedGateHead(
+        uint32_t head, AscendC::LocalTensor<float> dbAcc,
+        AscendC::LocalTensor<float> dAAcc,
+        AscendC::LocalTensor<float> bias)
+    {
+        auto scalar = reduceTmp_.Get<float>()[7 * kPlaneElements + 136];
+        AscendC::Duplicate(dbAcc, 0.0f, K_DIM);
+        AscendC::Duplicate(dAAcc, 0.0f, 8);
+        AscendC::PipeBarrier<PIPE_V>();
+        Load(scalar, aLogGm_[head], 1U);
+        if (tiling_.hasDtBias != 0) {
+            Load(
+                bias,
+                dtBiasGm_[static_cast<uint64_t>(head) * K_DIM], K_DIM);
+        }
+        AscendC::Exp(scalar, scalar, 1U);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
+        return ((__ubuf__ float *)scalar.GetPhyAddr())[0];
+    }
+
+    template <uint32_t STEP>
+    __aicore__ inline void A2FusedGateScanStep(
+        AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<float> src)
+    {
+        constexpr uint32_t activeRows = CHUNK_SIZE - STEP;
+        AscendC::Add(
+            dst, src, src[STEP * K_DIM], activeRows * K_DIM);
+        AscendC::Adds(
+            dst[activeRows * K_DIM], src[activeRows * K_DIM], 0.0f,
+            STEP * K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void A2FusedGateSigmoid(
+        AscendC::LocalTensor<float> value, uint32_t count)
+    {
+        auto one = reduceTmp_.Get<float>()[7 * kPlaneElements + 800];
+        AscendC::Muls(value, value, -1.0f, count);
+        AscendC::Exp(value, value, count);
+        AscendC::Adds(value, value, 1.0f, count);
+        AscendC::Duplicate(one, 1.0f, K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        constexpr uint32_t vectorElements = 64;
+        constexpr uint16_t repeatStride =
+            vectorElements * sizeof(float) / 32;
+        AscendC::BinaryRepeatParams params;
+        params.dstBlkStride = 1;
+        params.src0BlkStride = 1;
+        params.src1BlkStride = 1;
+        params.dstRepStride = repeatStride;
+        params.src0RepStride = 0;
+        params.src1RepStride = repeatStride;
+        AscendC::Div(
+            value, one, value, static_cast<uint64_t>(vectorElements),
+            static_cast<uint8_t>(count / vectorElements), params);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void A2FusedGateAccumulateColumns(
+        AscendC::LocalTensor<float> acc,
+        AscendC::LocalTensor<float> values)
+    {
+        constexpr uint32_t partialRows = 8;
+        constexpr uint32_t slot = 0;
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+        auto partial = MatrixInput<float>(slot);
+        AscendC::Duplicate(partial, 0.0f, partialRows * K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+        for (uint32_t rowBase = 0; rowBase < CHUNK_SIZE;
+             rowBase += partialRows) {
+            AscendC::Add(
+                partial, partial, values[rowBase * K_DIM],
+                partialRows * K_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        for (uint32_t stride = partialRows / 2; stride > 0;
+             stride >>= 1U) {
+            AscendC::Add(
+                partial, partial, partial[stride * K_DIM],
+                stride * K_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        AscendC::Add(acc, acc, partial, K_DIM);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            matrixVToMte2Event_[slot]);
+    }
+
+    __aicore__ inline void A2FusedGateAccumulateScalar(
+        AscendC::LocalTensor<float> acc,
+        AscendC::LocalTensor<float> values)
+    {
+        auto state = reduceTmp_.Get<float>()[7 * kPlaneElements];
+        auto partial = state[280];
+        auto rowSum = state[280 + CHUNK_SIZE * 8];
+        constexpr uint32_t halfRow = 64;
+        constexpr uint8_t rowStride = K_DIM * sizeof(float) / 32;
+        AscendC::Add(
+            values[halfRow], values, values[halfRow], halfRow,
+            static_cast<uint8_t>(CHUNK_SIZE),
+            {1, 1, 1, rowStride, rowStride, rowStride});
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::WholeReduceSum(
+            rowSum, values[halfRow], halfRow,
+            static_cast<uint8_t>(CHUNK_SIZE), 1, 1, rowStride);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::WholeReduceSum(
+            partial, rowSum, CHUNK_SIZE, 1, 1, 1, 1);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(acc, acc, partial, 1U);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ApplyA2FusedGateChunk(
+        const CIntraTask &task, uint32_t head, float expA,
+        AscendC::LocalTensor<float> dbAcc,
+        AscendC::LocalTensor<float> dAAcc,
+        AscendC::LocalTensor<float> bias)
+    {
+        if constexpr (!AscendC::IsSameType<RawGateT, float>::value) {
+            return;
+        }
+        constexpr uint32_t count = CHUNK_SIZE * K_DIM;
+        const uint64_t offset = CIntraTensorOffset(
+            tiling_, task.batchIdx, head, task.begin, 0);
+        auto upstream = Plane(0);
+        auto raw = Plane(8);
+        auto work = Plane(16);
+
+        Load(upstream, dgOutGm_[offset], count);
+        A2FusedGateScanStep<1U>(raw, upstream);
+        A2FusedGateScanStep<2U>(upstream, raw);
+        A2FusedGateScanStep<4U>(raw, upstream);
+        A2FusedGateScanStep<8U>(upstream, raw);
+        A2FusedGateScanStep<16U>(raw, upstream);
+        A2FusedGateScanStep<32U>(upstream, raw);
+
+        Load(raw, rawGGm_[offset], count);
+        if (tiling_.hasDtBias != 0) {
+            constexpr uint32_t halfRow = 64;
+            constexpr uint16_t rowStride = K_DIM * sizeof(float) / 32;
+            AscendC::BinaryRepeatParams params;
+            params.dstBlkStride = 1;
+            params.src0BlkStride = 1;
+            params.src1BlkStride = 1;
+            params.dstRepStride = rowStride;
+            params.src0RepStride = rowStride;
+            params.src1RepStride = 0;
+            AscendC::Add(
+                raw, raw, bias, static_cast<uint64_t>(halfRow),
+                static_cast<uint8_t>(CHUNK_SIZE), params);
+            AscendC::Add(
+                raw[halfRow], raw[halfRow], bias[halfRow],
+                static_cast<uint64_t>(halfRow),
+                static_cast<uint8_t>(CHUNK_SIZE), params);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        AscendC::Muls(work, raw, expA, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        A2FusedGateSigmoid(work, count);
+        AscendC::Mul(upstream, upstream, work, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Muls(work, work, -1.0f, count);
+        AscendC::Adds(work, work, 1.0f, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(upstream, upstream, work, count);
+        AscendC::Muls(
+            upstream, upstream, tiling_.lowerBound * expA, count);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        AscendC::Mul(work, upstream, raw, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        A2FusedGateAccumulateColumns(dbAcc, upstream);
+        A2FusedGateAccumulateScalar(dAAcc, work);
+
+        for (uint32_t row = 0; row < CHUNK_SIZE;
+             row += kProcessRowBlock) {
+            StoreRows(
+                dgOutGm_[offset + static_cast<uint64_t>(row) * K_DIM],
+                upstream[row * K_DIM], kProcessRowBlock, K_DIM, K_DIM);
+        }
+    }
+#endif
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     __aicore__ inline void PrepareA5DenseRow16Window(
         const CIntraTask &task, uint32_t headBase, uint32_t headCount,
@@ -1178,6 +1585,11 @@ private:
             pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>());
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
             directMte3ToMte2Event_);
+#else
+        a2DirectMte2ToVEvent_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+        a2DirectVToMte2Event_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
 #endif
     }
 
@@ -1201,6 +1613,11 @@ private:
             directVToMte3Event_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(
             directMte3ToMte2Event_);
+#else
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(
+            a2DirectMte2ToVEvent_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
+            a2DirectVToMte2Event_);
 #endif
     }
 
@@ -1368,6 +1785,20 @@ private:
     __aicore__ inline void Load(
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src, uint32_t count)
     {
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            a2DirectVToMte2Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            a2DirectVToMte2Event_);
+        AscendC::DataCopyPad(
+            dst, src,
+            {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
+            {false, 0, 0, 0});
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            a2DirectMte2ToVEvent_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            a2DirectMte2ToVEvent_);
+#else
         auto input = inputQueue_.AllocTensor<float>();
         AscendC::DataCopyPad(
             input, src, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
@@ -1383,6 +1814,7 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
 #endif
         inputQueue_.FreeTensor(ready);
+#endif
     }
 
     template <typename SrcT>
@@ -1400,25 +1832,36 @@ private:
         inputQueue_.FreeTensor(ready);
     }
 
+    template <typename DstT>
     __aicore__ inline void Store(
-        AscendC::GlobalTensor<float> dst, AscendC::LocalTensor<float> src, uint32_t count)
+        AscendC::GlobalTensor<DstT> dst, AscendC::LocalTensor<float> src,
+        uint32_t count)
     {
         AscendC::PipeBarrier<PIPE_V>();
-        auto output = outputQueue_.AllocTensor<float>();
+        auto output = outputQueue_.AllocTensor<DstT>();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        KdaRegbaseCopy(
-            (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)src.GetPhyAddr(),
-            count);
+        if constexpr (AscendC::IsSameType<DstT, float>::value) {
+            KdaRegbaseCopy(
+                (__ubuf__ float *)output.GetPhyAddr(),
+                (__ubuf__ float *)src.GetPhyAddr(),
+                count);
+        } else {
+            AscendC::Cast(output, src, AscendC::RoundMode::CAST_RINT, count);
+        }
 #else
-        AscendC::Adds(output, src, 0.0f, count);
+        if constexpr (AscendC::IsSameType<DstT, float>::value) {
+            AscendC::Adds(output, src, 0.0f, count);
+        } else {
+            AscendC::Cast(output, src, AscendC::RoundMode::CAST_RINT, count);
+        }
         // Retire the source read before the caller reuses its UB plane.
         AscendC::PipeBarrier<PIPE_V>();
 #endif
         outputQueue_.EnQue(output);
-        auto ready = outputQueue_.DeQue<float>();
+        auto ready = outputQueue_.DeQue<DstT>();
         AscendC::DataCopyPad(
-            dst, ready, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0});
+            dst, ready,
+            {1, static_cast<uint32_t>(count * sizeof(DstT)), 0, 0, 0});
         outputQueue_.FreeTensor(ready);
     }
 
@@ -1426,6 +1869,24 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src,
         uint32_t rows, uint32_t cols, uint32_t srcRowElements)
     {
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+            a2DirectVToMte2Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+            a2DirectVToMte2Event_);
+        AscendC::DataCopyExtParams copyParams{
+            static_cast<uint16_t>(rows),
+            static_cast<uint32_t>(cols * sizeof(float)),
+            static_cast<uint32_t>((srcRowElements - cols) * sizeof(float)),
+            0,
+            0
+        };
+        AscendC::DataCopyPad(dst, src, copyParams, {false, 0, 0, 0});
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+            a2DirectMte2ToVEvent_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+            a2DirectMte2ToVEvent_);
+#else
         auto input = inputQueue_.AllocTensor<float>();
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
@@ -1447,6 +1908,7 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
 #endif
         inputQueue_.FreeTensor(ready);
+#endif
     }
 
     __aicore__ inline void LoadRows(
@@ -1468,27 +1930,38 @@ private:
         inputQueue_.FreeTensor(ready);
     }
 
+    template <typename DstT>
     __aicore__ inline void StoreRows(
-        AscendC::GlobalTensor<float> dst, AscendC::LocalTensor<float> src,
+        AscendC::GlobalTensor<DstT> dst, AscendC::LocalTensor<float> src,
         uint32_t rows, uint32_t cols, uint32_t dstRowElements)
     {
         AscendC::PipeBarrier<PIPE_V>();
-        auto output = outputQueue_.AllocTensor<float>();
+        auto output = outputQueue_.AllocTensor<DstT>();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        KdaRegbaseCopy(
-            (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)src.GetPhyAddr(),
-            rows * cols);
+        if constexpr (AscendC::IsSameType<DstT, float>::value) {
+            KdaRegbaseCopy(
+                (__ubuf__ float *)output.GetPhyAddr(),
+                (__ubuf__ float *)src.GetPhyAddr(),
+                rows * cols);
+        } else {
+            AscendC::Cast(
+                output, src, AscendC::RoundMode::CAST_RINT, rows * cols);
+        }
 #else
-        AscendC::Adds(output, src, 0.0f, rows * cols);
+        if constexpr (AscendC::IsSameType<DstT, float>::value) {
+            AscendC::Adds(output, src, 0.0f, rows * cols);
+        } else {
+            AscendC::Cast(
+                output, src, AscendC::RoundMode::CAST_RINT, rows * cols);
+        }
 #endif
         outputQueue_.EnQue(output);
-        auto ready = outputQueue_.DeQue<float>();
+        auto ready = outputQueue_.DeQue<DstT>();
         AscendC::DataCopyExtParams copyParams{
             static_cast<uint16_t>(rows),
-            static_cast<uint32_t>(cols * sizeof(float)),
+            static_cast<uint32_t>(cols * sizeof(DstT)),
             0,
-            static_cast<uint32_t>((dstRowElements - cols) * sizeof(float)),
+            static_cast<uint32_t>((dstRowElements - cols) * sizeof(DstT)),
             0
         };
         AscendC::DataCopyPad(dst, ready, copyParams);
@@ -1620,44 +2093,46 @@ private:
     }
 
     __aicore__ inline void StoreScalarRows(
-        AscendC::GlobalTensor<float> dst,
+        AscendC::GlobalTensor<DbOutT> dst,
         AscendC::LocalTensor<float> src, uint32_t rows)
     {
         if constexpr (!VARLEN_TND) {
             Store(dst, src, rows);
-            return;
-        }
-        constexpr uint32_t kLocalRowElements = 32 / sizeof(float);
-        AscendC::PipeBarrier<PIPE_V>();
+        } else {
+            static_assert(AscendC::IsSameType<DbOutT, float>::value,
+                          "Varlen scalar output keeps the FP32 staging path.");
+            constexpr uint32_t kLocalRowElements = 32 / sizeof(float);
+            AscendC::PipeBarrier<PIPE_V>();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        auto output = outputQueue_.AllocTensor<float>();
-        KdaRegbaseScatterScalars(
-            (__ubuf__ float *)output.GetPhyAddr(),
-            (__ubuf__ float *)src.GetPhyAddr(),
-            rows, kLocalRowElements);
+            auto output = outputQueue_.AllocTensor<float>();
+            KdaRegbaseScatterScalars(
+                (__ubuf__ float *)output.GetPhyAddr(),
+                (__ubuf__ float *)src.GetPhyAddr(),
+                rows, kLocalRowElements);
 #else
-        AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
-        AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
-        auto output = outputQueue_.AllocTensor<float>();
-        for (uint32_t row = 0; row < rows; ++row) {
-            AscendC::Duplicate(
-                output[row * kLocalRowElements], src.GetValue(row), 1);
-        }
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
+            auto output = outputQueue_.AllocTensor<float>();
+            for (uint32_t row = 0; row < rows; ++row) {
+                AscendC::Duplicate(
+                    output[row * kLocalRowElements], src.GetValue(row), 1);
+            }
 #endif
-        outputQueue_.EnQue(output);
-        auto ready = outputQueue_.DeQue<float>();
-        // For VECOUT->GM DataCopyPad, a non-aligned local block is rounded to
-        // one 32-byte data block.  Adjacent staged rows therefore use
-        // srcStride=0; GM dstStride remains byte-based.
-        AscendC::DataCopyExtParams copyParams{
-            static_cast<uint16_t>(rows),
-            static_cast<uint32_t>(sizeof(float)),
-            0,
-            static_cast<uint32_t>((ScalarRowElements() - 1) * sizeof(float)),
-            0
-        };
-        AscendC::DataCopyPad(dst, ready, copyParams);
-        outputQueue_.FreeTensor(ready);
+            outputQueue_.EnQue(output);
+            auto ready = outputQueue_.DeQue<float>();
+            // For VECOUT->GM DataCopyPad, a non-aligned local block is rounded to
+            // one 32-byte data block.  Adjacent staged rows therefore use
+            // srcStride=0; GM dstStride remains byte-based.
+            AscendC::DataCopyExtParams copyParams{
+                static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(sizeof(float)),
+                0,
+                static_cast<uint32_t>((ScalarRowElements() - 1) * sizeof(float)),
+                0
+            };
+            AscendC::DataCopyPad(dst, ready, copyParams);
+            outputQueue_.FreeTensor(ready);
+        }
     }
 
     __aicore__ inline uint64_t SlotBase(uint32_t slot) const
@@ -1967,9 +2442,11 @@ private:
                  tiling_, task.batchIdx, head, anchorRow, col)],
              cols);
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-        for (uint32_t row = 1; row < kLowerPackRows; ++row) {
-            AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
-        }
+        AscendC::UnaryRepeatParams anchorParams{
+            1, 1, static_cast<uint8_t>(cols * sizeof(float) / 32), 0};
+        AscendC::Adds(
+            anchor[cols], anchor, 0.0f, static_cast<uint64_t>(cols),
+            static_cast<uint8_t>(kLowerPackRows - 1U), anchorParams);
         AscendC::PipeBarrier<PIPE_V>();
 #endif
         for (uint32_t sourceRow = 0; sourceRow < prefix; sourceRow += kLowerPackRows) {
@@ -2128,9 +2605,17 @@ private:
                      tiling_, task.batchIdx, head, anchorRow, col)],
                  cols);
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-            for (uint32_t row = 1; row < kUpperPackRows; ++row) {
-                AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
-            }
+            constexpr uint32_t kHalfCols = 64;
+            AscendC::UnaryRepeatParams anchorParams{
+                1, 1, static_cast<uint8_t>(cols * sizeof(float) / 32), 0};
+            AscendC::Adds(
+                anchor[cols], anchor, 0.0f,
+                static_cast<uint64_t>(kHalfCols),
+                static_cast<uint8_t>(kUpperPackRows - 1U), anchorParams);
+            AscendC::Adds(
+                anchor[cols + kHalfCols], anchor[kHalfCols], 0.0f,
+                static_cast<uint64_t>(kHalfCols),
+                static_cast<uint8_t>(kUpperPackRows - 1U), anchorParams);
             AscendC::PipeBarrier<PIPE_V>();
 #endif
             for (uint32_t sourceRow = 0; sourceRow < future; sourceRow += kUpperPackRows) {
@@ -2981,6 +3466,178 @@ private:
     }
 #endif
 
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+    __aicore__ inline void FinishHeadA2Dense16(
+        const CIntraTask &task, uint32_t head, uint32_t rowStart,
+        uint32_t validRows, uint32_t slot)
+    {
+        static_assert(K_DIM == 128 && kProcessRowBlock == 32,
+                      "The A2 16-row path requires K=128 and a 32-row block.");
+        const uint32_t ownedBegin = AscendC::GetSubBlockIdx() * 16U;
+        if (ownedBegin >= validRows) {
+            return;
+        }
+        const uint32_t ownedRows =
+            ownedBegin + 16U <= validRows ? 16U : validRows - ownedBegin;
+        const uint32_t tokenBegin = task.begin + rowStart + ownedBegin;
+        const uint32_t cols = 128;
+        const uint32_t count = ownedRows * cols;
+        const uint64_t slotBase = SlotBase(slot);
+
+        auto rawDq = Plane(0);       // planes 0-1
+        auto rawDkLower = Plane(2);  // planes 2-3
+        auto rawDkUpper = Plane(4);  // planes 4-5
+        auto q = Plane(6);           // planes 6-7
+        auto k = Plane(8);           // planes 8-9
+        auto gate = Plane(10);       // planes 10-11; becomes negScale
+        auto output = Plane(12);     // planes 12-13; starts as anchor
+        auto temp = Plane(14);       // planes 14-15; starts as posScale
+        auto scalars = Plane(16);
+        auto beta = scalars;
+        auto dbAcc = scalars[128];
+        auto betaBroadcast = Plane(17);  // planes 17-18
+        auto inputGrad = Plane(19);      // planes 19-20
+        auto product = Plane(21);        // planes 21-22
+        auto rowReduce = Plane(23);
+
+        AscendC::Duplicate(dbAcc, 0.0f, ownedRows);
+        LoadScalarRows(
+            beta,
+            betaGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
+        AscendC::Brcb(
+            betaBroadcast, beta,
+            static_cast<uint8_t>((ownedRows + 7U) / 8U), {1, 8});
+
+        const uint32_t anchorLocal =
+            rowStart + 8U < task.end - task.begin ?
+                rowStart + 8U : task.end - task.begin - 1U;
+        Load(output,
+             gkGm_[CIntraTensorOffset(
+                 tiling_, task.batchIdx, head,
+                 task.begin + anchorLocal, 0)],
+             cols);
+        for (uint32_t row = 1; row < ownedRows; ++row) {
+            AscendC::Adds(output[row * cols], output, 0.0f, cols);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+
+        const uint64_t resultBase =
+            slotBase / sizeof(float) +
+            tiling_.intraResultRegionOffset / sizeof(float);
+        LoadMatrixRowsPair(
+            q,
+            qGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements(),
+            k,
+            kGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        LoadMatrixRowsPair(
+            gate,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements(),
+            rawDq,
+            workspaceGm_[resultBase +
+                tiling_.intraResultDqOffset / sizeof(float) +
+                static_cast<uint64_t>(ownedBegin) * K_DIM],
+            ownedRows, cols, K_DIM);
+        LoadMatrixRowsPair(
+            rawDkLower,
+            workspaceGm_[resultBase +
+                tiling_.intraResultDkLowerOffset / sizeof(float) +
+                static_cast<uint64_t>(ownedBegin) * K_DIM],
+            ownedRows, cols, K_DIM,
+            rawDkUpper,
+            workspaceGm_[resultBase +
+                tiling_.intraResultDkUpperOffset / sizeof(float) +
+                static_cast<uint64_t>(ownedBegin) * K_DIM],
+            ownedRows, cols, K_DIM);
+
+        AscendC::Sub(temp, gate, output, count);
+        AscendC::Sub(gate, output, gate, count);
+        Exp2(temp, temp, count);
+        Exp2(gate, gate, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(rawDq, rawDq, temp, count);
+        AscendC::Mul(rawDkLower, rawDkLower, temp, count);
+        AscendC::Mul(rawDkUpper, rawDkUpper, gate, count);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        AscendC::Mul(product, rawDkLower, k, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        uint32_t reduceShape[2] = {ownedRows, cols};
+        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(
+            rowReduce, product, reduceTmp_.Get<uint8_t>(), reduceShape, true);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(dbAcc, dbAcc, rowReduce, ownedRows);
+        const uint8_t rowStride =
+            static_cast<uint8_t>(cols * sizeof(float) / 32);
+        for (uint32_t offset = 0; offset < cols; offset += 64) {
+            AscendC::Mul(
+                rawDkLower[offset], rawDkLower[offset], betaBroadcast,
+                64, ownedRows, {1, 1, 0, rowStride, rowStride, 1});
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+
+        LoadRows(
+            inputGrad,
+            dqGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        AscendC::Add(output, inputGrad, rawDq, count);
+        StoreRows(
+            dqOutGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            output, ownedRows, cols, TensorRowElements());
+
+        LoadRows(
+            inputGrad,
+            dkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        AscendC::Add(temp, rawDkLower, rawDkUpper, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(output, inputGrad, temp, count);
+        StoreRows(
+            dkOutGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            output, ownedRows, cols, TensorRowElements());
+
+        LoadRows(
+            inputGrad,
+            dgGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            ownedRows, cols, TensorRowElements());
+        AscendC::Mul(temp, q, rawDq, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(output, inputGrad, temp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Sub(temp, rawDkLower, rawDkUpper, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Mul(temp, k, temp, count);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Add(output, output, temp, count);
+        StoreRows(
+            dgOutGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head, tokenBegin, 0)],
+            output, ownedRows, cols, TensorRowElements());
+        LoadScalarRows(
+            beta,
+            dbGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
+        AscendC::Add(dbAcc, dbAcc, beta, ownedRows);
+        StoreScalarRows(
+            dbOutGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            dbAcc, ownedRows);
+    }
+#endif
+
     __aicore__ inline void FinishHead(
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
         uint32_t slot)
@@ -3027,6 +3684,14 @@ private:
         auto product = Plane(14);
         auto rowReduce = Plane(15);
         auto dbAcc = Plane(16);
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+        // The three scale planes become dead after raw gradients are scaled.
+        // Reuse them to overlap dense FP32 gradient loads with dBeta work.
+        auto dqPrefetch = posScale;
+        auto dkPrefetch = negScale;
+        auto dgPrefetch = anchor;
+        bool useDenseGradPrefetch = false;
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseFill(
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
@@ -3037,6 +3702,16 @@ private:
         const uint32_t anchorLocal = rowStart + 8 < task.end - task.begin ?
                                      rowStart + 8 : task.end - task.begin - 1;
         const uint32_t anchorRow = task.begin + anchorLocal;
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+        bool useDenseDirectInputs = false;
+        if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                      kProcessRowBlock == kRowBlock) {
+            useDenseDirectInputs =
+                tiling_.isVarLen == 0 &&
+                tiling_.seqlen % CHUNK_SIZE == 0 &&
+                ownedRows == 8;
+        }
+#endif
         LoadScalarRows(
             beta,
             betaGm_[CIntraScalarOffset(
@@ -3049,13 +3724,28 @@ private:
         for (uint32_t col = 0; col < K_DIM; col += 128) {
             const uint32_t cols = col + 128 <= K_DIM ? 128 : K_DIM - col;
             const uint32_t count = ownedRows * cols;
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+            if (!useDenseDirectInputs) {
+#endif
             Load(anchor,
                  gkGm_[CIntraTensorOffset(
                      tiling_, task.batchIdx, head, anchorRow, col)],
                  cols);
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-            for (uint32_t row = 1; row < ownedRows; ++row) {
-                AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
+            if (ownedRows > 1U) {
+                constexpr uint32_t kHalfCols = K_DIM / 2;
+                AscendC::UnaryRepeatParams anchorParams{
+                    1, 1,
+                    static_cast<uint8_t>(K_DIM * sizeof(float) / 32), 0};
+                AscendC::Adds(
+                    anchor[cols], anchor, 0.0f,
+                    static_cast<uint64_t>(kHalfCols),
+                    static_cast<uint8_t>(ownedRows - 1U), anchorParams);
+                AscendC::Adds(
+                    anchor[cols + kHalfCols], anchor[kHalfCols], 0.0f,
+                    static_cast<uint64_t>(kHalfCols),
+                    static_cast<uint8_t>(ownedRows - 1U), anchorParams);
+            }
             }
 #endif
             const uint64_t resultBase =
@@ -3069,6 +3759,52 @@ private:
                 kGm_[CIntraTensorOffset(
                     tiling_, task.batchIdx, head, tokenBegin, col)],
                 ownedRows, cols, TensorRowElements());
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+            if (useDenseDirectInputs && cols == K_DIM) {
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+                        a2DirectVToMte2Event_);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+                        a2DirectVToMte2Event_);
+                    const AscendC::DataCopyExtParams directCopy{
+                        1, static_cast<uint32_t>(count * sizeof(float)),
+                        0, 0, 0};
+                    AscendC::DataCopyPad(
+                        anchor,
+                        gkGm_[CIntraTensorOffset(
+                            tiling_, task.batchIdx, head, anchorRow, col)],
+                        {1, static_cast<uint32_t>(cols * sizeof(float)),
+                         0, 0, 0},
+                        {false, 0, 0, 0});
+                    AscendC::DataCopyPad(
+                        gate,
+                        gkGm_[CIntraTensorOffset(
+                            tiling_, task.batchIdx, head, tokenBegin, col)],
+                        directCopy, {false, 0, 0, 0});
+                    AscendC::DataCopyPad(
+                        rawDq,
+                        workspaceGm_[resultBase +
+                            tiling_.intraResultDqOffset / sizeof(float) +
+                            static_cast<uint64_t>(ownedBegin) * K_DIM + col],
+                        directCopy, {false, 0, 0, 0});
+                    AscendC::DataCopyPad(
+                        rawDkLower,
+                        workspaceGm_[resultBase +
+                            tiling_.intraResultDkLowerOffset / sizeof(float) +
+                            static_cast<uint64_t>(ownedBegin) * K_DIM + col],
+                        directCopy, {false, 0, 0, 0});
+                    AscendC::DataCopyPad(
+                        rawDkUpper,
+                        workspaceGm_[resultBase +
+                            tiling_.intraResultDkUpperOffset / sizeof(float) +
+                            static_cast<uint64_t>(ownedBegin) * K_DIM + col],
+                        directCopy, {false, 0, 0, 0});
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+                        a2DirectMte2ToVEvent_);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+                        a2DirectMte2ToVEvent_);
+            }
+            if (!useDenseDirectInputs) {
+#endif
             LoadMatrixRowsPair(
                 gate,
                 gkGm_[CIntraTensorOffset(
@@ -3087,6 +3823,9 @@ private:
                 workspaceGm_[resultBase + tiling_.intraResultDkUpperOffset / sizeof(float) +
                              static_cast<uint64_t>(ownedBegin) * K_DIM + col],
                 ownedRows, cols, K_DIM);
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+            }
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseFinishScale<false>(
                 (__ubuf__ float *)rawDq.GetPhyAddr(),
@@ -3103,8 +3842,30 @@ private:
                 (__ubuf__ float *)rawDq.GetPhyAddr(), 0.0f,
                 ownedRows, cols);
 #else
-            AscendC::Sub(posScale, gate, anchor, count);
-            AscendC::Sub(negScale, anchor, gate, count);
+            if (useDenseDirectInputs) {
+                constexpr uint32_t kHalfCols = K_DIM / 2;
+                constexpr uint8_t kRowStride =
+                    K_DIM * sizeof(float) / 32;
+                AscendC::Sub(
+                    posScale, gate, anchor, kHalfCols,
+                    static_cast<uint8_t>(ownedRows),
+                    {1, 1, 1, kRowStride, kRowStride, 0});
+                AscendC::Sub(
+                    posScale[kHalfCols], gate[kHalfCols], anchor[kHalfCols],
+                    kHalfCols, static_cast<uint8_t>(ownedRows),
+                    {1, 1, 1, kRowStride, kRowStride, 0});
+                AscendC::Sub(
+                    negScale, anchor, gate, kHalfCols,
+                    static_cast<uint8_t>(ownedRows),
+                    {1, 1, 1, kRowStride, 0, kRowStride});
+                AscendC::Sub(
+                    negScale[kHalfCols], anchor[kHalfCols], gate[kHalfCols],
+                    kHalfCols, static_cast<uint8_t>(ownedRows),
+                    {1, 1, 1, kRowStride, 0, kRowStride});
+            } else {
+                AscendC::Sub(posScale, gate, anchor, count);
+                AscendC::Sub(negScale, anchor, gate, count);
+            }
             Exp2(posScale, posScale, count);
             Exp2(negScale, negScale, count);
             AscendC::PipeBarrier<PIPE_V>();
@@ -3112,11 +3873,56 @@ private:
             AscendC::Mul(rawDkLower, rawDkLower, posScale, count);
             AscendC::Mul(rawDkUpper, rawDkUpper, negScale, count);
             AscendC::PipeBarrier<PIPE_V>();
+            if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
+                          kProcessRowBlock == kRowBlock) {
+                if (tiling_.isVarLen == 0 &&
+                    tiling_.seqlen % CHUNK_SIZE == 0 &&
+                    cols == K_DIM && ownedRows == 8) {
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+                        a2DirectVToMte2Event_);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
+                        a2DirectVToMte2Event_);
+                    AscendC::DataCopyPad(
+                        dqPrefetch,
+                        dqGm_[CIntraTensorOffset(
+                            tiling_, task.batchIdx, head, tokenBegin, col)],
+                        {1, static_cast<uint32_t>(count * sizeof(float)),
+                         0, 0, 0},
+                        {false, 0, 0, 0});
+                    AscendC::DataCopyPad(
+                        dkPrefetch,
+                        dkGm_[CIntraTensorOffset(
+                            tiling_, task.batchIdx, head, tokenBegin, col)],
+                        {1, static_cast<uint32_t>(count * sizeof(float)),
+                         0, 0, 0},
+                        {false, 0, 0, 0});
+                    AscendC::DataCopyPad(
+                        dgPrefetch,
+                        dgGm_[CIntraTensorOffset(
+                            tiling_, task.batchIdx, head, tokenBegin, col)],
+                        {1, static_cast<uint32_t>(count * sizeof(float)),
+                         0, 0, 0},
+                        {false, 0, 0, 0});
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
+                        a2DirectMte2ToVEvent_);
+                    useDenseGradPrefetch = true;
+                }
+            }
             AscendC::Mul(product, rawDkLower, k, count);
             AscendC::PipeBarrier<PIPE_V>();
-            uint32_t reduceShape[2] = {ownedRows, cols};
-            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(
-                rowReduce, product, reduceTmp_.Get<uint8_t>(), reduceShape, true);
+            constexpr uint32_t kHalfCols = K_DIM / 2;
+            constexpr uint8_t kRowRepStride =
+                K_DIM * sizeof(float) / 32;
+            AscendC::Add(
+                product[kHalfCols], product, product[kHalfCols],
+                kHalfCols, static_cast<uint8_t>(ownedRows),
+                {1, 1, 1, kRowRepStride,
+                 kRowRepStride, kRowRepStride});
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::WholeReduceSum(
+                rowReduce, product[kHalfCols], kHalfCols,
+                static_cast<uint8_t>(ownedRows), 1, 1,
+                kRowRepStride);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Add(dbAcc, dbAcc, rowReduce, ownedRows);
 
@@ -3129,28 +3935,38 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
 #endif
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             LoadRows(inputGrad,
                      dqGm_[CIntraTensorOffset(
                          tiling_, task.batchIdx, head, tokenBegin, col)],
                      ownedRows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseAdd2(
                 (__ubuf__ float *)output.GetPhyAddr(),
                 (__ubuf__ float *)inputGrad.GetPhyAddr(),
                 (__ubuf__ float *)rawDq.GetPhyAddr(),
                 count);
 #else
-            AscendC::Add(output, inputGrad, rawDq, count);
+            if (useDenseGradPrefetch) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
+                    a2DirectMte2ToVEvent_);
+                AscendC::Add(output, dqPrefetch, rawDq, count);
+            } else {
+                LoadRows(inputGrad,
+                         dqGm_[CIntraTensorOffset(
+                             tiling_, task.batchIdx, head, tokenBegin, col)],
+                         ownedRows, cols, TensorRowElements());
+                AscendC::Add(output, inputGrad, rawDq, count);
+            }
 #endif
             StoreRows(dqOutGm_[CIntraTensorOffset(
                           tiling_, task.batchIdx, head, tokenBegin, col)],
                       output, ownedRows, cols, TensorRowElements());
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             LoadRows(inputGrad,
                      dkGm_[CIntraTensorOffset(
                          tiling_, task.batchIdx, head, tokenBegin, col)],
                      ownedRows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseAdd3(
                 (__ubuf__ float *)output.GetPhyAddr(),
                 (__ubuf__ float *)inputGrad.GetPhyAddr(),
@@ -3160,17 +3976,25 @@ private:
 #else
             AscendC::Add(temp, rawDkLower, rawDkUpper, count);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(output, inputGrad, temp, count);
+            if (useDenseGradPrefetch) {
+                AscendC::Add(output, dkPrefetch, temp, count);
+            } else {
+                LoadRows(inputGrad,
+                         dkGm_[CIntraTensorOffset(
+                             tiling_, task.batchIdx, head, tokenBegin, col)],
+                         ownedRows, cols, TensorRowElements());
+                AscendC::Add(output, inputGrad, temp, count);
+            }
 #endif
             StoreRows(dkOutGm_[CIntraTensorOffset(
                           tiling_, task.batchIdx, head, tokenBegin, col)],
                       output, ownedRows, cols, TensorRowElements());
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             LoadRows(inputGrad,
                      dgGm_[CIntraTensorOffset(
                          tiling_, task.batchIdx, head, tokenBegin, col)],
                      ownedRows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaRegbaseDg(
                 (__ubuf__ float *)output.GetPhyAddr(),
                 (__ubuf__ float *)inputGrad.GetPhyAddr(),
@@ -3183,7 +4007,15 @@ private:
 #else
             AscendC::Mul(temp, q, rawDq, count);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(output, inputGrad, temp, count);
+            if (useDenseGradPrefetch) {
+                AscendC::Add(output, dgPrefetch, temp, count);
+            } else {
+                LoadRows(inputGrad,
+                         dgGm_[CIntraTensorOffset(
+                             tiling_, task.batchIdx, head, tokenBegin, col)],
+                         ownedRows, cols, TensorRowElements());
+                AscendC::Add(output, inputGrad, temp, count);
+            }
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Sub(temp, rawDkLower, rawDkUpper, count);
             AscendC::PipeBarrier<PIPE_V>();
@@ -3196,18 +4028,23 @@ private:
                       output, ownedRows, cols, TensorRowElements());
         }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         LoadScalarRows(
             beta,
             dbGm_[CIntraScalarOffset(
                 tiling_, task.batchIdx, head, tokenBegin)],
             ownedRows);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         KdaRegbaseAdd2(
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
             (__ubuf__ float *)beta.GetPhyAddr(),
             ownedRows);
 #else
+        LoadScalarRows(
+            beta,
+            dbGm_[CIntraScalarOffset(
+                tiling_, task.batchIdx, head, tokenBegin)],
+            ownedRows);
         AscendC::Add(dbAcc, dbAcc, beta, ownedRows);
 #endif
         StoreScalarRows(
@@ -3266,6 +4103,9 @@ private:
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
     Catlass::Arch::CrossCoreFlag denseCubeToVecReadyFlag_{
         kCIntraDenseCubeReadyFlag};
+#else
+    event_t a2DirectMte2ToVEvent_{};
+    event_t a2DirectVToMte2Event_{};
 #endif
     AscendC::GlobalTensor<DataT> qGm_;
     AscendC::GlobalTensor<DataT> kGm_;
@@ -3278,9 +4118,9 @@ private:
     AscendC::GlobalTensor<float> dkGm_;
     AscendC::GlobalTensor<float> dbGm_;
     AscendC::GlobalTensor<float> dgGm_;
-    AscendC::GlobalTensor<float> dqOutGm_;
-    AscendC::GlobalTensor<float> dkOutGm_;
-    AscendC::GlobalTensor<float> dbOutGm_;
+    AscendC::GlobalTensor<DqDkOutT> dqOutGm_;
+    AscendC::GlobalTensor<DqDkOutT> dkOutGm_;
+    AscendC::GlobalTensor<DbOutT> dbOutGm_;
     AscendC::GlobalTensor<float> dgOutGm_;
     AscendC::GlobalTensor<RawGateT> rawGGm_;
     AscendC::GlobalTensor<float> aLogGm_;

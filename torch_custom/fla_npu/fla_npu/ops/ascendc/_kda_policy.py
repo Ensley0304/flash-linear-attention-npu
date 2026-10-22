@@ -94,8 +94,11 @@ def _prepare_kda_bwd_optimized(args):
         args[name] = _optional_bool(args[name],default)
     args["lower_bound"] = _optional_float(args["lower_bound"],-5.0)
     q = args["q"]
-    if q.device.type != "npu" or "Ascend950" not in torch.npu.get_device_name(q.device):
-        raise ValueError("optimized KDA backward requires Ascend950/A5")
+    device_name = str(torch.npu.get_device_name(q.device)) if q.device.type == "npu" else ""
+    if not ("Ascend950" in device_name or device_name.startswith("Ascend910B")):
+        raise ValueError(
+            "optimized KDA backward requires an Ascend 950PR/950DT or "
+            "Atlas A2 device")
     packed = args["cu_seqlens"] is not None
     shape = tuple(q.shape)
     if len(shape) != (3 if packed else 4):

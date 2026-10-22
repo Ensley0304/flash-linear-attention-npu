@@ -7,6 +7,8 @@
 
 #include <cstdint>
 
+#include "../../chunk_kda_bwd/op_kernel/chunk_kda_bwd_common.h"
+
 namespace KDA {
 
 // The public contract is already complete, while this development branch only
@@ -37,6 +39,14 @@ struct ChunkKdaBwdFinalizeTilingData {
     uint64_t slotWorkspaceOffset;
     uint64_t gatePartialOffset;
     uint64_t dtBiasPartialOffset;
+    uint64_t a2DqFp32Offset;
+    uint64_t a2DkFp32Offset;
+    uint64_t a2DBetaFp32Offset;
+    uint64_t a2DAkkFp32Offset;
+    uint64_t a2WorkspaceBytes;
+    uint32_t isAscend950;
+    uint32_t reserved;
+    ChunkKdaBwdCTilingData a2;
 };
 
 } // namespace KDA

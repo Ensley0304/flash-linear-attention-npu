@@ -6,7 +6,11 @@
 #define CHUNK_KDA_BWD_FINALIZE_ARCH35_CUBE_H
 
 #ifndef CATLASS_ARCH
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
+#else
+#define CATLASS_ARCH 2201
+#endif
 #endif
 
 #include "chunk_kda_bwd_finalize_common.h"
@@ -56,6 +60,12 @@ public:
         AscendC::SetHF32Mode(false);
         Catlass::Arch::Resource<ArchTag> resource;
         InitEvents();
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        ProcessA2(resource);
+        DrainEvents();
+        AscendC::SetMMLayoutTransform(false);
+        return;
+#endif
         ReleaseTaskL1();
         const int64_t coreIdx = AscendC::GetBlockIdx();
         const int64_t coreNum = AscendC::GetBlockNum();
@@ -105,7 +115,7 @@ public:
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
-                RunStage1(resource, chunk, owner, aiv, slot,
+                RunStage1(resource, chunk, head, owner, aiv, slot,
                           coreIdx, groupGeneration);
             }
             headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
@@ -115,7 +125,8 @@ public:
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
-                RunStage3(resource, chunk, owner, aiv, slot);
+                RunStage3(resource, chunk, owner, aiv, slot,
+                          coreIdx, groupGeneration);
             }
             headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
             // Stage4 consumes the resident AkkT/Tza pairs. Its result
@@ -125,8 +136,27 @@ public:
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
                 const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
-                RunStage4(resource, chunk, owner, aiv, slot);
+                RunStage4(resource, chunk, owner, aiv, slot,
+                          coreIdx, groupGeneration);
             }
+
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+            // The A2 bring-up path currently hands the completed WY/base
+            // tensors to the mature Intra implementation.  Wait until each
+            // owner AIV has copied dAkk out of the relay before the next task
+            // reuses that GM range.
+            headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
+            for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
+                const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
+                const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
+                AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
+                    KDA_FINALIZE_DAKK_FREE_BASE +
+                    aiv * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE + slot);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(2);
+            ReleaseTaskL1();
+            continue;
+#endif
 
             // Each row band has its own stable gate anchor. The existing
             // residual GEMMs operate on 32 output rows, with no extra FLOPs
@@ -138,14 +168,16 @@ public:
                     const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                     const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
                     const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
-                    RunStage6(resource, chunk, owner, aiv, slot, rowBegin);
+                    RunStage6(resource, chunk, owner, aiv, slot,
+                              coreIdx, groupGeneration, rowBegin);
                 }
                 headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
                 for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
                     const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                     const uint32_t aiv = static_cast<uint32_t>(headGeneration & 1U);
                     const uint32_t slot = static_cast<uint32_t>((headGeneration >> 1U) & 1U);
-                    RunStage8(resource, chunk, owner, aiv, slot, rowBegin);
+                    RunStage8(resource, chunk, owner, aiv, slot,
+                              coreIdx, groupGeneration, rowBegin);
                 }
             }
             // Next task's streams alias this task's LocalOperand owners.
@@ -157,6 +189,88 @@ public:
     }
 
 private:
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+    __aicore__ inline void PublishA2VectorStage(uint32_t flag)
+    {
+        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(flag);
+    }
+
+    __aicore__ inline void WaitA2VectorStage(uint32_t flag)
+    {
+        AscendC::CrossCoreWaitFlag(flag);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(0);
+    }
+
+    __aicore__ inline void ProcessA2(
+        Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource)
+    {
+        const int64_t coreIdx = AscendC::GetBlockIdx();
+        const int64_t coreNum = tiling_->a2.usedCoreNum;
+        uint64_t groupGeneration = 0;
+        for (int64_t workTask = coreIdx; workTask < tiling_->workTaskNum;
+             workTask += coreNum, ++groupGeneration) {
+            const int64_t headWindow = workTask / tiling_->chunkTaskNum;
+            const int64_t chunkTask = workTask - headWindow * tiling_->chunkTaskNum;
+            const int64_t headBegin = headWindow * KDA_FINALIZE_HEADS_PER_WINDOW;
+            const int64_t headEnd = FinalizeMin(
+                headBegin + KDA_FINALIZE_HEADS_PER_WINDOW, tiling_->NV);
+            FinalizeChunkInfo chunk;
+            ResolveFinalizeChunk(
+                chunkTask, cuSeqlens_, chunkIndices_, *tiling_, chunk);
+            if (!chunk.valid) {
+                continue;
+            }
+
+            for (int64_t head = headBegin; head < headEnd; ++head) {
+                LoadStage0(
+                    resource, chunk, head,
+                    static_cast<uint32_t>(head - headBegin));
+            }
+            for (int64_t head = headBegin; head < headEnd; ++head) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                ComputeStage0(
+                    resource, chunk, owner, owner, 0,
+                    coreIdx, groupGeneration);
+            }
+            PublishA2VectorStage(KDA_FINALIZE_A2_AIC_STAGE0_READY);
+
+            WaitA2VectorStage(KDA_FINALIZE_A2_VEC_STAGE0_READY);
+            for (int64_t head = headBegin; head < headEnd; ++head) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                RunStage1A2Zw(
+                    resource, owner, coreIdx, groupGeneration);
+            }
+            for (int64_t head = headBegin; head < headEnd; ++head) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                RunStage1A2Dkgb(
+                    resource, chunk, head, owner,
+                    coreIdx, groupGeneration);
+            }
+            PublishA2VectorStage(KDA_FINALIZE_A2_AIC_STAGE1_READY);
+
+            WaitA2VectorStage(KDA_FINALIZE_A2_VEC_ZB_READY);
+            for (int64_t head = headBegin; head < headEnd; ++head) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                RunStage3A2Direct(
+                    resource, chunk, head, owner,
+                    coreIdx, groupGeneration);
+            }
+            PublishA2VectorStage(KDA_FINALIZE_A2_AIC_STAGE3_READY);
+
+            WaitA2VectorStage(KDA_FINALIZE_A2_VEC_TZA_READY);
+            for (int64_t head = headBegin; head < headEnd; ++head) {
+                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
+                RunStage4A2Direct(
+                    resource, chunk, head, owner,
+                    coreIdx, groupGeneration);
+            }
+            PublishA2VectorStage(KDA_FINALIZE_A2_AIC_STAGE4_READY);
+            WaitA2VectorStage(KDA_FINALIZE_A2_VEC_DONE);
+        }
+    }
+#endif
+
     __aicore__ inline void ReleaseTaskL1()
     {
         for (uint32_t aiv = 0; aiv < 2; ++aiv) {
@@ -165,7 +279,11 @@ private:
         }
     }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using ArchTag = Catlass::Arch::Ascend950;
+#else
+    using ArchTag = Catlass::Arch::AtlasA2;
+#endif
     using DT = bfloat16_t;
     using Acc = float;
     using LayoutRM = Catlass::layout::RowMajor;
@@ -178,10 +296,12 @@ private:
         ArchTag, DT, LayoutRM, DT, LayoutRM, Acc, LayoutRM>;
     using CopyStage3 = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, DT, LayoutCM, DT, LayoutCM, Acc, LayoutRM>;
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
     using CopyTransBToUb = Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, DT, LayoutRM, DT, LayoutCM, Acc, LayoutRM>;
     using CopyTransAToUbBf16 = Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, DT, LayoutCM, DT, LayoutRM, DT, LayoutRM>;
+#endif
     using TileMmad = Catlass::Gemm::Tile::TileMmadTla<
         ArchTag, DT, typename CopyRegular::LayoutTagL1A>;
 
@@ -333,8 +453,16 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(slot);
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
         Catlass::Gemm::Tile::TileMmadTla<
-            ArchTag, DT, typename TileCopy::LayoutTagL1A>{}(tileC, tensorL0A, tensorL0B, true, 0);
+            ArchTag, DT, typename TileCopy::LayoutTagL1A>{}(
+                tileC, tensorL0A, tensorL0B, m, n, k, true,
+                SPLIT == 0 ? 0b11 : 0b10);
+#else
+        Catlass::Gemm::Tile::TileMmadTla<
+            ArchTag, DT, typename TileCopy::LayoutTagL1A>{}(
+                tileC, tensorL0A, tensorL0B, true, 0);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
         if constexpr (SPLIT != 0) {
@@ -353,7 +481,12 @@ private:
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
                 Catlass::Gemm::Tile::TileMmadTla<ArchTag, DT, typename TileCopy::LayoutTagL1A>{}(
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+                    tileC, tensorL0A, tensorL0B, m, n, k, false,
+                    correction + 1U == (SPLIT == 3 ? 2U : 1U) ? 0b11 : 0b10);
+#else
                     tileC, tensorL0A, tensorL0B, false, 0);
+#endif
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
             }
@@ -366,9 +499,14 @@ private:
             dst.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gmDst));
             auto params = AscendC::FixpipeParamsV220(n, m, (m + 15U) / 16U * 16U, n, false);
             params.quantPre = QuantMode_t::NoQuant;
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+            params.unitFlag = 0b11;
+#else
             params.unitFlag = 0;
+#endif
             AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(dst, l0C, params);
         } else if constexpr (PATH == ResultPath::L1_BF16 || PATH == ResultPath::L1_BF16_WITH_RAW) {
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
             AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> params;
             params.nSize = n;
             params.mSize = m;
@@ -377,14 +515,31 @@ private:
             params.quantPre = QuantMode_t::F322BF16;
             params.unitFlag = 0;
             AscendC::Fixpipe<DT, Acc, FIX_NZ_L1>(l1Dst, l0C, params);
+#else
+            auto params = AscendC::FixpipeParamsV220(
+                n, m, (m + 15U) / 16U * 16U, KDA_FINALIZE_CHUNK * 16U, false);
+            params.quantPre = QuantMode_t::F322BF16;
+            params.unitFlag = 0;
+            AscendC::Fixpipe<DT, Acc, FIX_NZ_L1>(l1Dst, l0C, params);
+#endif
             if constexpr (PATH == ResultPath::L1_BF16_WITH_RAW) {
                 const uint64_t flagOffset = aiv * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
                 AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(freeFlag + flagOffset + aivSlot);
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
                 auto dst = resource.ubBuf.template GetBufferByByte<float>(aivUbOffset);
                 auto tensorUb = tla::MakeTensor(dst, tla::MakeLayout<float, LayoutRM>(m, n), Catlass::Arch::PositionUB{});
                 auto tileUb = tla::GetTile(tensorUb, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
                 typename CopyTransBToUb::template CopyL0CToDst<decltype(tileUb)>{}(
                     tileUb, tensorL0C, static_cast<uint8_t>(aiv), 0);
+#else
+                AscendC::GlobalTensor<float> dst;
+                dst.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gmDst));
+                auto rawParams = AscendC::FixpipeParamsV220(
+                    n, m, (m + 15U) / 16U * 16U, n, false);
+                rawParams.quantPre = QuantMode_t::NoQuant;
+                rawParams.unitFlag = 0;
+                AscendC::Fixpipe<float, Acc, AscendC::CFG_ROW_MAJOR>(dst, l0C, rawParams);
+#endif
                 AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(readyFlag + flagOffset + aivSlot);
             }
             if constexpr (SIGNAL_L1_READY) {
@@ -398,6 +553,7 @@ private:
                 AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
                     freeFlag + flagOffset + aivSlot);
             }
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
             auto remoteUb = resource.ubBuf.template GetBufferByByte<float>(aivUbOffset);
             auto tensorUb = tla::MakeTensor(
                 remoteUb, tla::MakeLayout<float, LayoutRM>(m, n),
@@ -406,6 +562,15 @@ private:
                 tensorUb, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
             typename CopyTransBToUb::template CopyL0CToDst<decltype(blockUb)>{}(
                 blockUb, tensorL0C, static_cast<uint8_t>(aiv), 0);
+#else
+            AscendC::GlobalTensor<float> dst;
+            dst.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gmDst));
+            auto params = AscendC::FixpipeParamsV220(
+                n, m, (m + 15U) / 16U * 16U, n, false);
+            params.quantPre = QuantMode_t::NoQuant;
+            params.unitFlag = 0;
+            AscendC::Fixpipe<float, Acc, AscendC::CFG_ROW_MAJOR>(dst, l0C, params);
+#endif
             AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
                 readyFlag + flagOffset + aivSlot);
         } else {
@@ -415,6 +580,7 @@ private:
                 AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
                     freeFlag + flagOffset + aivSlot);
             }
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
             auto remoteUb = resource.ubBuf.template GetBufferByByte<DT>(aivUbOffset);
             auto tensorUb = tla::MakeTensor(
                 remoteUb, tla::MakeLayout<DT, LayoutRM>(m, n),
@@ -423,6 +589,15 @@ private:
                 tensorUb, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
             typename CopyTransAToUbBf16::template CopyL0CToDst<decltype(blockUb)>{}(
                 blockUb, tensorL0C, m, static_cast<uint8_t>(aiv), 1, 0);
+#else
+            AscendC::GlobalTensor<DT> dst;
+            dst.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(gmDst));
+            auto params = AscendC::FixpipeParamsV220(
+                n, m, (m + 15U) / 16U * 16U, n, false);
+            params.quantPre = QuantMode_t::F322BF16;
+            params.unitFlag = 0;
+            AscendC::Fixpipe<DT, Acc, AscendC::CFG_ROW_MAJOR>(dst, l0C, params);
+#endif
             AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
                 readyFlag + flagOffset + aivSlot);
         }
@@ -553,63 +728,275 @@ private:
             resource, akkL1, dvScanL1, rows, KDA_FINALIZE_DIM, rows,
             NextSlot(), wsBase + KDA_FINALIZE_WS_DVB, {}, 0, 0, 0, 0, 0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        RunGemm<CopyTransB, ResultPath::GM_FP32>(
+            resource, dvScanL1, hL1, rows, KDA_FINALIZE_DIM, KDA_FINALIZE_DIM,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_DW,
+            {}, 0, 0, 0, 0, 0);
+#else
         RunGemm<CopyTransB, ResultPath::L1_BF16_WITH_RAW>(
             resource, dvScanL1, hL1, rows, KDA_FINALIZE_DIM, KDA_FINALIZE_DIM,
-            NextSlot(), nullptr, dwL1, aiv, aivSlot, 64 * 1024,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_DW,
+            dwL1, aiv, aivSlot, 64 * 1024,
             KDA_FINALIZE_LOCAL_READY_BASE, KDA_FINALIZE_ZB_READY_BASE);
+#endif
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        RunGemm<CopyTransB, ResultPath::GM_FP32>(
+            resource, dvScanL1, vL1, rows, rows, KDA_FINALIZE_DIM,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_ZV,
+            {}, 0, 0, 0, 0, 0);
+#else
         RunGemm<CopyTransB, ResultPath::AIV_UB_FP32>(
             resource, dvScanL1, vL1, rows, rows, KDA_FINALIZE_DIM,
-            NextSlot(), nullptr, {}, aiv, aivSlot,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_ZV, {}, aiv, aivSlot,
             KDA_FINALIZE_UB_ZV + aivSlot * KDA_FINALIZE_MATRIX_FP32_BYTES,
             KDA_FINALIZE_ZV_FREE_BASE, KDA_FINALIZE_ZV_READY_BASE);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(stream);
     }
 
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+    __aicore__ inline void RunStage1A2Zw(
+        Catlass::Arch::Resource<ArchTag> &resource, uint32_t owner,
+        int64_t coreIdx, uint64_t groupGeneration)
+    {
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
+        auto dwL1 = resource.l1Buf.template GetBufferByByte<DT>(
+            L1_DW + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
+        auto kEL1 = resource.l1Buf.template GetBufferByByte<DT>(
+            L1_KE + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
+        const uint64_t ws = FinalizeWorkspaceSlotBase(
+            coreIdx, groupGeneration, owner);
+        GM_ADDR wsBase = workspace_ + ws;
+        LoadGmToL1B<CopyTransA, LayoutRM>(
+            dwL1, wsBase + KDA_FINALIZE_WS_A2_RELAY_DW,
+            rows, KDA_FINALIZE_DIM);
+        LoadGmToL1B<CopyTransB, LayoutCM>(
+            kEL1, wsBase + KDA_FINALIZE_WS_KE,
+            KDA_FINALIZE_DIM, rows);
+        AscendC::PipeBarrier<PIPE_MTE2>();
+        RunGemm<CopyTransB, ResultPath::GM_FP32>(
+            resource, dwL1, kEL1, rows, rows, KDA_FINALIZE_DIM,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_ZW,
+            {}, 0, 0, 0, 0, 0);
+    }
+
+    __aicore__ inline void RunStage1A2Dkgb(
+        Catlass::Arch::Resource<ArchTag> &resource,
+        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
+        int64_t coreIdx, uint64_t groupGeneration)
+    {
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
+        const uint64_t ws = FinalizeWorkspaceSlotBase(
+            coreIdx, groupGeneration, owner);
+        const int64_t akkToken = FinalizeTokenOffset(
+            *tiling_, chunk, head, KDA_FINALIZE_CHUNK);
+
+        AscendC::GlobalTensor<DT> akkGm;
+        AscendC::GlobalTensor<DT> dwGm;
+        AscendC::GlobalTensor<float> dKgbGm;
+        akkGm.SetGlobalBuffer(
+            reinterpret_cast<__gm__ DT *>(akk_) + akkToken);
+        dwGm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW));
+        dKgbGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            workspace_ + ws + KDA_FINALIZE_WS_DKGB_RAW));
+        auto akkTensor = tla::MakeTensor(
+            akkGm, tla::MakeLayout<DT, LayoutCM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto dwTensor = tla::MakeTensor(
+            dwGm, tla::MakeLayout<DT, LayoutRM>(rows, KDA_FINALIZE_DIM),
+            Catlass::Arch::PositionGM{});
+        auto dKgbTensor = tla::MakeTensor(
+            dKgbGm, tla::MakeLayout<float, LayoutRM>(rows, KDA_FINALIZE_DIM),
+            Catlass::Arch::PositionGM{});
+        auto akkTile = tla::GetTile(
+            akkTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        auto dwTile = tla::GetTile(
+            dwTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(rows, KDA_FINALIZE_DIM));
+        auto dKgbTile = tla::GetTile(
+            dKgbTensor, tla::MakeCoord(0, 0),
+            tla::MakeShape(rows, KDA_FINALIZE_DIM));
+        using DirectMmad = WyTileGemmDirect<ArchTag, float, CopyTransA>;
+        DirectMmad mm(resource);
+        Catlass::GemmCoord shape{rows, KDA_FINALIZE_DIM, rows};
+        mm(akkTile, dwTile, dKgbTile, shape);
+    }
+
+    __aicore__ inline void RunStage4A2Direct(
+        Catlass::Arch::Resource<ArchTag> &resource,
+        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
+        int64_t coreIdx, uint64_t groupGeneration)
+    {
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
+        const uint64_t ws = FinalizeWorkspaceSlotBase(
+            coreIdx, groupGeneration, owner);
+        const int64_t akkToken = FinalizeTokenOffset(
+            *tiling_, chunk, head, KDA_FINALIZE_CHUNK);
+
+        AscendC::GlobalTensor<DT> akkGm;
+        AscendC::GlobalTensor<DT> tzaGm;
+        AscendC::GlobalTensor<float> dAkkGm;
+        akkGm.SetGlobalBuffer(
+            reinterpret_cast<__gm__ DT *>(akk_) + akkToken);
+        tzaGm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW));
+        dAkkGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV));
+        auto akkTensor = tla::MakeTensor(
+            akkGm, tla::MakeLayout<DT, LayoutCM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto tzaTensor = tla::MakeTensor(
+            tzaGm, tla::MakeLayout<DT, LayoutRM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto dAkkTensor = tla::MakeTensor(
+            dAkkGm, tla::MakeLayout<float, LayoutRM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto akkTile = tla::GetTile(
+            akkTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        auto tzaTile = tla::GetTile(
+            tzaTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        auto dAkkTile = tla::GetTile(
+            dAkkTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        using DirectMmad = WyTileGemmDirect<ArchTag, float, CopyTransA>;
+        DirectMmad mm(resource);
+        Catlass::GemmCoord shape{rows, rows, rows};
+        mm(akkTile, tzaTile, dAkkTile, shape);
+    }
+
+    __aicore__ inline void RunStage3A2Direct(
+        Catlass::Arch::Resource<ArchTag> &resource,
+        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
+        int64_t coreIdx, uint64_t groupGeneration)
+    {
+        constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
+        const uint64_t ws = FinalizeWorkspaceSlotBase(
+            coreIdx, groupGeneration, owner);
+        const int64_t akkToken = FinalizeTokenOffset(
+            *tiling_, chunk, head, KDA_FINALIZE_CHUNK);
+
+        AscendC::GlobalTensor<DT> zBGm;
+        AscendC::GlobalTensor<DT> akkGm;
+        AscendC::GlobalTensor<float> tzaGm;
+        zBGm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW));
+        akkGm.SetGlobalBuffer(
+            reinterpret_cast<__gm__ DT *>(akk_) + akkToken);
+        tzaGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV));
+        auto zBTensor = tla::MakeTensor(
+            zBGm, tla::MakeLayout<DT, LayoutRM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto akkTensor = tla::MakeTensor(
+            akkGm, tla::MakeLayout<DT, LayoutCM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto tzaTensor = tla::MakeTensor(
+            tzaGm, tla::MakeLayout<float, LayoutRM>(rows, rows),
+            Catlass::Arch::PositionGM{});
+        auto zBTile = tla::GetTile(
+            zBTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        auto akkTile = tla::GetTile(
+            akkTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        auto tzaTile = tla::GetTile(
+            tzaTensor, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
+        using DirectMmad = WyTileGemmDirect<ArchTag, float, CopyTransB>;
+        DirectMmad mm(resource);
+        Catlass::GemmCoord shape{rows, rows, rows};
+        mm(zBTile, akkTile, tzaTile, shape);
+    }
+#endif
+
     __aicore__ inline void RunStage1(
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
-        uint32_t owner, uint32_t aiv, uint32_t aivSlot,
+        int64_t head, uint32_t owner, uint32_t aiv, uint32_t aivSlot,
         int64_t coreIdx, uint64_t groupGeneration)
     {
         constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        auto dwL1 = resource.l1Buf.template GetBufferByByte<DT>(
+            64 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
+#else
         auto dwL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_DW + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
+#endif
         auto kEL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_KE + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
         const uint64_t flagOffset =
             static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         GM_ADDR wsBase = workspace_ + ws;
+#if !defined(CATLASS_ARCH) || CATLASS_ARCH != 2201
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
             KDA_FINALIZE_KE_READY_BASE + flagOffset + aivSlot);
+#endif
         auto dwLow = resource.l1Buf.template GetBufferByByte<DT>(
             64 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
         auto keLow = resource.l1Buf.template GetBufferByByte<DT>(
             128 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
-        // Akk retains the ColumnMajor L1 layout loaded for Stage0 DVb.
-        // Preserve that interpretation here to compute Akk^T @ dW.
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        // A2 has no L0C->remote-UB or AIV-UB->L1 path.  Vector publishes
+        // row-major BF16 high/residual planes in GM; MTE2 converts them to
+        // the exact CATLASS L1 layouts consumed below.
+        LoadGmToL1B<CopyTransA, LayoutRM>(
+            dwL1, wsBase + KDA_FINALIZE_WS_A2_RELAY_DW,
+            KDA_FINALIZE_CHUNK, KDA_FINALIZE_DIM);
+        LoadGmToL1B<CopyTransB, LayoutCM>(
+            kEL1, wsBase + KDA_FINALIZE_WS_KE,
+            KDA_FINALIZE_DIM, KDA_FINALIZE_CHUNK);
+        AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        RunGemm<CopyTransB, ResultPath::GM_FP32>(
+            resource, dwL1, kEL1, rows, rows, KDA_FINALIZE_DIM,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_ZW,
+            {}, 0, 0, 0, 0, 0);
+
+        // The mature A2 direct path uses fixed, disjoint 64-KiB L1 planes.
+        // Rebind only dKgb to that proven layout; zW has already consumed the
+        // owner-resident dW/kE pair above. Stage3 reloads the displaced Akk.
+        auto akkDirect = resource.l1Buf.template GetBufferByByte<DT>(0);
+        auto dwDirect = resource.l1Buf.template GetBufferByByte<DT>(64 * 1024);
+        const int64_t akkToken = FinalizeTokenOffset(
+            *tiling_, chunk, head, KDA_FINALIZE_CHUNK);
+        LoadGmToL1A<CopyTransA, LayoutCM>(
+            akkDirect, akk_ + akkToken * sizeof(DT), rows, rows);
+        LoadGmToL1B<CopyTransA, LayoutRM>(
+            dwDirect, wsBase + KDA_FINALIZE_WS_A2_RELAY_DW,
+            rows, KDA_FINALIZE_DIM);
+        AscendC::PipeBarrier<PIPE_MTE2>();
+        RunGemm<CopyTransA, ResultPath::GM_FP32>(
+            resource, akkDirect, dwDirect, rows, KDA_FINALIZE_DIM, rows,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_DKGB_RAW,
+            {}, 0, 0, 0, 0, 0);
+#else
         RunGemm<CopyTransA, ResultPath::GM_FP32, false, true, false, 2>(
             resource, akkL1, dwL1, rows, KDA_FINALIZE_DIM, rows,
-            NextSlot(), wsBase + KDA_FINALIZE_WS_DKGB_RAW, {}, 0, 0, 0, 0, 0, {}, dwLow);
-        // The combined ready above protects both dW and kE residual planes.
+            NextSlot(), wsBase + KDA_FINALIZE_WS_DKGB_RAW,
+            {}, 0, 0, 0, 0, 0, {}, dwLow);
         RunGemm<CopyTransB, ResultPath::AIV_UB_FP32, false, true, false, 3>(
             resource, dwL1, kEL1, rows, rows, KDA_FINALIZE_DIM,
-            NextSlot(), nullptr, {}, aiv, aivSlot,
+            NextSlot(), wsBase + KDA_FINALIZE_WS_A2_RELAY_ZW, {}, aiv, aivSlot,
             KDA_FINALIZE_UB_ZW + aivSlot * KDA_FINALIZE_MATRIX_FP32_BYTES,
             KDA_FINALIZE_ZW_FREE_BASE, KDA_FINALIZE_ZW_READY_BASE, dwLow, keLow);
+#endif
     }
 
     __aicore__ inline void RunStage3(
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
-        uint32_t owner, uint32_t aiv, uint32_t aivSlot)
+        uint32_t owner, uint32_t aiv, uint32_t aivSlot,
+        int64_t coreIdx, uint64_t groupGeneration)
     {
         constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         const uint64_t flagOffset =
             static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
+#if !defined(CATLASS_ARCH) || CATLASS_ARCH != 2201
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
             KDA_FINALIZE_ZB_READY_BASE + flagOffset + aivSlot);
+#endif
         auto zBL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_ZB + owner * 2 * KDA_FINALIZE_MATRIX_BF16_BYTES);
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
@@ -618,9 +1005,26 @@ private:
             L1_TZA + owner * 2 * KDA_FINALIZE_MATRIX_BF16_BYTES);
         auto zBLow = resource.l1Buf.template GetBufferByByte<DT>(
             L1_ZB + (owner * 2 + 1) * KDA_FINALIZE_MATRIX_BF16_BYTES);
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        LoadGmToL1A<CopyTransB, LayoutRM>(
+            zBL1, workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW,
+            KDA_FINALIZE_CHUNK, KDA_FINALIZE_CHUNK);
+        LoadGmToL1A<CopyTransB, LayoutRM>(
+            zBLow, workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW +
+                KDA_FINALIZE_MATRIX_BF16_BYTES,
+            KDA_FINALIZE_CHUNK, KDA_FINALIZE_CHUNK);
+        AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        RunGemm<CopyTransB, ResultPath::GM_FP32, false, true, false, 1>(
+            resource, zBL1, akkL1, rows, rows, rows,
+            NextSlot(), workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV,
+            {}, 0, 0, 0, 0, 0, zBLow, {});
+#else
         RunGemm<CopyTransB, ResultPath::L1_BF16_WITH_RAW, false, true, false, 1>(
             resource, zBL1, akkL1, rows, rows, rows,
-            NextSlot(), nullptr,
+            NextSlot(), workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV,
             tzaL1, aiv, aivSlot, 0, KDA_FINALIZE_ZV_FREE_BASE,
             KDA_FINALIZE_ZW_READY_BASE, zBLow, {});
         // PIPE_FIX is deliberately used for the return credit, matching the
@@ -628,11 +1032,13 @@ private:
         // Zb is certainly no longer read when the Tza FixPipe completes.
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
             KDA_FINALIZE_ZB_FREE_BASE + flagOffset + aivSlot);
+#endif
     }
 
     __aicore__ inline void RunStage4(
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
-        uint32_t owner, uint32_t aiv, uint32_t aivSlot)
+        uint32_t owner, uint32_t aiv, uint32_t aivSlot,
+        int64_t coreIdx, uint64_t groupGeneration)
     {
         constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
@@ -643,21 +1049,42 @@ private:
             L1_TZA + (owner * 2 + 1) * KDA_FINALIZE_MATRIX_BF16_BYTES);
         // A two-head window has one head per AIV. Keep its FP32 handoff in
         // [0,16) KiB, disjoint from Stage4's working set, regardless of flag slot.
+#if !defined(CATLASS_ARCH) || CATLASS_ARCH != 2201
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE1>(
             KDA_FINALIZE_KE_READY_BASE + aiv * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE + aivSlot);
+#endif
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        LoadGmToL1B<CopyTransA, LayoutRM>(
+            tzaL1, workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW,
+            KDA_FINALIZE_CHUNK, KDA_FINALIZE_CHUNK);
+        LoadGmToL1B<CopyTransA, LayoutRM>(
+            tzaLow, workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_DW +
+                KDA_FINALIZE_MATRIX_BF16_BYTES,
+            KDA_FINALIZE_CHUNK, KDA_FINALIZE_CHUNK);
+        AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        RunGemm<CopyTransA, ResultPath::GM_FP32, false, false, false, 2>(
+            resource, akkL1, tzaL1, rows, rows, rows,
+            NextSlot(), workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV,
+            {}, 0, 0, 0, 0, 0, {}, tzaLow);
+#else
         RunGemm<CopyTransA, ResultPath::AIV_UB_FP32, false, false, false, 2>(
             resource, akkL1, tzaL1, rows, rows, rows,
-            NextSlot(), nullptr, {}, aiv, aivSlot,
+            NextSlot(), workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV,
+            {}, aiv, aivSlot,
             KDA_FINALIZE_UB_DAKK_RAW,
             KDA_FINALIZE_DAKK_FREE_BASE, KDA_FINALIZE_DAKK_READY_BASE, {}, tzaLow);
+#endif
     }
 
     template <bool TRANSPOSE_A, bool CONCAT_RIGHT = false, bool WAIT_FREE = true,
-              bool STACK_LEFT = false>
+              bool STACK_LEFT = false, bool PUBLISH_READY = true>
     __aicore__ inline void RunLocalGemm(
         Catlass::Arch::Resource<ArchTag> &resource,
         AscendC::LocalTensor<FinalizeLocalType> a, AscendC::LocalTensor<FinalizeLocalType> b,
-        uint32_t aiv, uint32_t aivSlot, uint32_t ubOffset,
+        uint32_t aiv, uint32_t aivSlot, uint32_t ubOffset, GM_ADDR gmDst,
         uint64_t freeFlag, uint64_t readyFlag, uint32_t rowBegin,
         AscendC::LocalTensor<FinalizeLocalType> aSecond = {},
         AscendC::LocalTensor<FinalizeLocalType> bSecond = {})
@@ -714,19 +1141,32 @@ private:
         if constexpr (WAIT_FREE) {
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(freeFlag + offset + aivSlot);
         }
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
         auto dst = resource.ubBuf.template GetBufferByByte<float>(ubOffset);
         auto tu = tla::MakeTensor(dst, tla::MakeLayout<float, LayoutRM>(outputRows, 128), Catlass::Arch::PositionUB{});
         auto tileU = tla::GetTile(tu, tla::MakeCoord(0, 0), tla::MakeShape(outputRows, 128));
         typename CopyTransBToUb::template CopyL0CToDst<decltype(tileU)>{}(
             tileU, tc, static_cast<uint8_t>(aiv), 0);
-        AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(readyFlag + offset + aivSlot);
+#else
+        AscendC::GlobalTensor<float> dst;
+        dst.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gmDst));
+        auto params = AscendC::FixpipeParamsV220(
+            128, outputRows, outputRows, 128, false);
+        params.quantPre = QuantMode_t::NoQuant;
+        params.unitFlag = 0;
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(dst, l0c, params);
+#endif
+        if constexpr (PUBLISH_READY) {
+            AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_FIX>(
+                readyFlag + offset + aivSlot);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(slot);
     }
 
     __aicore__ inline void RunStage6(
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
         uint32_t owner, uint32_t aiv, uint32_t aivSlot,
-        uint32_t rowBegin)
+        int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
     {
         const uint64_t flagOffset =
             static_cast<uint64_t>(aiv) * KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE;
@@ -736,6 +1176,7 @@ private:
             KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES);
         auto dAqkL1 = local[KDA_FINALIZE_LOCAL_DAQK / sizeof(FinalizeLocalType)];
         auto kNegL1 = local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(FinalizeLocalType)];
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         // Stack dq and left vertically: both multiply the same kNeg. Each
         // band produces [dq; left] in a single 64-row FP32 UB result.
@@ -743,6 +1184,7 @@ private:
             resource, dAqkL1, kNegL1, aiv, aivSlot,
             KDA_FINALIZE_UB_DQ_LOCAL_RAW +
                 aivSlot * KDA_FINALIZE_VECTOR_FP32_BYTES,
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZV,
             KDA_FINALIZE_DQ_LOCAL_FREE_BASE,
             KDA_FINALIZE_DQ_LOCAL_READY_BASE, rowBegin,
             local[KDA_FINALIZE_LOCAL_DAKK / sizeof(FinalizeLocalType)]);
@@ -750,7 +1192,8 @@ private:
 
     __aicore__ inline void RunStage8(
         Catlass::Arch::Resource<ArchTag> &resource, const FinalizeChunkInfo &chunk,
-        uint32_t owner, uint32_t aiv, uint32_t slot, uint32_t rowBegin)
+        uint32_t owner, uint32_t aiv, uint32_t slot,
+        int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
     {
         auto local = resource.l1Buf.template GetBufferByByte<FinalizeLocalType>(
             KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES);
@@ -759,17 +1202,26 @@ private:
         auto kn = local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(FinalizeLocalType)];
         auto qp = local[KDA_FINALIZE_LOCAL_Q_POS / sizeof(FinalizeLocalType)];
         auto bp = local[KDA_FINALIZE_LOCAL_BK_POS / sizeof(FinalizeLocalType)];
+        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
         constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         RunLocalGemm<true, true>(
             resource, daq, qp, aiv, slot, 64 * 1024 + slot * KDA_FINALIZE_VECTOR_FP32_BYTES,
+            workspace_ + ws + KDA_FINALIZE_WS_A2_RELAY_ZW,
             KDA_FINALIZE_KE_READY_BASE, KDA_FINALIZE_ZW_READY_BASE, rowBegin, dak, bp);
     }
 
     __aicore__ inline uint32_t NextSlot()
     {
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+        // Atlas A2 exposes one 128-KiB L0C window.  A5 has two such windows
+        // and alternates them; applying that offset on A2 addresses beyond
+        // L0C on every second GEMM.
+        return 0;
+#else
         const uint32_t current = l0Slot_;
         l0Slot_ ^= 1U;
         return current;
+#endif
     }
 
     __aicore__ inline void InitEvents()

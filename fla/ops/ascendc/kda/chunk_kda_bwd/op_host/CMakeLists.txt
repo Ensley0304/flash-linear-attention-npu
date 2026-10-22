@@ -9,17 +9,30 @@ if("chunk_kda_bwd" IN_LIST OP_LIST)
     endforeach()
 endif()
 
-if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
-    set(chunk_kda_bwd_depends
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950" OR
+   "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend910b")
+    set(_chunk_kda_bwd_l0_depends
         "fla/ops/ascendc/kda/chunk_kda_bwd_prepare;fla/ops/ascendc/kda/chunk_kda_bwd_finalize;fla/ops/ascendc/kda/chunk_kda_bwd_recompute;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
-        CACHE STRING "Optimized KDA backward L0 dependencies" FORCE)
-    foreach(DEP_PATH IN LISTS chunk_kda_bwd_depends)
+    )
+    if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+        set(chunk_kda_bwd_depends "${_chunk_kda_bwd_l0_depends}"
+            CACHE STRING "Optimized KDA backward kernel source dependencies" FORCE)
+    else()
+        # On A2 finalize reuses chunk_kda_bwd kernel sources. Keeping the reverse
+        # source-copy edge here would form a CMake target cycle; it is still added
+        # below as an L0 operator and therefore remains in the package.
+        set(chunk_kda_bwd_depends
+            "fla/ops/ascendc/kda/chunk_kda_bwd_prepare;fla/ops/ascendc/kda/chunk_kda_bwd_recompute;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
+            CACHE STRING "Optimized KDA backward kernel source dependencies" FORCE)
+    endif()
+    foreach(DEP_PATH IN LISTS _chunk_kda_bwd_l0_depends)
         get_filename_component(DEP_NAME "${DEP_PATH}" NAME)
         if(NOT "${DEP_NAME}" IN_LIST OP_LIST)
             add_subdirectory("${PROJECT_SOURCE_DIR}/${DEP_PATH}/op_host"
                 "${CMAKE_CURRENT_BINARY_DIR}/optimized/${DEP_NAME}")
         endif()
     endforeach()
+    unset(_chunk_kda_bwd_l0_depends)
 else()
     unset(chunk_kda_bwd_depends CACHE)
 endif()
@@ -37,7 +50,8 @@ add_modules_sources(
     ACLNNTYPE aclnn_exclude
 )
 
-if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950" OR
+   "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend910b")
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_kda_bwd_v2.cpp
         TARGET_DIRECTORY ${OPHOST_NAME}_opapi_obj PROPERTIES
         COMPILE_DEFINITIONS KDA_BWD_OPTIMIZED_A5)

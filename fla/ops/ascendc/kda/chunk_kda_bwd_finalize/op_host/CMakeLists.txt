@@ -1,3 +1,11 @@
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    set(chunk_kda_bwd_finalize_depends
+        "fla/ops/ascendc/kda/chunk_kda_bwd"
+        CACHE STRING "A2 KDA backward finalize kernel source dependency" FORCE)
+else()
+    unset(chunk_kda_bwd_finalize_depends CACHE)
+endif()
+
 add_op_to_compiled_list()
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE chunk_kda_bwd_finalize_def.cpp)

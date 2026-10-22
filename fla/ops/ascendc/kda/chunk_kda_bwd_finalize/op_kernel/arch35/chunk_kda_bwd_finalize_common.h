@@ -6,7 +6,11 @@
 #define CHUNK_KDA_BWD_FINALIZE_ARCH35_COMMON_H
 
 #ifndef CATLASS_ARCH
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
+#else
+#define CATLASS_ARCH 2201
+#endif
 #endif
 
 #include "catlass/arch/cross_core_sync.hpp"
@@ -23,7 +27,11 @@ constexpr uint32_t KDA_FINALIZE_HEADS_PER_WINDOW = 2;
 constexpr uint32_t KDA_FINALIZE_AIV_COUNT = 2;
 constexpr uint32_t KDA_FINALIZE_AIV_SLOTS = 2;
 constexpr uint32_t KDA_FINALIZE_WORKSPACE_SLOTS = 2 * KDA_FINALIZE_HEADS_PER_WINDOW;
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 3510
 constexpr uint32_t KDA_FINALIZE_SLOT_BYTES = 160 * 1024;
+#else
+constexpr uint32_t KDA_FINALIZE_SLOT_BYTES = 320 * 1024;
+#endif
 
 constexpr uint32_t KDA_FINALIZE_INTRA_ROWS = 32;
 
@@ -51,6 +59,13 @@ constexpr uint32_t KDA_FINALIZE_WS_DK_BASE = KDA_FINALIZE_WS_DK_STATE_RAW;
 constexpr uint32_t KDA_FINALIZE_WS_DQ_BASE = KDA_FINALIZE_WS_DVB;
 constexpr uint32_t KDA_FINALIZE_WS_DG_BASE = KDA_FINALIZE_WS_DKGB_RAW;
 constexpr uint32_t KDA_FINALIZE_WS_DB_BASE = KDA_FINALIZE_WS_DB_V;
+
+// Atlas A2 cannot route L0C directly into an AIV UB.  Three relay regions
+// keep the Stage0 dW, zV, and zW payloads live at the same time; later stages
+// reuse them only after the existing ready/free handshake releases the data.
+constexpr uint32_t KDA_FINALIZE_WS_A2_RELAY_DW = 160 * 1024;
+constexpr uint32_t KDA_FINALIZE_WS_A2_RELAY_ZV = 192 * 1024;
+constexpr uint32_t KDA_FINALIZE_WS_A2_RELAY_ZW = 208 * 1024;
 
 // Per-AIV BuildZ fixed UB layout.
 constexpr uint32_t KDA_FINALIZE_UB_ZV = 0;
@@ -130,6 +145,19 @@ constexpr uint64_t KDA_FINALIZE_TASK_L1_FREE = 15;
 // dq_local_raw READY, so the pair remains balanced within each work task.
 constexpr uint64_t KDA_FINALIZE_DQ_LOCAL_FREE_BASE = KDA_FINALIZE_ZV_FREE_BASE;
 constexpr uint64_t KDA_FINALIZE_DQ_LOCAL_READY_BASE = KDA_FINALIZE_ZV_READY_BASE;
+
+// Atlas A2 has a collective 1C2V handshake: both AIV sub-blocks join the
+// publication before their paired AIC can consume it.  Keep the bring-up
+// stages serialized and balanced; later tuning may overlap adjacent stages
+// without changing which producer owns each flag.
+constexpr uint32_t KDA_FINALIZE_A2_AIC_STAGE0_READY = 0;
+constexpr uint32_t KDA_FINALIZE_A2_VEC_STAGE0_READY = 1;
+constexpr uint32_t KDA_FINALIZE_A2_AIC_STAGE1_READY = 2;
+constexpr uint32_t KDA_FINALIZE_A2_VEC_ZB_READY = 3;
+constexpr uint32_t KDA_FINALIZE_A2_AIC_STAGE3_READY = 4;
+constexpr uint32_t KDA_FINALIZE_A2_VEC_TZA_READY = 5;
+constexpr uint32_t KDA_FINALIZE_A2_AIC_STAGE4_READY = 6;
+constexpr uint32_t KDA_FINALIZE_A2_VEC_DONE = 7;
 
 struct FinalizeChunkInfo {
     int64_t b = 0;
@@ -229,6 +257,17 @@ __aicore__ inline uint64_t FinalizeWorkspaceSlotBase(
 
 static_assert(KDA_FINALIZE_WS_DB_V + 512 <= KDA_FINALIZE_SLOT_BYTES,
               "Stage0--3 workspace slot exceeds 160 KiB.");
+#if defined(CATLASS_ARCH) && CATLASS_ARCH == 2201
+static_assert(KDA_FINALIZE_WS_A2_RELAY_DW + KDA_FINALIZE_VECTOR_FP32_BYTES <=
+                  KDA_FINALIZE_WS_A2_RELAY_ZV,
+              "A2 dW relay overlaps zV relay.");
+static_assert(KDA_FINALIZE_WS_A2_RELAY_ZV + KDA_FINALIZE_MATRIX_FP32_BYTES <=
+                  KDA_FINALIZE_WS_A2_RELAY_ZW,
+              "A2 zV relay overlaps zW relay.");
+static_assert(KDA_FINALIZE_WS_A2_RELAY_ZW + KDA_FINALIZE_MATRIX_FP32_BYTES <=
+                  KDA_FINALIZE_SLOT_BYTES,
+              "A2 relay workspace exceeds the per-task slot.");
+#endif
 static_assert(KDA_FINALIZE_UB_WORK < KDA_FINALIZE_UB_BYTES,
               "BuildZ fixed UB handoff exceeds A5 UB.");
 static_assert(KDA_FINALIZE_UB_STAGE4_WORK < KDA_FINALIZE_UB_BYTES,

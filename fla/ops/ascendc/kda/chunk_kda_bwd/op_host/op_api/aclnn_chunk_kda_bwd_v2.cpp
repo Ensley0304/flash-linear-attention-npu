@@ -83,7 +83,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         DFX_OUT(dq, dk, dv, db, dg, dh0, dA, dBias));
     CHECK_COND(workspaceSize && executor && q, ACLNN_ERR_PARAM_NULLPTR, "V2 required argument is null.");
     const char *soc = aclrtGetSocName();
-    CHECK_COND(soc && std::strstr(soc, "Ascend950"), ACLNN_ERR_PARAM_INVALID, "V2 requires Ascend950.");
+    const bool supportedSoc = soc &&
+        (std::strstr(soc, "Ascend950") || std::strstr(soc, "Ascend910B"));
+    CHECK_COND(supportedSoc, ACLNN_ERR_PARAM_INVALID,
+        "V2 requires an Ascend 950PR/950DT or Atlas A2 device.");
     CHECK_COND(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst,
         ACLNN_ERR_PARAM_INVALID, "V2 requires C=64, safe gate, gate-in-kernel, exp2, K-first state.");
     CHECK_COND(std::isfinite(static_cast<float>(scale)) && std::isfinite(lowerBound) && lowerBound < 0 && lowerBound >= -5,
