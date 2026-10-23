@@ -1,0 +1,24 @@
+{
+  "passed": false,
+  "complete_two_rounds": false,
+  "no_norm_kernel_text_unchanged": true,
+  "first_round_gains_percent": [
+    -2.1082238480232496,
+    -0.4918223072304828,
+    -2.414799803919765,
+    -0.28023482005663514,
+    -2.212763465272638,
+    -0.1828391311208044,
+    -2.2470014206902533,
+    -0.3545287047833412
+  ],
+  "precision20_run": false,
+  "invalid_capture": "s18-r1-s18-prof",
+  "invalid_device_guard": {
+    "device": 6,
+    "before": "No process in device.",
+    "after": "Process id:2131761 Process name:atk               Process memory(MB):201",
+    "valid": false
+  },
+  "decision": "Restore S15. First-round norm gains and unchanged-path timing controls fail; second candidate capture discarded due to another ATK process. No stable performance benefit established; do not attribute timing drift solely to code."
+}

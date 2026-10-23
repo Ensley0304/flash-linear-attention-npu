@@ -1,5 +1,7 @@
 # A2/A3 Finalize Stage 划分
 
+2026-10-23：当前已验收实现为 S15（`19be198e`），最新目标为原始 B1/H96/T8192/K=V128/BF16 case 低于9 ms。Stage0 的rH改由Cube对角块计算；Stage7完整chunk的lower按32行批量生成。Stage11无norm首带使用两个16行compact输入槽。Stage3/7在完整生产入口无norm时用512B位mask替代16KiB FP32 mask，腾出的UB[64,80)存Stage11首带两个raw gate输入；norm、capture和短前缀仍用原mask。当前耗时约9.99 ms，原20case七输出通过，性能目标尚未达成。生命周期和实验记录见[最新增量设计](optimization-20261023.md)及[附件优化吸收结果](attachment-optimization-20261022.md)；以下日期条目保留历史演进。
+
 2026-10-21续测：H15～H18均通过边界精度，但未通过八配置双轮性能门禁，全部未采用；当前设计和实现仍保持H14。实验记录见[两版融合优化](hybrid-plan.md)。
 
 当前hybrid分支以H14为验收基线：Stage 8/10使用关闭HF32的FP32操作数，两个lower矩阵在L1跨带复用；Stage 7生产路径按32行生成band操作数，FP32输出双槽兼作运算临时区。完整生产路径的Stage 8先产生两个head的dq并通知Stage 9，再产生两个left；两个AIV在进入Stage 11前等待left就绪。Stage 11的dG在H≤4096时用对齐多行DataCopy写回，更大H及capture保持DataCopyPad；原双槽和写回事件不变。下文历史设计按日期保留，当前地址、生命周期、通知语义和验收证据见[两版融合优化](hybrid-plan.md)的H3/H4/H10/H14章节。H5b～H9、H11～H13未保留。
