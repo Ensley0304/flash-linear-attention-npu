@@ -238,6 +238,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
     }
     if ASCEND_IS_AIV {
         const uint32_t owner = AscendC::GetSubBlockIdx();
+        constexpr bool COMPACT_MASK = LAST_STAGE >= 11 && !CAPTURE && !Q_NORM;
         AscendC::TBuf<AscendC::TPosition::VECCALC> ubBuf;
         pipe.InitBuffer(ubBuf, UB_BYTES);
         auto ub = ubBuf.Get<uint8_t>();
@@ -246,7 +247,7 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
         if constexpr (LAST_STAGE >= 1) {
             vector.Init(k, gk, h, dh, workspace, ub, &pipe);
             if constexpr (LAST_STAGE >= 3) {
-                vector.InitStage3(v, beta, dv);
+                vector.InitStage3<COMPACT_MASK>(v, beta, dv);
             }
             if constexpr (LAST_STAGE >= 5) {
                 vector.InitStage5(q, dqRaw, scale);
@@ -298,11 +299,11 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                     if (previousHead < tiling.heads) {
                         const ChunkInfo chunk = ResolveChunk(tiling, chunks, previousChunk);
                         if (chunk.validRows == CHUNK_SIZE) {
-                            vector.Stage3<CAPTURE, true>(tiling, chunk, previousChunk, previousHead, owner, core,
-                                                         capture, bank ^ 1);
+                            vector.Stage3<CAPTURE, true, COMPACT_MASK>(
+                                tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                         } else {
-                            vector.Stage3<CAPTURE>(tiling, chunk, previousChunk, previousHead, owner, core, capture,
-                                                   bank ^ 1);
+                            vector.Stage3<CAPTURE, false, COMPACT_MASK>(
+                                tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                         }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK + (bank ^ 1));
@@ -352,9 +353,11 @@ __global__ __aicore__ void Stage01Kernel(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_AD
                     if (head < tiling.heads) {
                         const ChunkInfo chunk = ResolveChunk(tiling, chunks, chunkIndex);
                         if (chunk.validRows == CHUNK_SIZE) {
-                            vector.Stage3<CAPTURE, true>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                            vector.Stage3<CAPTURE, true, COMPACT_MASK>(
+                                tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                         } else {
-                            vector.Stage3<CAPTURE>(tiling, chunk, chunkIndex, head, owner, core, capture, bank);
+                            vector.Stage3<CAPTURE, false, COMPACT_MASK>(
+                                tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                         }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(VECTOR_ACK + bank);

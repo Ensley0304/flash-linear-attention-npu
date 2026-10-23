@@ -40,6 +40,10 @@ constexpr uint32_t UB_BETA = 80 * 1024;
 constexpr uint32_t UB_DB_V = 80 * 1024 + 256;
 constexpr uint32_t UB_RH = 81 * 1024 + 256;
 constexpr uint32_t UB_GK_LAST = 81 * 1024 + 768;
+// Production no-norm path uses a 512-byte strict-lower bitmask.
+constexpr uint32_t UB_LOWER_BITS = 84 * 1024 + 256;
+constexpr uint32_t UB_MASK_ZERO = 84 * 1024 + 896;
+constexpr uint32_t UB_MASK_ADDR = 85 * 1024;
 constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 

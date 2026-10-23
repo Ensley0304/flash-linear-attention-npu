@@ -192,22 +192,39 @@ public:
         // The caller publishes KE_READY on PIPE_MTE3; UB residents survive Stage 1.
     }
 
+    template <bool COMPACT_MASK = false>
     __aicore__ inline void InitStage3(GM_ADDR v, GM_ADDR beta, GM_ADDR dv)
     {
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
         beta_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(beta));
         dv_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dv));
-        // Stage 7's band buffer is free until then. Build the triangle once per
-        // launch.
-        auto lower = ub_[64 * 1024].ReinterpretCast<float>();
-        AscendC::Duplicate(lower, 0.0f, CHUNK_SIZE * CHUNK_SIZE);
-        AscendC::PipeBarrier<PIPE_V>();
-        for (uint32_t row = 1; row < CHUNK_SIZE; ++row) {
-            AscendC::Duplicate(lower[row * CHUNK_SIZE], 1.0f, row);
+        if constexpr (COMPACT_MASK) {
+            auto bits = ub_[UB_LOWER_BITS].ReinterpretCast<uint64_t>();
+            auto addresses = ub_[UB_MASK_ADDR].ReinterpretCast<uint64_t>();
+            for (uint32_t row = 0; row < CHUNK_SIZE; ++row) {
+                bits.SetValue(row, (1ULL << row) - 1);
+            }
+            for (uint32_t tile = 0; tile < 4; ++tile) {
+                addresses.SetValue(tile * 4, reinterpret_cast<uint64_t>(bits[tile * 16].GetPhyAddr()));
+                addresses.SetValue(tile * 4 + 1, 0);
+            }
+            AscendC::Duplicate(ub_[UB_MASK_ZERO].ReinterpretCast<float>(), 0.0f, 8);
+            const auto maskReady = pipe_->AllocEventID<AscendC::HardEvent::S_V>();
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(maskReady);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(maskReady);
+            pipe_->ReleaseEventID<AscendC::HardEvent::S_V>(maskReady);
+            AscendC::PipeBarrier<PIPE_V>();
+        } else {
+            auto lower = ub_[64 * 1024].ReinterpretCast<float>();
+            AscendC::Duplicate(lower, 0.0f, CHUNK_SIZE * CHUNK_SIZE);
+            AscendC::PipeBarrier<PIPE_V>();
+            for (uint32_t row = 1; row < CHUNK_SIZE; ++row) {
+                AscendC::Duplicate(lower[row * CHUNK_SIZE], 1.0f, row);
+            }
         }
     }
 
-    template <bool CAPTURE = false, bool FULL_CHUNK = false>
+    template <bool CAPTURE = false, bool FULL_CHUNK = false, bool COMPACT_MASK = false>
     __aicore__ inline void Stage3(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0)
@@ -271,7 +288,17 @@ public:
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Mul(value, value, beta, 64, ROWS, {1, 1, 1, 8, 8, 0});
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Mul(value, value, lower[offset], ROWS * CHUNK_SIZE);
+            if constexpr (COMPACT_MASK) {
+                // The prebuilt pointer avoids Select's implicit scratch at UB[184 KiB].
+                AscendC::SetCmpMask(ub_[UB_MASK_ADDR].ReinterpretCast<uint64_t>()[tile * ROWS / 16 * 4]);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetVectorMask<float>(64);
+                AscendC::Select<float, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE>(
+                    value, value, ub_[UB_MASK_ZERO].ReinterpretCast<float>(), ROWS, {1, 1, 0, 8, 8, 0});
+                AscendC::ResetMask();
+            } else {
+                AscendC::Mul(value, value, lower[offset], ROWS * CHUNK_SIZE);
+            }
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Cast(output, value, AscendC::RoundMode::CAST_RINT, ROWS * CHUNK_SIZE);
@@ -614,7 +641,7 @@ public:
             snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(
                 capture + static_cast<uint64_t>(head * tiling.chunks + chunkIndex) * CAPTURE_BYTES));
         }
-        // 0--64 KiB: q/k/original gk; 64--80: persistent strict-lower mask.
+        // 0--64 KiB: q/k/original gk; 64--80: FP32 mask, or compact Stage 11 raw gates.
         // Full-chunk lower: inputs [88,120), value [120,128), FP32 outputs [144,160).
         // Tail/capture lower retains the 16-row input/value/hi-lo layout.
         // Bands: FP32 outputs [88,120), exponent/power scratch [120,160).
@@ -683,7 +710,18 @@ public:
                 // Alternate by output matrix, independently of the input tile slot.
                 const uint32_t outputSlot = matrix;
                 auto output = ub_[120 * 1024 + outputSlot * 8 * 1024].ReinterpretCast<bfloat16_t>();
-                AscendC::Mul(value, input[matrix * ROWS * CHUNK_SIZE], lower[first * CHUNK_SIZE], ROWS * CHUNK_SIZE);
+                if constexpr (FINALIZE_K && !Q_NORM && !CAPTURE) {
+                    AscendC::SetCmpMask(ub_[UB_MASK_ADDR].ReinterpretCast<uint64_t>()[first / 16 * 4]);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetVectorMask<float>(64);
+                    AscendC::Select<float, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE>(
+                        value, input[matrix * ROWS * CHUNK_SIZE], ub_[UB_MASK_ZERO].ReinterpretCast<float>(),
+                        ROWS, {1, 1, 0, 8, 8, 0});
+                    AscendC::ResetMask();
+                } else {
+                    AscendC::Mul(value, input[matrix * ROWS * CHUNK_SIZE], lower[first * CHUNK_SIZE],
+                                 ROWS * CHUNK_SIZE);
+                }
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Muls(value, value, matrix == 0 ? 65536.0f : -65536.0f, ROWS * CHUNK_SIZE);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[outputSlot]);
@@ -991,7 +1029,7 @@ public:
             savedDq.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(capture + record + CAPTURE_DQ));
             savedDg.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(capture + record + CAPTURE_DG));
         }
-        // Keep Stage 7's q/k/gk, lower mask, diagonal and band exponent intact.
+        // Keep Stage 7's q/k/gk, mask, diagonal and band exponent intact.
         // Two 24 KiB slots hold raw/dq/dg; bases are updated after their last read.
         // BF16 outputs: [136,144); q/k scratch: [144,160); product: [184,192) KiB.
         auto q = ub_.ReinterpretCast<bfloat16_t>();
@@ -1190,8 +1228,8 @@ public:
     {
         static_assert(!COMPACT || (FULL_CHUNK && !CAPTURE && !K_NORM && ROWS == 16));
         // Compact first band: two four-plane slots [88,120)/[120,152) KiB.
-        // left -> raw gate; right -> q -> derivative -> packed dk.
-        // key becomes scan scratch after dk formation, overlapping the raw gate load.
+        // Raw gate has two slots at [64,80); right -> q -> derivative -> packed dk.
+        // Key becomes scan scratch after dk formation; raw gate is already prefetched.
         // dk stays FP32 until the final Cast; dg becomes the gated output in place.
         constexpr uint32_t TILES = 32 / ROWS;
         constexpr uint32_t E = ROWS * HEAD_DIM;
@@ -1281,7 +1319,7 @@ public:
             auto right = input[E];
             auto dk = input[2 * E];
             auto dg = input[3 * E];
-            auto raw = input[COMPACT ? 0 : 4 * E];
+            auto raw = COMPACT ? ub_[(64 + slot * 8) * 1024].ReinterpretCast<float>() : input[4 * E];
             auto queryTile = COMPACT ? right : query;
             auto gateTile = COMPACT ? right : gateTemp;
             auto db =
@@ -1328,13 +1366,6 @@ public:
                 AscendC::Sub(product, left, right, count);
                 AscendC::Add(dk, dk, left, count);
                 AscendC::PipeBarrier<PIPE_V>();
-                if constexpr (COMPACT) {
-                    // left is dead; fetch raw_g while dk and the scan finish.
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[slot]);
-                    AscendC::DataCopy(raw, rawG_[(token + first) * HEAD_DIM], E);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
-                }
                 AscendC::Mul(product, product, key, count);
                 AscendC::Add(dk, dk, right, count);
                 AscendC::Brcb(rowScale, ub_[80 * 1024 + 512].ReinterpretCast<float>()[first], ROWS / 8, {1, 8});
@@ -1421,9 +1452,6 @@ public:
                         AscendC::Adds(suffix, dg[row * HEAD_DIM], 0.0f, HEAD_DIM);
                         AscendC::PipeBarrier<PIPE_V>();
                     }
-                }
-                if constexpr (COMPACT) {
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
                 }
                 if constexpr (FULL_CHUNK && !CAPTURE && K_NORM && ROWS == 8) {
                     if (tile != 0) {
@@ -1627,10 +1655,12 @@ private:
             ub_[(ROWS == 16 ? 181 * 1024 + slot * 64 : 178 * 1024 + 512 + slot * 32)].ReinterpretCast<float>(),
             ws[WS_DB_BASE / 4 + first], ROWS);
         const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
-        if constexpr (!COMPACT) {
-            if (active != 0) {
-                AscendC::DataCopy(input[4 * E], rawG_[(token + first) * HEAD_DIM], active * HEAD_DIM);
-            }
+        if constexpr (COMPACT) {
+            // The bitmask frees the old [64,80) KiB triangle for two raw-gate tiles.
+            AscendC::DataCopy(ub_[(64 + slot * 8) * 1024].ReinterpretCast<float>(),
+                              rawG_[(token + first) * HEAD_DIM], E);
+        } else if (active != 0) {
+            AscendC::DataCopy(input[4 * E], rawG_[(token + first) * HEAD_DIM], active * HEAD_DIM);
         }
     }
     __aicore__ inline void LoadStage5Tile(AscendC::GlobalTensor<float> state, AscendC::GlobalTensor<float> gb,

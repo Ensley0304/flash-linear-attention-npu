@@ -1,0 +1,39 @@
+{
+  "complete": true,
+  "lanes": [
+    "core0.cubecore0",
+    "core0.veccore0",
+    "core0.veccore1"
+  ],
+  "library_sha256": "84df9828475c1aa434ac80d79fee68a6070666445db2814ac03077b06228ce22",
+  "source_lines": false,
+  "shape": {
+    "B": 1,
+    "H": 2,
+    "T": 256,
+    "K": 128,
+    "V": 128,
+    "cores": 1,
+    "norm": false,
+    "beta": false
+  },
+  "files": {
+    "simulator/visualize_data.bin": "54fa09fc8dbf245a1a9ca7b89d35f2488d8554519b1aa9f8616dc333b0a3fa45",
+    "simulator/trace.json": "a6546b619933b4b8d7af1330d7a30288e2a0df3a6eeefad69f7f339dd9ea0fa6",
+    "simulator/core0.veccore0/core0.veccore0_instr_exe.csv": "f72d8e63d271925ffd22a95d74bdcb364dfa2a43ffaeb13c8f1d3c0a2dd255bc",
+    "simulator/core0.veccore0/trace.json": "467269b1574db721b8b2f47602f93a6a9a02b30241a0bacfa60b7a6b39651406",
+    "simulator/core0.veccore0/core0.veccore0_code_exe.csv": "244c34dd98bee2ea57c8dcfbdf239d766b8494440d8d7c858e9663c797bd58e6",
+    "simulator/core0.veccore1/core0.veccore1_instr_exe.csv": "8890323ddc1e77890b1bdc7d47473018bfbe6defccaa0788e405e822f476ccb0",
+    "simulator/core0.veccore1/core0.veccore1_code_exe.csv": "244c34dd98bee2ea57c8dcfbdf239d766b8494440d8d7c858e9663c797bd58e6",
+    "simulator/core0.veccore1/trace.json": "38a32c30ec4001c922d6e747c3ae214cbbdc60e163d91409f99a03bc90fbea14",
+    "simulator/core0.cubecore0/core0.cubecore0_code_exe.csv": "244c34dd98bee2ea57c8dcfbdf239d766b8494440d8d7c858e9663c797bd58e6",
+    "simulator/core0.cubecore0/trace.json": "ce2b7949b7fddd76a0de233c7cc669a68cdd1b094b97ac7b89e91ec3086e6a08",
+    "simulator/core0.cubecore0/core0.cubecore0_instr_exe.csv": "a4a6acaaf6b70eea1fdeeddea01d93a6370e0e5e62511c00f022a504b7dbefb7",
+    "simulator-s3.log": "5e75e827e44b40bb5ce03e462396cefbd2fece242e0b03b0ebb36fc9f92440be",
+    "simulator-s3-driver.log": "51a3f4004f16eaa5e03436c3ed107be4270b18e3abbded4eaee258649fdce1cc",
+    "capture_s3.sh": "e456890e1d280f4326e3b461b5a1e31cde4d595d82d36aa0e39e4b777fbab3e2",
+    "simulator-bench.py": "1f331cdee04e6c52e7a7d696a97c802713cb81c54e68dfa889364b406ec6a1e0",
+    "analyze_idle.py": "0afc5621853de514eb456ef666a4da27e98a5f6e48ea6b9d7f0f6806cfd2bd11",
+    "simulator-s3/idle-analysis.json": "db2ad732a01bcef9f63265d09e0433a046df47006523c234a1fcb7cb39945d40"
+  }
+}
