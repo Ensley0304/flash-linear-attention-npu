@@ -1,6 +1,6 @@
 # 9 ms 目标增量实验
 
-本轮保留 S15：压缩三角 mask，腾出 UB 提前搬入 raw gate。同设备同轮目标 case 从 10.084 降至 9.991 ms，改善 0.92%；原 20 case、140 个输出全部通过。S7～S14 均已撤回。尚未达到 9 ms。
+本轮保留 S15（`19be198e`）：压缩三角 mask，腾出 UB 提前搬入 raw gate。同设备同轮目标 case 从 10.084 降至 9.991 ms，改善 0.92%；原 20 case、140 个输出全部通过。S7～S14、S16 均已撤回。尚未达到 9 ms。
 
 基线 S3 `26d551ca`，原始 B1/H96/T8192/K=V128/BF16/BNSD、无 norm/beta 反向约 9.988 ms。接口、FP32/FP64 标杆、CT L1、种子及七输出不改。目标主核加 Stage12 小于 9 ms；这需要再降低约 9.9%，单个小优化不能保证达到。
 
@@ -8,7 +8,7 @@
 
 本次重新核验 PR head 仍为 `c53f7811c0330fbf947a7ea14b4785c6c6b401ab`，沿用原 CANNBot `61518bc950fac84c953abe19332e43c24d4c1985` 的开发与验证流程，不升级工具版本或替换当前标杆。当前是既有 Ascend C fast-launch 实现的增量优化，不声称已迁移为 CATLASS 直调工程。
 
-## S7：32 行 lower 直接在双输出槽计算（候选）
+## S7：32 行 lower 直接在双输出槽计算（已撤回）
 
 旧 H12 在 16 行 lower 上未取得稳定收益。本次只验证 S3 扩大到 32 行后的路径；tail/capture 保持原样，不复用旧性能结论。
 
@@ -20,7 +20,7 @@ q/k/gk、lower、常驻小量、UB 总量 192 KiB 和事件数量不变。band �
 
 S7 实测：九边界七输出全过。原始 case 两轮改善 0.504%/0.692%，但 8K beta-only 为 -0.073%/+0.258%，16K beta-only 为 +0.152%/+0.191%，未通过八配置每轮 >0.3% 门禁。撤回，不运行20case、不提交实现。证据 `hybrid-evidence/s7-*.json` 和工作区 `s7-evidence.tar.gz`，归档已逐文件校验哈希。
 
-## S8：Stage 11 Gate 连续运算共用 normal mask（待实验）
+## S8：Stage 11 Gate 连续运算共用 normal mask（已撤回）
 
 当前 S3 原始 case 的 AIV Vector 约 64%、Scalar 约 44%，两者可重叠，不能相加。Gate 导数六个连续逐元素调用都使用相同 FP32 长度，但 count 接口各自切换 Counter/Normal 模式。尝试在这六项运算间只设置一次 64 元素 normal mask，repeat 为 active×2，末尾恢复 mask；所有原 PIPE_V 依赖保留。
 
@@ -30,7 +30,7 @@ S7 实测：九边界七输出全过。原始 case 两轮改善 0.504%/0.692%，
 
 S8 实测：九边界七输出全过。原始 case 两轮仅改善 0.016%/0.102%，norm 多项回退，未通过门禁。已撤回，不跑20case、不提交实现。证据 `hybrid-evidence/s8-*.json`、`s8-evidence.tar.gz`，归档哈希已复核。
 
-## S9：连续任务区间分核（待实验）
+## S9：连续任务区间分核（已撤回）
 
 附件 `ResidentVector::Process/FindNextWork` 在 head 内连续遍历本核的 chunk 范围。本基线每核跨 usedCoreNum 个 work 访问下一 chunk。候选只在完整生产入口改变逻辑任务映射，prefix/capture 保持原映射；数学计算和最终按 chunk 索引写 partial 的顺序不变。
 
@@ -42,7 +42,7 @@ S8 实测：九边界七输出全过。原始 case 两轮仅改善 0.016%/0.102%
 
 S9 实测：九边界七输出通过，CPU映射覆盖检查通过。原始case两轮 +0.030%/-0.050%，基本持平；norm有0.72%～1.09%收益，但不满足八配置门禁，也未改善主目标。撤回，不跑20case、不提交实现。归档 `s9-evidence.tar.gz` 已校验文件哈希、Vector和调度源码，摘要见 `hybrid-evidence/s9-*.json`。
 
-## S10：最后一次 workspace 读取后提前归还 bank（待实验）
+## S10：最后一次 workspace 读取后提前归还 bank（已撤回）
 
 当前完整 chunk 的末带 Stage11 用两个16行槽，入口已搬完 left/right/dk_base/dg_base/db_base。后续没有 workspace 读取：raw_g 是外部输入，dk/dG/dBeta 和 partial 是独立输出。当前 S5_DONE 直到整个 Stage11 及输出排空后才发，阻止下一代 Cube Stage0 复用该 bank。
 
@@ -54,7 +54,7 @@ L1/L0/UB/GM容量、数据量、双代窗口、WORK_OPEN/KE_READY背压不改；
 
 S10 实测：九边界七输出全过；原始case两轮回退0.344%/0.391%，仅双融合配置约0.1%收益，撤回。未跑20case、未提交实现。归档和摘要均已保存。
 
-## S11：rH 两个64×64对角块（待实验）
+## S11：rH 两个64×64对角块（已撤回）
 
 沿用已接受的H24将rH搬到Cube的路径，只把四个32×32块改成两个64×64块，减少两次MMAD/Fixpipe，额外计算非对角元素。K维仍128，取对角线后才进入原Stage5，不改变后续数学。
 
@@ -64,7 +64,7 @@ S10 实测：九边界七输出全过；原始case两轮回退0.344%/0.391%，�
 
 S11实测：九边界七输出通过；原始case两轮回退0.422%/0.381%，其余配置也回退0.38%～2.17%。撤回，保留四个32×32块。没有跑20case或提交实现，归档SHA256和Cube/Vector源码均复核。
 
-## S12：Gate 固定系数合并（待实验）
+## S12：Gate 固定系数合并（已撤回）
 
 BeginStage11预先计算exp(a_log)×lowerBound，保存UB[87.75,88) KiB；原expA保留给raw gate。每tile的(dg×expA)×lowerBound改成dg×预计算系数，减少一次全tile乘法和barrier，每chunk多一次64元素系数乘法。
 
@@ -74,7 +74,7 @@ BeginStage11预先计算exp(a_log)×lowerBound，保存UB[87.75,88) KiB；原exp
 
 S12实测：九边界七输出通过；原始case两轮回退1.332%/1.146%，norm改善0.27%～0.65%。未通过性能门禁，撤回，没有跑20case或提交实现。数学操作减少未带来目标case加速，不据此给出收益预估。
 
-## 当前S3时间线及S13：两带交替right产出顺序（待实验）
+## 当前S3时间线及S13：两带交替right产出顺序（已撤回）
 
 直接使用已验收S3库，H2/T256/单核组、无norm/beta，模拟器三条MIX lane完整结束。AIV0/1的Vector约85.21/85.24μs，空隙72.21/72.79μs；空隙与MTE2重合38.22/36.73μs、MTE3重合22.54/25.97μs。区间有重叠，不相加，不外推8K硬件时延。
 
@@ -88,7 +88,7 @@ S13设备4在首次采集前被其它测试占用，脚本主动停止，未产�
 
 S13有效结果：原始case两轮回退0.810%/0.660%，未通过门禁；九边界七输出通过。撤回，没有跑20case或提交实现。原始时间线中的等待不均不能直接转换成加速，当前交替顺序反而加重关键路径。
 
-## S14：Stage10按head连接L0装载和MMAD（待实验）
+## S14：Stage10按head连接L0装载和MMAD（已撤回）
 
 S3完整时间线显示S10_FIRST_READY仍与AIV0/1空隙重合6.62/4.89μs。候选不换head顺序，而把Stage10的“两head加载L0”与“两head计算”两个循环合成一个：L1仍提前加载两head，L0按head0装载→发MMAD/Fixpipe→head1装载→发MMAD/Fixpipe。
 
@@ -124,3 +124,11 @@ Stage3/7以Select执行严格下三角选择，余下公式和缩放不改。核
 九边界及原 20 case 均七输出全过。原 IDs、seed=20261013+ID、FP32/FP64 双标杆及 CT L1 均未改。库 SHA256 为 `87a9739d66f7e98294f5ac697413ee070a12d957f674ef55b82bc1d0c7c5942d`，性能、精度和指令段报告一致。标杆 SHA256 为 `1a5e5d498ce1cc5474f628c4279d871e305a3b9cb4b31b2bcba48e7109f6c706`。本地提交源码与构建快照仅注释和排版不同，代码 token 已核对一致。
 
 证据见 `hybrid-evidence/s15-*.json`；工作区 `s15-evidence.tar.gz` 的 46 个文件逐一校验，归档 SHA256 为 `f41e09a899cc437cfcffcddcaebb19b05a93dcf87723aec2fde3bfef72e4974a`。完整 200 case 三 seed、公开入口和 A5 未重跑。目标 case 的 Vector 占比约 63.9%，9 ms 和 80% 均未达到。
+
+## S16：将 compact raw gate 预取前移到 Stage9（已撤回）
+
+以已验收 S15 为基线，仅完整 chunk、无 norm 的首个 32 行带前移预取。先排好 Stage9 两槽必需输入，再把 raw gate 两个 16 行 tile 搬入 UB[64,72)/[72,80) KiB；Stage9 计算与搬运可重叠。Stage11 删除相同搬入，原 inputReady 保证它们已完成。Stage9 升序处理、Stage11 降序处理，raw 槽按 48→32 行排列。
+
+不增加容量、数据量、事件或数学操作；尾块、末带、norm 和 capture 不改。Stage9 不使用该 UB 区，Stage7 的位 mask 位于独立小量区；Stage11 消费后才开始下一带。风险是额外 MTE2 排队或发射顺序反而拖慢关键路径，须实测。验收沿用 S15 事先定义的专项门禁，相对 S15 做八配置两轮交替；通过后才跑原 20 case 七输出并提交。
+
+设备 5 九边界七输出通过，但目标 case 两轮分别回退 1.911%/1.635%，无 norm 四配置全部回退 1.585%～1.957%。norm 指令段不变、计时变化在 ±0.130% 内。未通过性能门禁，未进入原 20 case；源码和两处加载库恢复到已验收 S15。记录见 `hybrid-evidence/s16-*.json`；41 文件归档 SHA256 为 `128708560e9b0f4689eee43593e12dde772a9fb53a98383e4f1d61b9558cd5d0`。这次结果不支持继续将该搬运前移，不能把静态可重叠等同于实测加速。
