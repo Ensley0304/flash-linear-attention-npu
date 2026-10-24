@@ -14,6 +14,10 @@ ge::graphStatus ValidateFinalize(
     KDA::ChunkKdaBwdFinalizeTilingData &shape, bool arch22,
     bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout)
 {
+    if (allowNegEigval && !useBetaSigmoid) {
+        OP_LOGE(ctx.nodeName, "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        return ge::GRAPH_FAILED;
+    }
     if (!arch22 && useBetaSigmoid) {
         OP_LOGE(ctx.nodeName,
                 "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");

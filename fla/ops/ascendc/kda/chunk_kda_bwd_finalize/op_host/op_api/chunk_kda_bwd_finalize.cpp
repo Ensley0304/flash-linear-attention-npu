@@ -37,6 +37,11 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            useBetaSigmoidInKernel, allowNegEigval, outputLayout,
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
+    if (allowNegEigval && !useBetaSigmoidInKernel) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        return empty;
+    }
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,

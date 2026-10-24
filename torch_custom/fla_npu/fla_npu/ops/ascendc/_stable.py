@@ -1365,6 +1365,10 @@ def npu_chunk_kda_bwd_finalize(
 
     On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
     """
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError(
+            "npu_chunk_kda_bwd_finalize: allow_neg_eigval=True requires "
+            "use_beta_sigmoid_in_kernel=True.")
     if q.ndim not in (3, 4):
         raise ValueError("q must have rank 3 or 4")
     rank3 = q.ndim == 3

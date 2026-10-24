@@ -9,6 +9,7 @@ extern "C" {
 
 // beta accepts BF16/FP32; dBetaOut must have the same dtype.
 // Fused sigmoid backward requires saved FP32 beta_eff on A2/A3; A5 rejects this flag.
+// allowNegEigval=true requires useBetaSigmoidInKernel=true.
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
