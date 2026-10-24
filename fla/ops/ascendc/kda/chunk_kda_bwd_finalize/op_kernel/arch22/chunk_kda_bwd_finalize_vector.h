@@ -33,7 +33,7 @@ public:
     }
 
     template <bool CAPTURE = false, bool SAVE_RH = false, bool FULL_CHUNK = false, bool CUBE_RH = false>
-    __aicore__ inline void Stage1(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage1(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0)
     {
@@ -225,7 +225,7 @@ public:
     }
 
     template <bool CAPTURE = false, bool FULL_CHUNK = false, bool COMPACT_MASK = false>
-    __aicore__ inline void Stage3(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage3(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0)
     {
@@ -403,7 +403,7 @@ public:
 
     template <bool CAPTURE = false, bool FULL_CHUNK = false, bool CUBE_RH = false, bool SAVE_DQ = false,
               bool KEEP_INPUTS = false>
-    __aicore__ inline void Stage5(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage5(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
         static_assert(!KEEP_INPUTS || (FULL_CHUNK && !CAPTURE));
@@ -647,7 +647,7 @@ public:
 
     template <bool CAPTURE = false, bool CONSUME_BANDS = false, bool FINALIZE_Q = false, bool Q_NORM = false,
               bool COMPUTE_RIGHT = false, bool FINALIZE_K = false>
-    __aicore__ inline void Stage7(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage7(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
         // Dispatch once per chunk; full chunks have fixed counts in Stages 7/9/11.
@@ -662,7 +662,7 @@ public:
 
     template <bool CAPTURE, bool CONSUME_BANDS, bool FINALIZE_Q, bool Q_NORM, bool COMPUTE_RIGHT, bool FINALIZE_K,
               bool FULL_CHUNK>
-    __aicore__ inline void Stage7Impl(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage7Impl(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                       int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank)
     {
         constexpr uint32_t ROWS = FULL_CHUNK && !CAPTURE ? 32 : 16;
@@ -1059,7 +1059,7 @@ public:
     }
 
     template <bool CAPTURE, bool Q_NORM, bool FULL_CHUNK = false, bool DEFER_LEFT = false>
-    __aicore__ inline void Stage9(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage9(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank,
                                   uint32_t start, uint32_t end)
     {
@@ -1271,7 +1271,7 @@ public:
     }
 
     template <bool CAPTURE, bool K_NORM, bool FULL_CHUNK = false, uint32_t ROWS = 8, bool COMPACT = false>
-    __aicore__ inline void Stage11(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage11(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                    int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture, uint32_t bank,
                                    uint32_t start, uint32_t end)
     {

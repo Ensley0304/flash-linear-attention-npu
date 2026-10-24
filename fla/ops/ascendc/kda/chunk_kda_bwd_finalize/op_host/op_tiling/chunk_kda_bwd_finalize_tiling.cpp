@@ -1,6 +1,7 @@
 #include "chunk_kda_bwd_finalize_tiling.h"
 
 #include <cmath>
+#include <cstring>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "chunk_kda_bwd_finalize_arch22.h"
@@ -20,6 +21,12 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     const bool *useGate = attrs->GetAttrPointer<bool>(ATTR_USE_GATE_IN_KERNEL);
     const bool *useExp2 = attrs->GetAttrPointer<bool>(ATTR_USE_EXP2);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
+    const bool *useBetaSigmoid = attrs->GetAttrPointer<bool>(ATTR_USE_BETA_SIGMOID);
+    const bool *allowNegEigval = attrs->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL);
+    const char *outputLayout = attrs->GetStr(ATTR_OUTPUT_LAYOUT);
+    OP_CHECK_NULL_WITH_CONTEXT(context, useBetaSigmoid);
+    OP_CHECK_NULL_WITH_CONTEXT(context, allowNegEigval);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outputLayout);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
@@ -27,7 +34,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, useGate);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
     OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
-    if (!std::isfinite(*scale) || !std::isfinite(*lowerBound)) {
+    if (!std::isfinite(static_cast<float>(*scale)) || !std::isfinite(static_cast<float>(*lowerBound))) {
         OP_LOGE(context->GetNodeName(), "scale/lower_bound must be finite");
         return ge::GRAPH_FAILED;
     }
@@ -59,8 +66,16 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         aicCoreNum,
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize())};
     if (platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950) {
-        return TilingFinalizeArch22(context, ctx);
+        return TilingFinalizeArch22(context, ctx, *useBetaSigmoid, *allowNegEigval, outputLayout);
     }
+    if (*useBetaSigmoid) {
+        OP_LOGE(context->GetNodeName(), "A5 beta sigmoid backward is not implemented");
+        return ge::GRAPH_FAILED;
+    }
+    const bool variable = ctx.cuSeqlens != nullptr;
+    const bool headMajor = std::strcmp(outputLayout, variable ? "NTD" : "BNSD") == 0;
+    const bool tokenMajor = std::strcmp(outputLayout, variable ? "TND" : "BSND") == 0;
+    if (!headMajor && !tokenMajor) return ge::GRAPH_FAILED;
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     context->SetTilingKey(processor.GetTilingKey());

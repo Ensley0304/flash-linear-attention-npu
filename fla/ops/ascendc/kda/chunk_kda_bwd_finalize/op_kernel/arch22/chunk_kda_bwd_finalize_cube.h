@@ -51,7 +51,7 @@ public:
     }
 
     // Only Stage 0 consumes these inputs; akk/dW have separate lifetimes.
-    __aicore__ inline void PreloadState(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void PreloadState(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                         int64_t head, uint32_t owner)
     {
         const int64_t batch = tiling.isVariable ? 0 : chunk.sequence;
@@ -68,7 +68,7 @@ public:
         CopyToL1(l1[L1_V].ReinterpretCast<bfloat16_t>(), v_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
     }
 
-    __aicore__ inline void LoadStage0Inputs(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void LoadStage0Inputs(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                             int64_t head, uint32_t owner, bool loadState = true, uint32_t akkBank = 0)
     {
         if (loadState) {
@@ -86,7 +86,7 @@ public:
 
     // Four GEMMs, two independent operand/result slots. Wait only at consumption.
     template <bool CAPTURE = false, bool CUBE_RH = false>
-    __aicore__ inline void Stage0(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage0(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t head, uint32_t owner, uint32_t core, GM_ADDR capture = nullptr,
                                   uint32_t bank = 0, uint32_t akkBank = 0)
     {
@@ -201,7 +201,7 @@ public:
     }
 
     template <bool CAPTURE = false>
-    __aicore__ inline void Stage2(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
+    __aicore__ inline void Stage2(const FinalizeTilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
                                   uint32_t core, GM_ADDR capture = nullptr, uint32_t bank = 0, bool retainAkk = false)
     {
         const uint32_t akkBank = retainAkk ? bank : 0;
@@ -259,7 +259,7 @@ public:
     }
 
     template <bool CAPTURE = false, bool RETAIN_AKK = false>
-    __aicore__ inline void Stage4(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
+    __aicore__ inline void Stage4(const FinalizeTilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
                                   uint32_t bank, GM_ADDR capture = nullptr)
     {
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
@@ -308,7 +308,7 @@ public:
     }
 
     template <bool CAPTURE = false>
-    __aicore__ inline void Stage6(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
+    __aicore__ inline void Stage6(const FinalizeTilingData &tiling, int64_t chunkIndex, int64_t head, uint32_t owner,
                                   uint32_t core, uint32_t bank, GM_ADDR capture = nullptr)
     {
         auto l1 = l1Buf_.Get<uint8_t>()[owner * L1_HEAD_BYTES];
@@ -337,7 +337,7 @@ public:
     }
 
     template <bool CAPTURE = false, bool FINALIZE_Q = false, bool COMPUTE_RIGHT = false, bool FINALIZE_K = false>
-    __aicore__ inline void Stage8(const Stage01TilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
+    __aicore__ inline void Stage8(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
                                   int64_t firstHead, uint32_t core, uint32_t bank, GM_ADDR capture)
     {
         for (int32_t start = ((chunk.validRows - 1) / 32) * 32; start >= 0; start -= 32) {
@@ -463,7 +463,7 @@ public:
     }
 
     template <bool CAPTURE = false>
-    __aicore__ inline void Stage10(const Stage01TilingData &tiling, int64_t chunkIndex, int64_t firstHead,
+    __aicore__ inline void Stage10(const FinalizeTilingData &tiling, int64_t chunkIndex, int64_t firstHead,
                                    uint32_t core, uint32_t bank, GM_ADDR capture, uint32_t start,
                                    bool compact = false)
     {

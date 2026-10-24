@@ -47,7 +47,7 @@ constexpr uint32_t UB_MASK_ADDR = 85 * 1024;
 constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 
-// Two generations are used only by the Stage 0-7 development scheduler.
+// Two reusable workspace generations per head.
 constexpr uint32_t WS_BANK_BYTES = 384 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 2 * WS_BANK_BYTES;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
@@ -85,7 +85,9 @@ constexpr uint16_t BAND_READY = 1;
 constexpr uint16_t BAND_LOADED = 2;
 constexpr uint16_t S8_READY = 3;
 constexpr uint16_t S8_SECOND_READY = 14;
-constexpr uint16_t S10_FIRST_READY = 15;
+// Flag 15 is reserved by the CANN MIX workspace initialization.
+// Flag 11 is free on AIV receivers; VECTOR_ACK+1 targets the AIC receiver.
+constexpr uint16_t S10_FIRST_READY = 11;
 
 constexpr uint16_t KE_READY = 0;
 constexpr uint16_t WORK_OPEN = 8;
@@ -98,8 +100,8 @@ struct ChunkInfo {
     int64_t validRows;
 };
 
-// Private development entry; the public A5 tiling/ABI stays unchanged.
-struct Stage01TilingData {
+// A2/A3 tiling shared by the host and the single public kernel entry.
+struct FinalizeTilingData {
     int64_t batch;
     int64_t heads;
     int64_t tokens;
@@ -107,6 +109,11 @@ struct Stage01TilingData {
     uint32_t usedCoreNum;
     uint32_t isVariable;
     uint32_t outputTokenMajor = 0;
+    uint32_t hasQkL2Norm = 0;
+    uint32_t betaMode = 0;
+    float scale = 1.0f;
+    float lowerBound = -5.0f;
+    uint64_t partialOffset = 0;
 };
 
 struct FinalizeTailArgs {
@@ -174,7 +181,7 @@ static_assert(WS_RH + HEAD_DIM * 4 <= WS_DAKK_RAW);
 static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_BANK_BYTES);
 static_assert(CAPTURE_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= CAPTURE_BYTES);
 static_assert(sizeof(ChunkInfo) == 32);
-static_assert(sizeof(Stage01TilingData) == 48);
+static_assert(sizeof(FinalizeTilingData) == 72);
 static_assert(L1_V + CHUNK_SIZE * HEAD_DIM * 2 <= L1_HEAD_BYTES);
 static_assert(L1_BYTES <= 512 * 1024);
 static_assert(2 * L0_AB_SLOT_BYTES == 64 * 1024);

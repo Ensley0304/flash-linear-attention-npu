@@ -71,6 +71,7 @@ _ENUM = {
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
     "npu_chunk_kda_bwd_prepare": {"layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_prepare": {"layout": _LAYOUT_CODES},
@@ -1351,6 +1352,36 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         _current_stream_ptr(),
     )
     return (*result, initial_state)
+
+
+def npu_chunk_kda_bwd_finalize(
+    q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
+    dv_scan, d_aqk, dq_raw, *, scale, lower_bound=-5.0, chunk_size=64,
+    safe_gate=True, use_gate_in_kernel=True, use_exp2=True, state_v_first=False,
+    q_rstd=None, k_rstd=None, cu_seqlens=None, chunk_indices=None,
+    use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
+):
+    """Finalize KDA gradients; dBeta and dG always use token-major order."""
+    packed = cu_seqlens is not None
+    if output_layout is None:
+        output_layout = "NTD" if packed else "BNSD"
+    valid_layouts = ("NTD", "TND") if packed else ("BNSD", "BSND")
+    if output_layout not in valid_layouts:
+        raise ValueError("output_layout does not match fixed/packed input rank")
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise ValueError("cu_seqlens and chunk_indices must appear together")
+    if (q_rstd is None) != (k_rstd is None):
+        raise ValueError("q_rstd and k_rstd must appear together")
+    return _op("npu_chunk_kda_bwd_finalize")(
+        q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
+        dv_scan, d_aqk, dq_raw, q_rstd, k_rstd,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        float(scale), float(lower_bound), int(chunk_size), bool(safe_gate),
+        bool(use_gate_in_kernel), bool(use_exp2), bool(state_v_first),
+        bool(use_beta_sigmoid_in_kernel), bool(allow_neg_eigval),
+        _char_code("npu_chunk_kda_bwd_finalize", "output_layout", output_layout),
+        _current_stream_ptr(),
+    )
 
 
 def npu_chunk_kda_bwd_prepare(

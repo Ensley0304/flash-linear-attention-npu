@@ -1,9 +1,0 @@
-# Copyright (c) 2026 Tianjin University, Ltd.
-set(STAGE01_CAPTURE 1)
-if(DEFINED ENV{KDA_FINALIZE_STAGE01_CAPTURE})
-    set(STAGE01_CAPTURE $ENV{KDA_FINALIZE_STAGE01_CAPTURE})
-endif()
-if(NOT STAGE01_CAPTURE MATCHES "^[01]$")
-    message(FATAL_ERROR "KDA_FINALIZE_STAGE01_CAPTURE must be 0 or 1")
-endif()
-add_sources("--npu-arch=dav-2201 --cce-auto-sync=off -DKDA_FINALIZE_STAGE01_CAPTURE=${STAGE01_CAPTURE}")

@@ -2,6 +2,7 @@
 #include "chunk_kda_bwd_finalize.h"
 
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 #include "aclnn_kernels/common/op_error_check.h"
@@ -36,6 +37,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
     double scale, double lowerBound, int64_t chunkSize,
     bool safeGate, bool useGateInKernel, bool useExp2, bool stateVFirst,
+    bool useBetaSigmoidInKernel, bool allowNegEigval, const char *outputLayout,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dBetaOut, const aclTensor *dGOut,
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
@@ -82,10 +84,22 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     CHECK_COND((cuSeqlensOptional == nullptr) == (chunkIndicesOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID,
                "cu_seqlens and chunk_indices must appear together");
-    CHECK_COND(std::isfinite(scale) && std::isfinite(lowerBound),
+    const bool packed = cuSeqlensOptional != nullptr;
+    CHECK_COND(outputLayout != nullptr &&
+                   (std::strcmp(outputLayout, packed ? "NTD" : "BNSD") == 0 ||
+                    std::strcmp(outputLayout, packed ? "TND" : "BSND") == 0),
+               ACLNN_ERR_PARAM_INVALID, "output_layout does not match fixed/packed input rank");
+#ifdef KDA_BWD_STAGES_ARCH22
+    CHECK_COND(beta->GetDataType() == DataType::DT_FLOAT && aLog->GetDataType() == DataType::DT_FLOAT,
+               ACLNN_ERR_PARAM_INVALID, "A2/A3 requires FP32 beta_eff and a_log");
+#else
+    CHECK_COND(!useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
+               "A5 beta sigmoid backward is not implemented");
+#endif
+    CHECK_COND(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)),
                ACLNN_ERR_PARAM_INVALID, "scale/lower_bound must be finite");
     CHECK_COND(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst,
-               ACLNN_ERR_PARAM_INVALID, "unsupported A5 v1 attribute combination");
+               ACLNN_ERR_PARAM_INVALID, "public finalize requires C=64, safe_gate/use_gate/use_exp2=true and K-first state");
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
@@ -94,6 +108,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
         cuSeqlensOptional, chunkIndicesOptional,
         scale, lowerBound, chunkSize, safeGate, useGateInKernel, useExp2, stateVFirst,
+        useBetaSigmoidInKernel, allowNegEigval, outputLayout,
         dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {

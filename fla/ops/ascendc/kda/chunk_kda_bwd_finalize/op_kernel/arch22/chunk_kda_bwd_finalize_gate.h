@@ -10,7 +10,7 @@
 
 namespace KDA::Arch22 {
 
-__aicore__ inline void FinalizeStage12(const FinalizeTailArgs &tail, const Stage01TilingData &tiling,
+__aicore__ inline void FinalizeStage12(const FinalizeTailArgs &tail, const FinalizeTilingData &tiling,
                                       AscendC::TPipe &pipe, AscendC::LocalTensor<float> ub,
                                       uint32_t vectorCore, uint32_t vectorCores)
 {
