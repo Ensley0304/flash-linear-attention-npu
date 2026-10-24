@@ -81,22 +81,24 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         CHECK_RET(CheckRequired(kRstdOptional, DataType::DT_FLOAT, "k_rstd") == ACLNN_SUCCESS,
                   ACLNN_ERR_PARAM_INVALID);
     }
-    CHECK_COND((cuSeqlensOptional == nullptr) == (chunkIndicesOptional == nullptr),
+    CHECK_COND((cuSeqlensOptional != nullptr || chunkIndicesOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID,
-               "cu_seqlens and chunk_indices must appear together");
-    const bool packed = cuSeqlensOptional != nullptr;
+               "chunk_indices requires cu_seqlens");
+    const auto rank = q->GetViewShape().GetDimNum();
+    CHECK_COND(rank == 3 || rank == 4, ACLNN_ERR_PARAM_INVALID, "q must have rank 3 or 4");
+    const bool rank3 = rank == 3;
     CHECK_COND(outputLayout != nullptr &&
-                   (std::strcmp(outputLayout, packed ? "NTD" : "BNSD") == 0 ||
-                    std::strcmp(outputLayout, packed ? "TND" : "BSND") == 0),
-               ACLNN_ERR_PARAM_INVALID, "output_layout does not match fixed/packed input rank");
+                   (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") == 0 ||
+                    std::strcmp(outputLayout, rank3 ? "TND" : "BSND") == 0),
+               ACLNN_ERR_PARAM_INVALID, "output_layout does not match input rank");
 #ifdef KDA_BWD_STAGES_ARCH22
     CHECK_COND(beta->GetDataType() == DataType::DT_FLOAT && aLog->GetDataType() == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "A2/A3 requires FP32 beta_eff and a_log");
-#else
-    CHECK_COND(!useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
-               "A5 beta sigmoid backward is not implemented");
 #endif
-    CHECK_COND(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)),
+    CHECK_COND(!useBetaSigmoidInKernel || beta->GetDataType() == DataType::DT_FLOAT,
+               ACLNN_ERR_PARAM_INVALID, "beta sigmoid backward requires saved FP32 beta_eff");
+    CHECK_COND(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)) &&
+                   lowerBound >= -5.0 && static_cast<float>(lowerBound) < 0.0f,
                ACLNN_ERR_PARAM_INVALID, "scale/lower_bound must be finite");
     CHECK_COND(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst,
                ACLNN_ERR_PARAM_INVALID, "public finalize requires C=64, safe_gate/use_gate/use_exp2=true and K-first state");

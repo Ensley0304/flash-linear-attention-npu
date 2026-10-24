@@ -858,7 +858,7 @@ __simd_vf__ inline void FinalizeStage10VF(
     __ubuf__ float *delta, __ubuf__ float *base,
     __ubuf__ float *dbDelta, __ubuf__ float *dbBase,
     __ubuf__ bfloat16_t *k, __ubuf__ float *rstd,
-    uint32_t hasNorm, uint16_t rows)
+    uint32_t hasNorm, uint16_t rows, __ubuf__ BetaT *beta, uint32_t betaMode)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
@@ -895,18 +895,29 @@ __simd_vf__ inline void FinalizeStage10VF(
         FinalizeCastBf16(packed, d0, d1, mask);
         StoreAlign(out + offset, packed, bfMask);
     }
-    uint32_t count = rows;
-    MaskReg rowMask = UpdateMask<float>(count);
-    RegTensor<float> db, deltaB;
-    RegTensor<bfloat16_t> packedB;
-    LoadAlign(db, dbBase);
-    LoadAlign(deltaB, dbDelta);
-    Add(db, db, deltaB, rowMask);
-    if constexpr (AscendC::IsSameType<BetaT, float>::value) {
-        StoreAlign(dbOut, db, rowMask);
-    } else {
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, db, rowMask);
-        StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dbOut, packedB, rowMask);
+    // One 32-byte UB row per scalar enables a single strided token-major DMA.
+    uint32_t count = 1;
+    MaskReg scalarMask = UpdateMask<float>(count);
+    for (uint16_t row = 0; row < rows; ++row) {
+        RegTensor<float> db, deltaB;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(db, dbBase + row);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(deltaB, dbDelta + row);
+        Add(db, db, deltaB, scalarMask);
+        if constexpr (AscendC::IsSameType<BetaT, float>::value) {
+            if (betaMode != 0U) {
+                RegTensor<float> value, factor;
+                DataCopy<float, LoadDist::DIST_BRC_B32>(value, beta + row);
+                Muls(factor, value, betaMode == 2U ? -0.5f : -1.0f, scalarMask);
+                Adds(factor, factor, 1.0f, scalarMask);
+                Mul(db, db, value, scalarMask);
+                Mul(db, db, factor, scalarMask);
+            }
+            StoreAlign(dbOut + row * 8, db, scalarMask);
+        } else {
+            RegTensor<bfloat16_t> packedB;
+            Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, db, scalarMask);
+            StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dbOut + row * 16, packedB, scalarMask);
+        }
     }
 }
 
@@ -1194,7 +1205,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
-        AscendC::DataCopy(dG_[token], dg, elems);
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, true);
+        AscendC::DataCopyPad(dG_[out], dg, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(float), 0,
+            static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(float)), 0});
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
         AscendC::DataCopy(
@@ -1528,7 +1542,11 @@ private:
         // The dv egress must drain before Stage8 may rewrite the right area.
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        AscendC::DataCopy(dv_[token + offset], dv, elems);
+        const bool tokenMajor = tiling_->outputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, KDA_FINALIZE_DIM, tokenMajor);
+        AscendC::DataCopyPad(dv_[out], dv, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(rows), KDA_FINALIZE_DIM * sizeof(bfloat16_t), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0});
         // V->MTE2 protects the last Stage3 read of dVb in X before the
         // dKgb_raw DMA overwrites it.
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
@@ -1643,13 +1661,21 @@ private:
             reinterpret_cast<__ubuf__ float *>(dbDelta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dbBase.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows);
+            reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows,
+            reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), tiling_->betaMode);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        AscendC::DataCopy(dq_[token], dqOut, elems);
-        AscendC::DataCopy(dk_[token], dkOut, elems);
-        AscendC::DataCopyPad(dBeta_[token / KDA_FINALIZE_DIM], dbOut,
-            AscendC::DataCopyExtParams{1, static_cast<uint32_t>(rows * sizeof(DTYPE_BETA)), 0, 0, 0});
+        const bool tokenMajor = tiling_->outputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, KDA_FINALIZE_DIM, tokenMajor);
+        const AscendC::DataCopyExtParams matrixCopy{
+            static_cast<uint16_t>(rows), KDA_FINALIZE_DIM * sizeof(bfloat16_t), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0};
+        AscendC::DataCopyPad(dq_[out], dqOut, matrixCopy);
+        AscendC::DataCopyPad(dk_[out], dkOut, matrixCopy);
+        const uint64_t betaOut = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, 1, true);
+        AscendC::DataCopyPad(dBeta_[betaOut], dbOut, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(rows), sizeof(DTYPE_BETA), 0,
+            static_cast<uint32_t>((tiling_->NV - 1) * sizeof(DTYPE_BETA)), 0});
         // The next Stage5 uses these UB ranges. Preserve all output reads.
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);

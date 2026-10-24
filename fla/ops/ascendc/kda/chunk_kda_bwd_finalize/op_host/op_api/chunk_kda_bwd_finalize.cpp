@@ -1,8 +1,6 @@
 #include "chunk_kda_bwd_finalize.h"
 #include <cstring>
 #include <vector>
-#include "aclnn_kernels/transpose.h"
-#include "opdev/tensor_view_utils.h"
 
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -40,32 +38,45 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
     if (!q || !k || !v || !gk || !beta || !h || !outputLayout ||
-        (cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) return empty;
-    const bool packed = cuSeqlensOptional != nullptr;
-    const bool tokenMajor = std::strcmp(outputLayout, packed ? "TND" : "BSND") == 0;
-    if (!tokenMajor && std::strcmp(outputLayout, packed ? "NTD" : "BNSD") != 0) return empty;
+        (!cuSeqlensOptional && chunkIndicesOptional)) return empty;
+    const size_t rank = q->GetViewShape().GetDimNum();
+    if (rank != 3 && rank != 4) return empty;
+    const bool rank3 = rank == 3;
+    const bool tokenMajor = std::strcmp(outputLayout, rank3 ? "TND" : "BSND") == 0;
+    if (!tokenMajor && std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") != 0) return empty;
     const std::array<const aclTensor *, 7> requested{dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut};
     for (auto *output : requested) if (!output) return empty;
-#ifndef KDA_BWD_STAGES_ARCH22
-    if (useBetaSigmoidInKernel) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "A5 beta sigmoid backward is not implemented");
-        return empty;
+    // Generate metadata once on Host; both direct L0 and ACLNN use this path.
+    if (cuSeqlensOptional) {
+        const int64_t tokens = q->GetViewShape().GetDim(rank - 2);
+        const size_t size = cuSeqlensOptional->Size();
+        if (tokens <= 0 || chunkSize != 64 || size < 2 ||
+            (!rank3 && q->GetViewShape().GetDim(0) != 1) ||
+            (*cuSeqlensOptional)[0] != 0 || (*cuSeqlensOptional)[size - 1] != tokens) return empty;
+        std::vector<int64_t> generated;
+        size_t task = 0;
+        for (size_t seq = 0; seq + 1 < size; ++seq) {
+            const int64_t start = (*cuSeqlensOptional)[seq];
+            const int64_t end = (*cuSeqlensOptional)[seq + 1];
+            if (start < 0 || end < start || end > tokens) return empty;
+            const int64_t chunks = (end - start) / 64 + ((end - start) % 64 != 0);
+            for (int64_t chunk = 0; chunk < chunks; ++chunk, ++task) {
+                if (chunkIndicesOptional) {
+                    if (task >= chunkIndicesOptional->Size() / 2 ||
+                        (*chunkIndicesOptional)[2 * task] != static_cast<int64_t>(seq) ||
+                        (*chunkIndicesOptional)[2 * task + 1] != chunk) return empty;
+                } else {
+                    generated.push_back(static_cast<int64_t>(seq));
+                    generated.push_back(chunk);
+                }
+            }
+        }
+        if (chunkIndicesOptional && chunkIndicesOptional->Size() != 2 * task) return empty;
+        if (!chunkIndicesOptional) {
+            chunkIndicesOptional = executor->AllocIntArray(generated.data(), generated.size());
+            if (!chunkIndicesOptional) return empty;
+        }
     }
-    // A5 keeps its accepted head-major kernel. Convert only public outputs
-    // whose contract differs; A2/A3 writes the requested layout directly.
-    auto alloc = [&](const aclTensor *like, DataType dtype) {
-        return executor->AllocTensor(like->GetViewShape(), dtype, Format::FORMAT_ND);
-    };
-    if (tokenMajor) {
-        dqOut = alloc(q, dqOut->GetDataType());
-        dkOut = alloc(k, dkOut->GetDataType());
-        dvOut = alloc(v, dvOut->GetDataType());
-    }
-    dBetaOut = alloc(beta, dBetaOut->GetDataType());
-    dGOut = alloc(gk, dGOut->GetDataType());
-    if (!dqOut || !dkOut || !dvOut || !dBetaOut || !dGOut) return empty;
-    outputLayout = packed ? "NTD" : "BNSD";
-#endif
     const aclTensor *cuTensor = nullptr;
     const aclTensor *indicesTensor = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -96,19 +107,6 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdFinalize failed");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
-#ifndef KDA_BWD_STAGES_ARCH22
-    const std::array<const aclTensor *, 5> internal{dqOut, dkOut, dvOut, dBetaOut, dGOut};
-    for (size_t i = 0; i < internal.size(); ++i) {
-        if (internal[i] == requested[i]) continue;
-        const auto rank = internal[i]->GetViewShape().GetDimNum();
-        std::vector<int64_t> perm(rank);
-        for (size_t axis = 0; axis < rank; ++axis) perm[axis] = axis;
-        std::swap(perm[packed ? 0 : 1], perm[packed ? 1 : 2]);
-        const auto *order = executor->AllocIntArray(perm.data(), perm.size());
-        const auto *transposed = order ? l0op::Transpose(internal[i], order, executor) : nullptr;
-        if (!transposed || !l0op::ViewCopy(transposed, requested[i], executor)) return empty;
-    }
-#endif
     return requested;
 }
 

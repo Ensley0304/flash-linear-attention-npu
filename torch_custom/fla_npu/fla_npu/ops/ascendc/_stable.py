@@ -1362,14 +1362,16 @@ def npu_chunk_kda_bwd_finalize(
     use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
 ):
     """Finalize KDA gradients; dBeta and dG always use token-major order."""
-    packed = cu_seqlens is not None
+    if q.ndim not in (3, 4):
+        raise ValueError("q must have rank 3 or 4")
+    rank3 = q.ndim == 3
     if output_layout is None:
-        output_layout = "NTD" if packed else "BNSD"
-    valid_layouts = ("NTD", "TND") if packed else ("BNSD", "BSND")
+        output_layout = "NTD" if rank3 else "BNSD"
+    valid_layouts = ("NTD", "TND") if rank3 else ("BNSD", "BSND")
     if output_layout not in valid_layouts:
-        raise ValueError("output_layout does not match fixed/packed input rank")
-    if (cu_seqlens is None) != (chunk_indices is None):
-        raise ValueError("cu_seqlens and chunk_indices must appear together")
+        raise ValueError("output_layout does not match input rank")
+    if cu_seqlens is None and chunk_indices is not None:
+        raise ValueError("chunk_indices requires cu_seqlens")
     if (q_rstd is None) != (k_rstd is None):
         raise ValueError("q_rstd and k_rstd must appear together")
     return _op("npu_chunk_kda_bwd_finalize")(

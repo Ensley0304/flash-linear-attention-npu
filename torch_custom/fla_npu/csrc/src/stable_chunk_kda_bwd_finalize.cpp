@@ -4,6 +4,7 @@
 #include "stable/exec.h"
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -44,7 +45,10 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor> run_npu_chunk
     const auto meta = meta_of(q);
     auto qkvShape = meta.sizes;
     auto gateShape = meta.sizes;
-    const size_t first = cu_seqlens.has_value() ? 0 : 1;
+    if (meta.sizes.size() != 3 && meta.sizes.size() != 4) {
+        throw std::invalid_argument("finalize q must have rank 3 or 4");
+    }
+    const size_t first = meta.sizes.size() == 3 ? 0 : 1;
     std::swap(gateShape.at(first), gateShape.at(first + 1));
     if (output_layout == 0 || output_layout == 2) {
         qkvShape = gateShape;
