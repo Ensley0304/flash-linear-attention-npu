@@ -1361,7 +1361,10 @@ def npu_chunk_kda_bwd_finalize(
     q_rstd=None, k_rstd=None, cu_seqlens=None, chunk_indices=None,
     use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
 ):
-    """Finalize KDA gradients; dBeta and dG always use token-major order."""
+    """Finalize KDA gradients; dBeta and dG always use token-major order.
+
+    On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
+    """
     if q.ndim not in (3, 4):
         raise ValueError("q must have rank 3 or 4")
     rank3 = q.ndim == 3

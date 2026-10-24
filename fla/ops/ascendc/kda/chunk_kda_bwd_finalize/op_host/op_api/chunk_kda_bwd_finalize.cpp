@@ -37,6 +37,13 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            useBetaSigmoidInKernel, allowNegEigval, outputLayout,
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
+#ifndef KDA_BWD_STAGES_ARCH22
+    if (useBetaSigmoidInKernel) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        return empty;
+    }
+#endif
     if (!q || !k || !v || !gk || !beta || !h || !outputLayout ||
         (!cuSeqlensOptional && chunkIndicesOptional)) return empty;
     const size_t rank = q->GetViewShape().GetDimNum();

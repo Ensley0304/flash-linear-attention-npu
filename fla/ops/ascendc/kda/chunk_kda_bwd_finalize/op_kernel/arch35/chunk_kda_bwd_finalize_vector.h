@@ -858,7 +858,7 @@ __simd_vf__ inline void FinalizeStage10VF(
     __ubuf__ float *delta, __ubuf__ float *base,
     __ubuf__ float *dbDelta, __ubuf__ float *dbBase,
     __ubuf__ bfloat16_t *k, __ubuf__ float *rstd,
-    uint32_t hasNorm, uint16_t rows, __ubuf__ BetaT *beta, uint32_t betaMode)
+    uint32_t hasNorm, uint16_t rows)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
@@ -904,14 +904,6 @@ __simd_vf__ inline void FinalizeStage10VF(
         DataCopy<float, LoadDist::DIST_BRC_B32>(deltaB, dbDelta + row);
         Add(db, db, deltaB, scalarMask);
         if constexpr (AscendC::IsSameType<BetaT, float>::value) {
-            if (betaMode != 0U) {
-                RegTensor<float> value, factor;
-                DataCopy<float, LoadDist::DIST_BRC_B32>(value, beta + row);
-                Muls(factor, value, betaMode == 2U ? -0.5f : -1.0f, scalarMask);
-                Adds(factor, factor, 1.0f, scalarMask);
-                Mul(db, db, value, scalarMask);
-                Mul(db, db, factor, scalarMask);
-            }
             StoreAlign(dbOut + row * 8, db, scalarMask);
         } else {
             RegTensor<bfloat16_t> packedB;
@@ -1661,8 +1653,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(dbDelta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dbBase.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows,
-            reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), tiling_->betaMode);
+            reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         const bool tokenMajor = tiling_->outputTokenMajor != 0U;

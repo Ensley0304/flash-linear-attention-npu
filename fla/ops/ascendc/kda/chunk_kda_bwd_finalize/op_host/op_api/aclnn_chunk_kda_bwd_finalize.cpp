@@ -45,6 +45,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 {
     CHECK_COND(workspaceSize != nullptr && executor != nullptr,
                ACLNN_ERR_PARAM_NULLPTR, "workspaceSize/executor must not be nullptr");
+#ifndef KDA_BWD_STAGES_ARCH22
+    CHECK_COND(!useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
+               "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+#endif
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(q, "q"),
              {k, "k"}, {v, "v"}, {akk, "akk"},
