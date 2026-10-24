@@ -10,6 +10,7 @@
 
 namespace KDA::Arch22 {
 
+template <typename BetaT>
 class ChunkKdaBwdFinalizeVector {
 public:
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR gk, GM_ADDR h, GM_ADDR dh, GM_ADDR workspace,
@@ -196,7 +197,7 @@ public:
     __aicore__ inline void InitStage3(GM_ADDR v, GM_ADDR beta, GM_ADDR dv)
     {
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
-        beta_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(beta));
+        beta_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(beta));
         dv_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dv));
         if constexpr (COMPACT_MASK) {
             auto bits = ub_[UB_LOWER_BITS].ReinterpretCast<uint64_t>();
@@ -261,9 +262,19 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
         }
-        AscendC::DataCopyPad(beta, beta_[token], {1, rows * 4U, 0, 0, 0}, {true, 0, 0, 0.0f});
+        // inputFree protects this slot; Stage 1 arithmetic scratch may still be live.
+        auto betaInput = ub_[UB_WORK].template ReinterpretCast<BetaT>();
+        if constexpr (sizeof(BetaT) == sizeof(float)) {
+            betaInput = beta;
+        }
+        AscendC::DataCopyPad(betaInput, beta_[token],
+                             {1, rows * static_cast<uint32_t>(sizeof(BetaT)), 0, 0, 0},
+                             {true, 0, 0, static_cast<BetaT>(0)});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
+        if constexpr (sizeof(BetaT) != sizeof(float)) {
+            AscendC::Cast(beta, betaInput, AscendC::RoundMode::CAST_NONE, rows);
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Brcb(broadcast, beta, 8, {1, 8});
@@ -1236,7 +1247,7 @@ public:
         kRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.kRstd));
         dk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(tail.dk));
         dg_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dg));
-        db_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.db));
+        db_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(tail.db));
         partial_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.partial));
     }
 
@@ -1604,7 +1615,15 @@ public:
                 // The derivative's final read is complete; right now holds packed dk.
                 AscendC::Cast(packedDk, dk, AscendC::RoundMode::CAST_RINT, E);
             }
-            AscendC::Brcb(packedDb, db, ROWS / 8, {1, 8});
+            if constexpr (sizeof(BetaT) == sizeof(float)) {
+                AscendC::Brcb(packedDb, db, ROWS / 8, {1, 8});
+            } else {
+                // Each dBeta row starts at a 32-byte boundary for strided GM writes.
+                AscendC::Brcb(rowScale, db, ROWS / 8, {1, 8});
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Cast(packedDb.template ReinterpretCast<BetaT>(), rowScale,
+                              AscendC::RoundMode::CAST_RINT, 8, ROWS, {1, 1, 1, 1});
+            }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             if (active != 0) {
@@ -1633,8 +1652,9 @@ public:
                                           static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * 4), 0});
                 }
                 AscendC::DataCopyPad(
-                    db_[outputToken], packedDb,
-                    {static_cast<uint16_t>(active), 4, 0, static_cast<uint32_t>((tiling.heads - 1) * 4), 0});
+                    db_[outputToken], packedDb.template ReinterpretCast<BetaT>(),
+                    {static_cast<uint16_t>(active), sizeof(BetaT), 0,
+                     static_cast<uint32_t>((tiling.heads - 1) * sizeof(BetaT)), 0});
             }
             if constexpr (CAPTURE) {
                 AscendC::DataCopy(saved[CAPTURE_DK / 4 + first * HEAD_DIM], dk, E);
@@ -1740,10 +1760,11 @@ private:
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::LocalTensor<uint8_t> ub_;
     AscendC::GlobalTensor<bfloat16_t> k_, h_, dh_, v_, dv_;
-    AscendC::GlobalTensor<float> gk_, beta_, dqRaw_, dAqk_;
+    AscendC::GlobalTensor<float> gk_, dqRaw_, dAqk_;
+    AscendC::GlobalTensor<BetaT> beta_, db_;
     AscendC::GlobalTensor<bfloat16_t> q_, dq_;
     AscendC::GlobalTensor<float> qRstd_;
-    AscendC::GlobalTensor<float> rawG_, aLog_, dtBias_, kRstd_, dg_, db_, partial_;
+    AscendC::GlobalTensor<float> rawG_, aLog_, dtBias_, kRstd_, dg_, partial_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     FinalizeTailArgs tail_;
     float scale_ = 1.0f;

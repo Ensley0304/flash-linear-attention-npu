@@ -10,14 +10,14 @@ public:
     {
 #ifdef KDA_BWD_STAGES_ARCH22
         constexpr auto gateParam = REQUIRED;
-        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16};
-        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT};
-        const auto betaTypes = fp32;
+        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> betaTypes = {ge::DT_BF16, ge::DT_FLOAT};
         const auto aLogTypes = fp32;
-        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64};
+        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64};
         const auto gradTypes = bf16;
-        const auto dbTypes = fp32;
-        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND};
+        const auto dbTypes = betaTypes;
+        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND};
 #else
         constexpr auto gateParam = REQUIRED;
         const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};

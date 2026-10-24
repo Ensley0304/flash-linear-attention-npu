@@ -82,7 +82,7 @@ ge::graphStatus ValidateFinalize(
     }
     const auto betaType = context->GetInputDesc(INPUT_BETA)->GetDataType();
     const auto logType = context->GetInputDesc(INPUT_A_LOG)->GetDataType();
-    if ((betaType != ge::DT_FLOAT && (arch22 || useBetaSigmoid || betaType != ge::DT_BF16)) ||
+    if ((betaType != ge::DT_FLOAT && (useBetaSigmoid || betaType != ge::DT_BF16)) ||
         (logType != ge::DT_FLOAT && (arch22 || logType != ge::DT_BF16))) return fail();
     if (ctx.useGateInKernel) {
         for (size_t i : {INPUT_RAW_G}) {

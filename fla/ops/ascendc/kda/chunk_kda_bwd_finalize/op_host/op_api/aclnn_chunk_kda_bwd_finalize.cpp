@@ -96,8 +96,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
                     std::strcmp(outputLayout, rank3 ? "TND" : "BSND") == 0),
                ACLNN_ERR_PARAM_INVALID, "output_layout does not match input rank");
 #ifdef KDA_BWD_STAGES_ARCH22
-    CHECK_COND(beta->GetDataType() == DataType::DT_FLOAT && aLog->GetDataType() == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "A2/A3 requires FP32 beta_eff and a_log");
+    CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT,
+               ACLNN_ERR_PARAM_INVALID, "A2/A3 requires FP32 a_log");
 #endif
     CHECK_COND(!useBetaSigmoidInKernel || beta->GetDataType() == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "beta sigmoid backward requires saved FP32 beta_eff");

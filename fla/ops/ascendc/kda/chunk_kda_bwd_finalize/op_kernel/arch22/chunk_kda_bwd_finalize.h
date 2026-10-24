@@ -39,7 +39,7 @@ __aicore__ inline ChunkInfo ResolveChunk(const FinalizeTilingData &tiling, const
     return chunk;
 }
 
-template <bool Q_NORM>
+template <bool Q_NORM, typename BetaT>
 __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk, GM_ADDR vNew, GM_ADDR h,
                                          GM_ADDR dh, GM_ADDR dvScan, GM_ADDR beta, GM_ADDR dv, GM_ADDR q, GM_ADDR dqRaw,
                                          float scale, GM_ADDR dAqk, GM_ADDR dq, GM_ADDR qRstd, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
@@ -229,11 +229,11 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
         pipe.InitBuffer(ubBuf, UB_BYTES);
         auto ub = ubBuf.Get<uint8_t>();
         auto record = ub[85 * 1024].ReinterpretCast<int64_t>();
-        ChunkKdaBwdFinalizeVector vector;
+        ChunkKdaBwdFinalizeVector<BetaT> vector;
         if constexpr (LAST_STAGE >= 1) {
             vector.Init(k, gk, h, dh, workspace, ub, &pipe);
             if constexpr (LAST_STAGE >= 3) {
-                vector.InitStage3<COMPACT_MASK>(v, beta, dv);
+                vector.template InitStage3<COMPACT_MASK>(v, beta, dv);
             }
             if constexpr (LAST_STAGE >= 5) {
                 vector.InitStage5(q, dqRaw, scale);
@@ -264,10 +264,10 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                 if (head < tiling.heads) {
                     const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, chunkIndex);
                     if (chunk.validRows == CHUNK_SIZE) {
-                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5), true, (LAST_STAGE >= 5 && !CAPTURE)>(
+                        vector.template Stage1<CAPTURE, (LAST_STAGE >= 5), true, (LAST_STAGE >= 5 && !CAPTURE)>(
                             tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                     } else {
-                        vector.Stage1<CAPTURE, (LAST_STAGE >= 5), false, (LAST_STAGE >= 5 && !CAPTURE)>(
+                        vector.template Stage1<CAPTURE, (LAST_STAGE >= 5), false, (LAST_STAGE >= 5 && !CAPTURE)>(
                             tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                     }
                 }
@@ -285,10 +285,10 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                     if (previousHead < tiling.heads) {
                         const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, previousChunk);
                         if (chunk.validRows == CHUNK_SIZE) {
-                            vector.Stage3<CAPTURE, true, COMPACT_MASK>(
+                            vector.template Stage3<CAPTURE, true, COMPACT_MASK>(
                                 tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                         } else {
-                            vector.Stage3<CAPTURE, false, COMPACT_MASK>(
+                            vector.template Stage3<CAPTURE, false, COMPACT_MASK>(
                                 tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                         }
                     }
@@ -297,11 +297,11 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                         if (previousHead < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, previousChunk);
                             if (chunk.validRows == CHUNK_SIZE) {
-                                vector.Stage5<CAPTURE, true, !CAPTURE, (LAST_STAGE >= 11 && !CAPTURE && !Q_NORM),
+                                vector.template Stage5<CAPTURE, true, !CAPTURE, (LAST_STAGE >= 11 && !CAPTURE && !Q_NORM),
                                               (LAST_STAGE >= 11 && !CAPTURE)>(
                                     tiling, chunk, previousChunk, previousHead, owner, core, capture, bank ^ 1);
                             } else {
-                                vector.Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, previousChunk, previousHead,
+                                vector.template Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, previousChunk, previousHead,
                                                                         owner, core, capture, bank ^ 1);
                             }
                         }
@@ -309,7 +309,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S6_READY + (bank ^ 1));
                             if (previousHead < tiling.heads) {
                                 const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, previousChunk);
-                                vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, (LAST_STAGE >= 10),
+                                vector.template Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, (LAST_STAGE >= 10),
                                               (LAST_STAGE >= 11)>(tiling, chunk, previousChunk, previousHead, owner,
                                                                   core, capture, bank ^ 1);
                             } else if constexpr (LAST_STAGE >= 8) {
@@ -340,10 +340,10 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                     if (head < tiling.heads) {
                         const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, chunkIndex);
                         if (chunk.validRows == CHUNK_SIZE) {
-                            vector.Stage3<CAPTURE, true, COMPACT_MASK>(
+                            vector.template Stage3<CAPTURE, true, COMPACT_MASK>(
                                 tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                         } else {
-                            vector.Stage3<CAPTURE, false, COMPACT_MASK>(
+                            vector.template Stage3<CAPTURE, false, COMPACT_MASK>(
                                 tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                         }
                     }
@@ -352,11 +352,11 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                         if (head < tiling.heads) {
                             const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, chunkIndex);
                             if (chunk.validRows == CHUNK_SIZE) {
-                                vector.Stage5<CAPTURE, true, !CAPTURE, (LAST_STAGE >= 11 && !CAPTURE && !Q_NORM),
+                                vector.template Stage5<CAPTURE, true, !CAPTURE, (LAST_STAGE >= 11 && !CAPTURE && !Q_NORM),
                                               (LAST_STAGE >= 11 && !CAPTURE)>(
                                     tiling, chunk, chunkIndex, head, owner, core, capture, bank);
                             } else {
-                                vector.Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, chunkIndex, head, owner, core,
+                                vector.template Stage5<CAPTURE, false, !CAPTURE>(tiling, chunk, chunkIndex, head, owner, core,
                                                                         capture, bank);
                             }
                         }
@@ -364,7 +364,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(S6_READY + bank);
                             if (head < tiling.heads) {
                                 const ChunkInfo chunk = ResolveChunk(tiling, cu, indices, chunkIndex);
-                                vector.Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, (LAST_STAGE >= 10),
+                                vector.template Stage7<CAPTURE, (LAST_STAGE >= 8), (LAST_STAGE >= 9), Q_NORM, (LAST_STAGE >= 10),
                                               (LAST_STAGE >= 11)>(tiling, chunk, chunkIndex, head, owner, core, capture,
                                                                   bank);
                             } else if constexpr (LAST_STAGE >= 8) {

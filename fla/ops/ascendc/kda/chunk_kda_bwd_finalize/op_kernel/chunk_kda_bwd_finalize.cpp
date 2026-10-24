@@ -32,12 +32,12 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
         reinterpret_cast<uint64_t>(dALog), reinterpret_cast<uint64_t>(dDtBias),
         t.lowerBound, t.betaMode};
     if (TILING_KEY_IS(101)) {
-        KDA::Arch22::RunFinalize<false>(
+        KDA::Arch22::RunFinalize<false, DTYPE_BETA>(
             k, v, gk, akk, vNew, h, dh, dvScan, beta, dv, q, dqRaw,
             t.scale, dAqk, dq, qRstd, cuSeqlens, chunkIndices,
             userWorkspace, nullptr, nullptr, t, tail);
     } else if (TILING_KEY_IS(102)) {
-        KDA::Arch22::RunFinalize<true>(
+        KDA::Arch22::RunFinalize<true, DTYPE_BETA>(
             k, v, gk, akk, vNew, h, dh, dvScan, beta, dv, q, dqRaw,
             t.scale, dAqk, dq, qRstd, cuSeqlens, chunkIndices,
             userWorkspace, nullptr, nullptr, t, tail);
