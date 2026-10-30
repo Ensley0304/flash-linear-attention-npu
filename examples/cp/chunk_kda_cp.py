@@ -2,7 +2,7 @@
 """KDA forward/backward: no CP, AllGather, or PTP (recursive doubling).
 
 A2/A3, B=1, Hk=Hv, K=V=128, BF16 QKV, FP32 gate/beta, chunk_size=64.
-Contiguous equal token shards; packed sequences reset at global boundaries.
+Equal contiguous or zigzag token shards; packed sequences reset at global boundaries.
 QK L2Norm, beta sigmoid and gate are fused; intermediates are saved (no recompute).
 Explicit backward calls, no autograd wrapper or external state/state loss.
 
@@ -29,6 +29,7 @@ def parse_args(argv=None):
     parser.add_argument("--communication", choices=("none", "allgather", "ptp"), default="allgather")
     parser.add_argument("--tokens", type=int, default=256, help="global token count")
     parser.add_argument("--heads", type=int, default=2)
+    parser.add_argument("--partition", choices=("contiguous", "zigzag"), default="contiguous")
     parser.add_argument("--cu-seqlens", help="global packed offsets, e.g. 0,130,256")
     parser.add_argument("--seed", type=int, default=20261010)
     parser.add_argument("--device", type=int)
@@ -46,15 +47,18 @@ def parse_args(argv=None):
     parser.add_argument("--boundary-tol", type=float, default=0.02)
     args = parser.parse_args(argv)
     world = int(os.environ.get("WORLD_SIZE", "1"))
-    if args.tokens <= 0 or args.tokens % world:
-        parser.error("tokens must be positive and divisible by WORLD_SIZE")
-    if not 1 <= args.heads <= 128 or args.warmup < 0 or args.iterations < 1:
-        parser.error("heads must be in [1,128], warmup >= 0, iterations >= 1")
+    parts = world * (2 if args.partition == "zigzag" else 1)
+    if world < 1 or args.tokens < parts or args.tokens % parts:
+        parser.error("tokens must be at least and divisible by WORLD_SIZE (2*WORLD_SIZE for zigzag)")
+    if args.heads < 1 or args.warmup < 0 or args.iterations < 1:
+        parser.error("heads must be positive, warmup >= 0, iterations >= 1")
     if min(args.output_tol, args.grad_tol, args.gate_tol, args.boundary_tol) <= 0:
         parser.error("tolerances must be positive")
     if world > 1 and (args.communication == "none" or args.device is not None
                       or args.cpu_reference_only or args.save_result is not None):
         parser.error("none/device/cpu-reference-only/save-result require a single process")
+    if args.communication == "none" and args.partition != "contiguous":
+        parser.error("--partition applies to CP; use contiguous for the no-CP reference")
     if args.profile and args.output_dir is None:
         parser.error("--profile requires --output-dir")
     if (args.accuracy_check or args.cpu_reference_only) and args.tokens * args.heads > 8192:
@@ -68,6 +72,25 @@ def parse_args(argv=None):
             or any(b < a for a, b in zip(args.cu, args.cu[1:]))):
         parser.error("cu-seqlens must be nondecreasing from 0 to tokens")
     return args
+
+
+def build_partition(cu, tokens, rank, world, partition):
+    """Match FLA's equal intervals and local [front; back] order for zigzag."""
+    num_parts = world * (2 if partition == "zigzag" else 1)
+    part_len = tokens // num_parts
+    slots = [rank] if partition == "contiguous" else [rank, num_parts - 1 - rank]
+    plan = dict(rank=rank, world=world, num_parts=num_parts, part_len=part_len, cu=[0], parts=[])
+    for i, slot in enumerate(slots):
+        lo, hi = slot * part_len, (slot + 1) * part_len
+        segments = [(a, b) for a, b in zip(cu, cu[1:]) if a < hi and b > lo and b > a]
+        first = len(plan["cu"]) - 1
+        plan["cu"].extend(i * part_len + min(b, hi) - lo for a, b in segments)
+        plan["parts"].append(dict(slot=slot, lo=lo, hi=hi, first=first, last=len(plan["cu"]) - 2,
+                                  prefix=slot - segments[0][0] // part_len,
+                                  suffix=(segments[-1][1] - 1) // part_len - slot))
+    plan["indices"] = [value for seq, (a, b) in enumerate(zip(plan["cu"], plan["cu"][1:]))
+                       for chunk in range((b - a + 63) // 64) for value in (seq, chunk)]
+    return plan
 
 
 def make_inputs(tokens, heads, seed, lo=0, hi=None, device="cpu"):
@@ -125,62 +148,80 @@ def recurrent_reference(inputs, cu, local_tokens):
     return result, [s.detach() for s in boundaries], dstates
 
 
-def exchange_boundary(summary, plan, *, forward, communication):
+def exchange_boundary(summaries, plan, *, forward, communication):
     """Summary [E | M] maps H -> M @ H + E. Return only same-sequence state.
 
     PTP follows issue #4 section 4.6: inclusive P is sent, exclusive E is local.
     Every round sends the OLD P; compositions use fresh buffers. Reverse backward
-    rank order, but keep the same matrix multiplication order. A packed reset
+    interval order, but keep the same matrix multiplication order. A packed reset
     zeroes outgoing M, so earlier sequences cannot leak through the scan.
     """
-    rank, world = plan["rank"], plan["world"]
-    count = plan["prefix" if forward else "suffix"]
-    states = summary.new_zeros((len(plan["cu"]) - 1, summary.shape[0], 128, 128))
+    world, num_parts = plan["world"], plan["num_parts"]
+    parts = plan["parts"]
+    states = summaries.new_zeros((len(plan["cu"]) - 1, summaries.shape[1], 128, 128))
     if communication == "allgather":
         from fla_npu.ops.ascendc import merge_fwd_bwd_kernel
-        gathered = [torch.empty_like(summary) for _ in range(world)]
-        dist.all_gather(gathered, summary.contiguous())
-        if count:
-            merge_fwd_bwd_kernel(
-                states[0 if forward else -1], torch.stack(gathered), count, rank,
-                forward=forward, state_v_first=False,
-            )
+        gathered = [torch.empty_like(summaries) for _ in range(world)]
+        dist.all_gather(gathered, summaries.contiguous())
+        gathered = torch.stack(gathered)
+        # Global sequence order is fronts ascending, then backs descending.
+        chain = (gathered[:, 0].contiguous() if len(parts) == 1
+                 else torch.cat((gathered[:, 0], gathered[:, 1].flip(0))))
+        for part in parts:
+            count = part["prefix" if forward else "suffix"]
+            if count:
+                merge_fwd_bwd_kernel(
+                    states[part["first" if forward else "last"]], chain, count, part["slot"],
+                    forward=forward, state_v_first=False,
+                )
     elif communication == "ptp":
-        logical_rank = rank if forward else world - 1 - rank
-        inclusive = summary.contiguous()
-        if len(plan["cu"]) > 2 or count == 0:
-            inclusive = inclusive.clone()
-            inclusive[..., 128:].zero_()
-        exclusive = None  # identity map; first received prefix can be used directly
+        # Logical order follows the scan direction; zigzag puts two nodes on each rank.
+        slots = [p["slot"] if forward else num_parts - 1 - p["slot"] for p in parts]
+        owners = list(range(world)) if len(parts) == 1 else list(range(world)) + list(range(world - 1, -1, -1))
+        if not forward:
+            owners.reverse()
+        inclusive = {slot: summaries[i].clone() for i, slot in enumerate(slots)}
+        exclusive = {slot: None for slot in slots}
+        for slot, part in zip(slots, parts):
+            if part["first"] != part["last"] or part["prefix" if forward else "suffix"] == 0:
+                inclusive[slot][..., 128:].zero_()
         distance = 1
-        while distance < world:
-            received = torch.empty_like(inclusive) if logical_rank >= distance else None
+        while distance < num_parts:
+            received = {}
             operations = []
-            if logical_rank + distance < world:
-                peer = rank + distance if forward else rank - distance
-                operations.append(dist.P2POp(dist.isend, inclusive, peer))
-            if received is not None:
-                peer = rank - distance if forward else rank + distance
-                operations.append(dist.P2POp(dist.irecv, received, peer))
+            # Sort by global edge to match repeated messages between the same peers
+            # without transport tags. Same-rank edges use the OLD local snapshot.
+            edges = {(slot, slot + distance) for slot in slots if slot + distance < num_parts}
+            edges.update((slot - distance, slot) for slot in slots if slot >= distance)
+            for source, target in sorted(edges):
+                if source in inclusive and target in inclusive:
+                    received[target] = inclusive[source]
+                elif source in inclusive:
+                    operations.append(dist.P2POp(dist.isend, inclusive[source], owners[target]))
+                else:
+                    received[target] = torch.empty_like(inclusive[target])
+                    operations.append(dist.P2POp(dist.irecv, received[target], owners[source]))
             if operations:
                 for request in dist.batch_isend_irecv(operations):
                     request.wait()
-            if received is not None:
+            updated = inclusive.copy()
+            for slot, earlier in received.items():
                 # compose(earlier, later) = [M_later E_earlier + E_later | M_later M_earlier]
-                # Final inclusive maps with no subsequent sender are unused.
-                if logical_rank + 2 * distance < world:
-                    merged = torch.bmm(inclusive[..., 128:].contiguous(), received)
-                    merged[..., :128].add_(inclusive[..., :128])
-                    inclusive = merged
-                if exclusive is None:
-                    exclusive = received
+                if slot + 2 * distance < num_parts:
+                    merged = torch.bmm(inclusive[slot][..., 128:].contiguous(), earlier)
+                    merged[..., :128].add_(inclusive[slot][..., :128])
+                    updated[slot] = merged
+                if exclusive[slot] is None:
+                    exclusive[slot] = earlier
                 else:
-                    merged = torch.bmm(exclusive[..., 128:].contiguous(), received)
-                    merged[..., :128].add_(exclusive[..., :128])
-                    exclusive = merged
+                    merged = torch.bmm(exclusive[slot][..., 128:].contiguous(), earlier)
+                    merged[..., :128].add_(exclusive[slot][..., :128])
+                    exclusive[slot] = merged
+            inclusive = updated
             distance *= 2
-        if count:
-            states[0 if forward else -1].copy_(exclusive[..., :128])
+        for slot, part in zip(slots, parts):
+            if part["prefix" if forward else "suffix"]:
+                states[part["first" if forward else "last"]].copy_(exclusive[slot][..., :128])
     else:
         raise ValueError("boundary exchange requires allgather or ptp")
     # FwdH selects recurrent-state precision from h0: preserve FP32.
@@ -222,12 +263,13 @@ def run_kda(x, plan, communication):
             backward_mode="save", **gate_options,
         )
         gk, aqk, akk, w, u, qg, kg, qgs, qhat, khat, qr, kr, beta_eff = saved
-        summary = q.new_zeros((q.shape[1], 128, 256), dtype=torch.float32)
-        if plan["suffix"]:
-            summary = op.pre_process_fwd_kernel_merged(
-                kg, w, u, gk=gk, cu_seqlens=cu[-2:], chunk_size=64,
-            )[0]
-        h0 = exchange_boundary(summary, plan, forward=True, communication=communication)
+        summaries = q.new_zeros((len(plan["parts"]), q.shape[1], 128, 256), dtype=torch.float32)
+        for i, part in enumerate(plan["parts"]):
+            if part["suffix"]:
+                summaries[i] = op.pre_process_fwd_kernel_merged(
+                    kg, w, u, gk=gk, cu_seqlens=cu[part["last"]:part["last"] + 2], chunk_size=64,
+                )[0]
+        h0 = exchange_boundary(summaries, plan, forward=True, communication=communication)
         h, vn, _ = op.chunk_fwd_h(
             kg, w, u, gk=gk, initial_state=h0, cu_seqlens=cu,
             save_new_value=True, output_final_state=False, use_exp2=True,
@@ -237,13 +279,15 @@ def run_kda(x, plan, communication):
         da, dv_local, dq_raw = op.chunk_kda_bwd_prepare(
             aqk, vn, do, h, scale=scale, layout="BNSD", cu_seqlens=cu,
         )
-        summary = q.new_zeros((q.shape[1], 128, 256), dtype=torch.float32)
-        if plan["prefix"]:
-            summary = op.pre_process_bwd_kernel_merged(
-                qg, kg, w, do, dv_local, scale, 64,
-                gk=gk.to(q.dtype), cu_seqlens=cu[:2],
-            )
-        dht = exchange_boundary(summary, plan, forward=False, communication=communication)
+        summaries = q.new_zeros((len(plan["parts"]), q.shape[1], 128, 256), dtype=torch.float32)
+        gk_bwd = gk.to(q.dtype)
+        for i, part in enumerate(plan["parts"]):
+            if part["prefix"]:
+                summaries[i] = op.pre_process_bwd_kernel_merged(
+                    qg, kg, w, do, dv_local, scale, 64,
+                    gk=gk_bwd, cu_seqlens=cu[part["first"]:part["first"] + 2],
+                )
+        dht = exchange_boundary(summaries, plan, forward=False, communication=communication)
         dh, _, dv_scan = op.chunk_gated_delta_rule_bwd_dhu(
             qg, kg, w, do, dv_local, scale, 64, gK=gk, dht=dht,
             cu_seqlens=cu, chunk_indices=plan["indices"], use_exp2=True,
@@ -270,16 +314,11 @@ def main(argv=None):
     args = parse_args(argv)
     torch.set_num_threads(1)
     rank, world = int(os.environ.get("RANK", "0")), int(os.environ.get("WORLD_SIZE", "1"))
-    local_tokens = args.tokens // world
-    lo, hi = rank * local_tokens, (rank + 1) * local_tokens
-    segments = [(a, b) for a, b in zip(args.cu, args.cu[1:]) if a < hi and b > lo and b > a]
-    plan = dict(rank=rank, world=world, cu=[0] + [min(b, hi) - lo for a, b in segments],
-                prefix=rank - segments[0][0] // local_tokens,
-                suffix=(segments[-1][1] - 1) // local_tokens - rank)
-    plan["indices"] = [value for seq, (a, b) in enumerate(zip(plan["cu"], plan["cu"][1:]))
-                       for chunk in range((b - a + 63) // 64) for value in (seq, chunk)]
+    plan = build_partition(args.cu, args.tokens, rank, world, args.partition)
+    first = plan["parts"][0]
+    lo, hi = first["lo"], first["hi"]
     if args.cpu_reference_only:
-        result, _, _ = recurrent_reference(make_inputs(args.tokens, args.heads, args.seed), args.cu, local_tokens)
+        result, _, _ = recurrent_reference(make_inputs(args.tokens, args.heads, args.seed), args.cu, plan["part_len"])
         assert all(torch.isfinite(t).all() for t in result.values())
         print("CPU reference PASS; no NPU operators executed")
         return 0
@@ -302,7 +341,14 @@ def main(argv=None):
         output_dir.mkdir(parents=True, exist_ok=True)
     try:
         x = make_inputs(args.tokens, args.heads, args.seed, lo, hi, f"npu:{device_id}")
+        if args.partition == "zigzag":
+            back = plan["parts"][1]
+            y = make_inputs(args.tokens, args.heads, args.seed, back["lo"], back["hi"], f"npu:{device_id}")
+            for name in x.keys() - {"A_log", "dt_bias"}:
+                x[name] = torch.cat((x[name], y[name]), dim=2)
+            del y
         metadata = dict(communication=args.communication, rank=rank, world=world, tokens=args.tokens,
+                        partition=args.partition,
                         heads=args.heads, cu_seqlens=args.cu, seed=args.seed, disable_recompute=True,
                         device=device_name, torch=str(torch.__version__), torch_npu=str(torch_npu.__version__),
                         package=fla_npu.__file__, local_plan={k: v for k, v in plan.items() if k != "indices"})
@@ -315,7 +361,7 @@ def main(argv=None):
             reference = None
             if args.accuracy_check:
                 reference, states, dstates = recurrent_reference(
-                    make_inputs(args.tokens, args.heads, args.seed), args.cu, local_tokens,
+                    make_inputs(args.tokens, args.heads, args.seed), args.cu, plan["part_len"],
                 )
             elif args.reference:
                 payload = torch.load(args.reference, map_location="cpu", weights_only=True, mmap=True)
@@ -324,15 +370,17 @@ def main(argv=None):
                         raise ValueError(f"reference input mismatch: {name}")
                 reference = payload["outputs"]
             if reference is not None:
-                reference = {n: t if n in ("dA_log", "ddt_bias") else t[:, lo:hi]
+                reference = {n: t if n in ("dA_log", "ddt_bias") else
+                             torch.cat([t[:, p["lo"]:p["hi"]] for p in plan["parts"]], dim=1)
                              for n, t in reference.items() if n not in ("h0", "dht")}
                 if args.accuracy_check and args.communication != "none":
                     boundary = torch.zeros_like(actual["h0"], device="cpu")
                     terminal = torch.zeros_like(actual["dht"], device="cpu")
-                    if plan["prefix"]:
-                        boundary[0] = states[rank][0]
-                    if plan["suffix"]:
-                        terminal[-1] = dstates[rank + 1][0]
+                    for part in plan["parts"]:
+                        if part["prefix"]:
+                            boundary[part["first"]] = states[part["slot"]][0]
+                        if part["suffix"]:
+                            terminal[part["last"]] = dstates[part["slot"] + 1][0]
                     reference.update(h0=boundary, dht=terminal)
                 for name, expected in reference.items():
                     value, expected = actual[name].float().cpu(), expected.float().contiguous()
