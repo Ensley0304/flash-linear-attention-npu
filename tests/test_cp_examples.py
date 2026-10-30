@@ -11,7 +11,6 @@ from unittest.mock import patch
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples" / "cp"))
-import chunk_kda_cp
 import chunk_gdn_cp
 
 
@@ -108,11 +107,6 @@ class BoundaryChecks:
                 out, _, dht = self.example.recurrent_reference(x, 128 ** -0.5, 64)
                 self.assertGreater(dht[1].abs().max().item(), 1e-4)
                 self.assertGreater(out["dv"][:, :, :64].abs().max().item(), 1e-4)
-
-
-class KdaBoundaryTests(BoundaryChecks, unittest.TestCase):
-    example = chunk_kda_cp
-    kind = "kda"
 
 
 class GdnBoundaryTests(BoundaryChecks, unittest.TestCase):

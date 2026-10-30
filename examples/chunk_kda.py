@@ -106,6 +106,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--demo-model", action="store_true", default=False)
     parser.add_argument("--legacy-unfused-core", action="store_true", default=False)
     parser.add_argument("--accuracy-check", action="store_true", default=False)
+    parser.add_argument("--check-finite", action="store_true", default=False,
+                        help="任一前向输出出现非有限值即失败（尾块 workspace 看护）")
+    parser.add_argument("--empty-seq-guard", action="store_true", default=False,
+                        help="同一输入去掉零长度序列后重跑，o/u/v_new 必须逐字节一致")
+    parser.add_argument("--forward-only", action="store_true", default=False,
+                        help="只跑前向（配合 --check-finite / --empty-seq-guard 使用）")
     parser.add_argument("--accuracy-tensors", default=",".join(ACCURACY_TENSORS))
     parser.add_argument("--accuracy-output-tol", type=float,
                         default=DEFAULT_TOLERANCES["output_tol"])
@@ -401,6 +407,59 @@ def run_once(args: argparse.Namespace) -> int:
         torch.npu.synchronize()
     (o, final_state, gk, aqk, akk, w, u, qg, kg, v_new, hstate, _initial) = outputs
 
+    if args.check_finite:
+        # 尾块 workspace 越界会先污染 u/v_new/h，再传导到 attn_out；这里对前向全部
+        # 可见输出做有限性判定，任一非有限值即失败，避免它被后续 smoke 输出掩盖。
+        named_outputs = (
+            ("o", o), ("gk", gk), ("Aqk", aqk), ("Akk", akk), ("w", w),
+            ("u", u), ("qg", qg), ("kg", kg), ("v_new", v_new), ("h", hstate),
+        )
+        nonfinite = {}
+        for name, tensor in named_outputs:
+            if tensor is None:
+                continue
+            bad = int((~torch.isfinite(tensor.float())).sum().item())
+            if bad:
+                nonfinite[name] = bad
+        if nonfinite:
+            print(f"finite check failed: {nonfinite}", file=sys.stderr)
+            return 1
+        print("finite check passed", flush=True)
+
+    if args.empty_seq_guard:
+        # 零长度序列不贡献 chunk，但会占用 fwd_h 调度器的任务槽；同一份输入去掉
+        # 这些空槽后结果必须逐字节一致，否则说明调度器丢了真实任务。
+        if not packed or cu is None:
+            raise ValueError("--empty-seq-guard requires packed input with --cu-seqlens")
+        dedup = [value for index, value in enumerate(cu)
+                 if index == 0 or value > cu[index - 1]]
+        if len(dedup) == len(cu):
+            print("empty seq guard: --cu-seqlens has no zero-length sequence",
+                  file=sys.stderr)
+            return 2
+        guard_kwargs = dict(fwd_kwargs)
+        guard_kwargs["cu_seqlens"] = tuple(dedup)
+        guard_kwargs["chunk_indices"] = None
+        guard_outputs = chunk_kda_fwd(
+            q_op, k_op, v_op, g_op, beta_op, scale, args.chunk_size, **guard_kwargs)
+        if torch_npu is not None and device.type == "npu":
+            torch.npu.synchronize()
+        baseline = {"o": o, "u": u, "v_new": v_new}
+        guard = {"o": guard_outputs[0], "u": guard_outputs[6],
+                 "v_new": guard_outputs[9]}
+        mismatched = []
+        for name, expected in baseline.items():
+            if not bool(torch.equal(guard[name], expected)):
+                diff = (guard[name].float() - expected.float()).abs()
+                print(f"empty seq guard mismatch: {name} count="
+                      f"{int((diff > 0).sum().item())} max_abs="
+                      f"{float(diff.max().item()):.6g}", flush=True)
+                mismatched.append(name)
+        if mismatched:
+            print(f"empty seq guard failed: {', '.join(mismatched)}", file=sys.stderr)
+            return 1
+        print(f"empty seq guard passed (cu_seqlens={list(cu)} -> {dedup})", flush=True)
+
     if args.qk_l2norm:
         q_ref = q.float()
         expect_bsnd = torch.rsqrt(q_ref.square().sum(-1) + 1e-6)  # [B,T,H]
@@ -413,55 +472,32 @@ def run_once(args: argparse.Namespace) -> int:
             print("q_rstd 校验失败", file=sys.stderr)
             return 2
 
-    # 反向：用前向保存量算梯度。反向的 q/k/v/beta 一律是 head-major
-    # （dense 为 [B,H,T,D]、packed 为 [H,T,D]），与前向的公开输入布局不同。
-    def to_head_major(x: torch.Tensor, is_beta: bool = False) -> torch.Tensor:
-        if packed:
-            return x.contiguous()
-        # 反向要求连续张量（permute 视图会被 optimized 路径拒绝）。
-        return (x.permute(0, 2, 1) if is_beta else x.permute(0, 2, 1, 3)).contiguous()
+    if args.forward_only:
+        print(f"{args.case_name}: forward-only OK "
+              f"(o absmax={o.detach().float().abs().max().item():.6g})", flush=True)
+        return 0
+
+    # 反向单 layout：模型量 token-major，前向缓存 head-major。
+    bwd_layout = "TND" if packed else "BSND"
+    def model_token(x: torch.Tensor) -> torch.Tensor:
+        return x.reshape(batch * tokens, *x.shape[2:]).contiguous() if packed else x.contiguous()
 
     grad_out = torch.ones_like(o)
-    # 反向 d_o 恒为 head-major：dense [B,H,T,V]、packed [H,T,V]。
-    grad_out = (grad_out.permute(1, 0, 2) if packed
-                else grad_out.permute(0, 2, 1, 3)).contiguous()
     bwd_kwargs = dict(
-        raw_g=to_head_major(g_op),
-        A_log=tensors["A_log"],
+        raw_g=model_token(g), A_log=tensors["A_log"],
         dt_bias=tensors["dt_bias"].reshape(hv, kd),
-        initial_state=None,
-        dht=None,
-        cu_seqlens=cu,
-        chunk_indices=None,
-        chunk_size=args.chunk_size,
-        safe_gate=True,
-        lower_bound=args.lower_bound,
-        use_gate_in_kernel=True,
-        disable_recompute=True,
-        use_exp2=True,
-        state_v_first=False,
+        cu_seqlens=cu, chunk_indices=None, chunk_size=args.chunk_size,
+        safe_gate=True, lower_bound=args.lower_bound, use_gate_in_kernel=True,
+        disable_recompute=True, use_exp2=True, state_v_first=False, layout=bwd_layout,
     )
-    # optimized（kernel 内 L2Norm 回代）反向只在 A5 可用；A2/A3 上退到 fused 反向，
-    # 由脚本按上游 `l2norm_bwd` 手工回代到原始 q/k。
-    use_optimized_bwd = bool(args.qk_l2norm) and kda_bwd_optimized_supported(device)
     if args.qk_l2norm:
         bwd_q, bwd_k = saved["q_hat"], saved["k_hat"]
-        if use_optimized_bwd:
-            bwd_kwargs.update(q_rstd=saved["q_rstd"], k_rstd=saved["k_rstd"])
+        bwd_kwargs.update(q_rstd=saved["q_rstd"], k_rstd=saved["k_rstd"])
     else:
-        bwd_q, bwd_k = to_head_major(q_op), to_head_major(k_op)
-    if args.qk_l2norm:
-        print(f"[info] backward path: "
-              f"{'optimized (in-kernel L2Norm)' if use_optimized_bwd else 'fused + l2norm_bwd'}; "
-              f"device={device}", flush=True)
-    bwd_v = to_head_major(v_op)
-    bwd_beta = to_head_major(beta_op, is_beta=True)
+        bwd_q, bwd_k = model_token(q), model_token(k)
     dq, dk, dv, dbeta, dg, _dh0, _da, _dbias = chunk_kda_bwd(
-        bwd_q, bwd_k, bwd_v, bwd_beta, gk, aqk, akk, w, qg, kg, v_new, hstate,
-        grad_out, scale, **bwd_kwargs)
-    if args.qk_l2norm and not use_optimized_bwd:
-        dq = l2norm_bwd(dq, to_head_major(q_op), saved["q_rstd"])
-        dk = l2norm_bwd(dk, to_head_major(k_op), saved["k_rstd"])
+        bwd_q, bwd_k, model_token(v), model_token(beta), gk, aqk, akk,
+        w, qg, kg, v_new, hstate, grad_out, scale, **bwd_kwargs)
     if torch_npu is not None and device.type == "npu":
         torch.npu.synchronize()
 
@@ -486,24 +522,12 @@ def run_once(args: argparse.Namespace) -> int:
     grads = torch.autograd.grad(loss, [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
     ref_dq, ref_dk, ref_dv, ref_dbeta, ref_dg_raw = grads
 
-    def to_bsnd(tensor: torch.Tensor, is_beta: bool = False) -> torch.Tensor:
-        # 反向输出恒为 head-major（dense [B,H,T,D] / packed [H,T,D]），
-        # 与参考的 BSND 口径对比时要转回来。
-        if not packed:
-            return (tensor.permute(0, 2, 1) if is_beta
-                    else tensor.permute(0, 2, 1, 3))
-        unflat = tensor.permute(1, 0) if is_beta else tensor.permute(1, 0, 2)
-        return unflat.reshape(batch, tokens, *unflat.shape[1:])
+    # layout=BSND/TND，五个 Token 梯度已是模型顺序。
+    def to_bsnd(x: torch.Tensor) -> torch.Tensor:
+        return x.detach().reshape(batch, tokens, *x.shape[1:]) if packed else x.detach()
 
-    # 前向 attn_out 恒为 sequence-major（dense BSND / packed TND），无需转置；
-    # 反向输出是 head-major，需要用 to_bsnd 转回 BSND。
-    o_bsnd = (o.detach().reshape(batch, tokens, *o.shape[1:]) if packed
-              else o.detach())
-    dq_bsnd = to_bsnd(dq.detach())
-    dk_bsnd = to_bsnd(dk.detach())
-    dv_bsnd = to_bsnd(dv.detach())
-    dbeta_bsnd = to_bsnd(dbeta.detach(), is_beta=True)
-    dg_bsnd = to_bsnd(dg.detach())
+    o_bsnd = to_bsnd(o)
+    dq_bsnd, dk_bsnd, dv_bsnd, dbeta_bsnd, dg_bsnd = map(to_bsnd, (dq, dk, dv, dbeta, dg))
 
     if args.qk_l2norm:
         # 反向返回的是对归一化 q/k 的梯度，参考也按同样口径（leaves 即归一化后的 q/k）。
