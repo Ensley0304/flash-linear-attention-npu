@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """KDA forward/backward: no CP, AllGather, or PTP (recursive doubling).
 
-A2/A3, B=1, Hk=Hv, K=V=128, BF16 QKV, FP32 gate/beta, chunk_size=64.
+A2/A3/A5, B=1, Hk=Hv, K=V=128, BF16 QKV, FP32 gate/beta, chunk_size=64.
 Equal contiguous or zigzag token shards; packed sequences reset at global boundaries.
-QK L2Norm, beta sigmoid and gate are fused; intermediates are saved (no recompute).
+QK L2Norm and gate are fused; A5 uses an external beta sigmoid and its derivative.
+Intermediates are saved (no recompute); A2/A3 default to fused beta sigmoid.
 Explicit backward calls, no autograd wrapper or external state/state loss.
 
 python examples/cp/chunk_kda_cp.py --communication none --accuracy-check
@@ -30,6 +31,8 @@ def parse_args(argv=None):
     parser.add_argument("--tokens", type=int, default=256, help="global token count")
     parser.add_argument("--heads", type=int, default=2)
     parser.add_argument("--partition", choices=("contiguous", "zigzag"), default="contiguous")
+    parser.add_argument("--beta-sigmoid", choices=("auto", "fused", "external"), default="auto",
+                        help="auto: fused on A2/A3, external forward and backward on A5")
     parser.add_argument("--cu-seqlens", help="global packed offsets, e.g. 0,130,256")
     parser.add_argument("--seed", type=int, default=20261010)
     parser.add_argument("--device", type=int)
@@ -229,37 +232,40 @@ def exchange_boundary(summaries, plan, *, forward, communication):
     return states if forward else states.bfloat16()
 
 
-def run_kda(x, plan, communication):
+def run_kda(x, plan, communication, *, fuse_beta_sigmoid=True):
     """Keep the forward/backward operator chain visible in one place."""
     from fla_npu.ops import ascendc as op
     q, k, v, g, beta, do = (x[n] for n in ("q", "k", "v", "g", "beta", "do"))
+    # A5 Finalize returns d(beta_eff); sigmoid's chain rule is applied below.
+    beta_input = beta if fuse_beta_sigmoid else beta.sigmoid()
     cu, scale = plan["cu"], 128 ** -0.5
     gate_options = dict(safe_gate=True, lower_bound=-5.0, use_gate_in_kernel=True,
                         A_log=x["A_log"], dt_bias=x["dt_bias"].flatten(), use_exp2=True,
-                        use_qk_l2norm_in_kernel=True, use_beta_sigmoid_in_kernel=True)
+                        use_qk_l2norm_in_kernel=True, use_beta_sigmoid_in_kernel=fuse_beta_sigmoid)
     if communication == "none":
         qhat, khat = torch.empty_like(q), torch.empty_like(k)
         qr, kr, beta_eff = (torch.empty(q.shape[:-1], device=q.device, dtype=torch.float32)
                             for _ in range(3))
         o, _, gk, aqk, akk, w, u, qg, kg, vn, h, _ = op.chunk_kda_fwd(
-            q, k, v, g, beta, scale, layout="BNSD", cu_seqlens=cu,
+            q, k, v, g, beta_input, scale, layout="BNSD", cu_seqlens=cu,
             disable_recompute=True, q_hat_out=qhat, k_hat_out=khat,
             q_rstd_out=qr, k_rstd_out=kr, beta_eff_out=beta_eff, **gate_options,
         )
         # PR #993: qhat/khat and saved caches stay head-major; layout controls v/dq/dk/dv.
-        # do/raw_g/original beta are ALWAYS token-major; beta_eff is FP32 head-major.
+        # do/raw_g/beta are ALWAYS token-major; the fused sigmoid cache is FP32 head-major.
         dq, dk, dv, db, dg, _, dA, dbias = op.chunk_kda_bwd(
-            qhat, khat, v.transpose(1, 2).contiguous(), beta.transpose(1, 2).contiguous(),
+            qhat, khat, v.transpose(1, 2).contiguous(), beta_input.transpose(1, 2).contiguous(),
             gk, aqk, akk, w, qg, kg, vn, h, do.transpose(1, 2).contiguous(), scale,
             raw_g=g.transpose(1, 2).contiguous(), A_log=x["A_log"], dt_bias=x["dt_bias"],
-            q_rstd=qr, k_rstd=kr, beta_eff=beta_eff, layout="BSND", cu_seqlens=cu,
+            q_rstd=qr, k_rstd=kr, beta_eff=beta_eff if fuse_beta_sigmoid else None,
+            layout="BSND", cu_seqlens=cu,
             safe_gate=True, lower_bound=-5.0, use_gate_in_kernel=True,
-            use_beta_sigmoid_in_kernel=True, disable_recompute=True, use_exp2=True,
+            use_beta_sigmoid_in_kernel=fuse_beta_sigmoid, disable_recompute=True, use_exp2=True,
         )
         h0 = dht = None
     else:
         saved = op.chunk_kda_fwd_prepare(
-            q, k, v, g, beta, scale, layout="BNSD", cu_seqlens=cu,
+            q, k, v, g, beta_input, scale, layout="BNSD", cu_seqlens=cu,
             backward_mode="save", **gate_options,
         )
         gk, aqk, akk, w, u, qg, kg, qgs, qhat, khat, qr, kr, beta_eff = saved
@@ -275,10 +281,13 @@ def run_kda(x, plan, communication):
             save_new_value=True, output_final_state=False, use_exp2=True,
         )
         o = op.chunk_kda_fwd_finalize(qgs, aqk, vn, h, cu_seqlens=cu, output_layout="BSND")
-        # Small Prepare's layout applies to ALL three token inputs, not only do.
+        # B=1: NTD is a view, and is A5 Prepare's supported variable-length layout.
+        # Its layout applies to ALL token inputs; the state also drops its batch axis.
         da, dv_local, dq_raw = op.chunk_kda_bwd_prepare(
-            aqk, vn, do, h, scale=scale, layout="BNSD", cu_seqlens=cu,
+            aqk.squeeze(0), vn.squeeze(0), do.squeeze(0), h.squeeze(0),
+            scale=scale, layout="NTD", cu_seqlens=cu,
         )
+        da, dv_local, dq_raw = (t.unsqueeze(0) for t in (da, dv_local, dq_raw))
         summaries = q.new_zeros((len(plan["parts"]), q.shape[1], 128, 256), dtype=torch.float32)
         gk_bwd = gk.to(q.dtype)
         for i, part in enumerate(plan["parts"]):
@@ -299,11 +308,14 @@ def run_kda(x, plan, communication):
             akk, vn, h, dh, dv_scan, da, dq_raw, scale=scale,
             q_rstd=qr, k_rstd=kr, cu_seqlens=cu, output_layout="BSND",
             safe_gate=True, lower_bound=-5.0, use_gate_in_kernel=True,
-            use_beta_sigmoid_in_kernel=True, use_exp2=True,
+            use_beta_sigmoid_in_kernel=fuse_beta_sigmoid, use_exp2=True,
         )
         if plan["world"] > 1:
             dist.all_reduce(dA)  # shared parameters: sum, never average
             dist.all_reduce(dbias)
+    if not fuse_beta_sigmoid:
+        effective = beta_input.transpose(1, 2)  # db is BSN; beta_input is BNS.
+        db = db * effective * (1.0 - effective)
     result = dict(o=o, dq=dq, dk=dk, dv=dv, dbeta=db, dg=dg, dA_log=dA, ddt_bias=dbias)
     if h0 is not None:
         result.update(h0=h0, dht=dht)
@@ -327,8 +339,12 @@ def main(argv=None):
     device_id = int(os.environ.get("LOCAL_RANK", "0")) if args.device is None else args.device
     torch.npu.set_device(device_id)
     device_name = torch.npu.get_device_name(device_id)
-    if "Ascend910B" not in device_name and "Ascend910_93" not in device_name:
-        raise RuntimeError("Fused beta sigmoid backward example requires A2/A3; A5 is reserved")
+    is_a5 = "Ascend950" in device_name
+    if not is_a5 and not device_name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93")):
+        raise RuntimeError(f"This KDA example supports A2/A3/A5, got {device_name}")
+    fuse_beta_sigmoid = args.beta_sigmoid == "fused" or (args.beta_sigmoid == "auto" and not is_a5)
+    if is_a5 and fuse_beta_sigmoid:
+        raise ValueError("A5 backward does not support fused beta sigmoid; use --beta-sigmoid auto or external")
     if args.communication != "none":
         # Establish a collective before the first P2P round (HCCL initialization).
         if world == 1:
@@ -349,12 +365,13 @@ def main(argv=None):
             del y
         metadata = dict(communication=args.communication, rank=rank, world=world, tokens=args.tokens,
                         partition=args.partition,
+                        beta_sigmoid="fused" if fuse_beta_sigmoid else "external",
                         heads=args.heads, cu_seqlens=args.cu, seed=args.seed, disable_recompute=True,
                         device=device_name, torch=str(torch.__version__), torch_npu=str(torch_npu.__version__),
                         package=fla_npu.__file__, local_plan={k: v for k, v in plan.items() if k != "indices"})
         print(json.dumps(metadata), flush=True)
         with torch.no_grad():
-            actual = run_kda(x, plan, args.communication)
+            actual = run_kda(x, plan, args.communication, fuse_beta_sigmoid=fuse_beta_sigmoid)
             torch.npu.synchronize()
             passed = all(bool(torch.isfinite(t).all()) for t in actual.values())
             checks = {}
@@ -416,14 +433,14 @@ def main(argv=None):
             passed = bool(flag.item())
             # Validation and CPU copies are excluded from timing/profiling.
             for _ in range(args.warmup):
-                run_kda(x, plan, args.communication)
+                run_kda(x, plan, args.communication, fuse_beta_sigmoid=fuse_beta_sigmoid)
             torch.npu.synchronize()
             if dist.is_initialized():
                 dist.barrier()
             torch.npu.synchronize()
             start = time.perf_counter()
             for _ in range(args.iterations):
-                run_kda(x, plan, args.communication)
+                run_kda(x, plan, args.communication, fuse_beta_sigmoid=fuse_beta_sigmoid)
             torch.npu.synchronize()
             elapsed = (time.perf_counter() - start) * 1000 / args.iterations
             times = torch.tensor([elapsed], device=f"npu:{device_id}", dtype=torch.float32)
@@ -435,7 +452,7 @@ def main(argv=None):
                     on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(str(output_dir / "profiling")),
                     record_shapes=True,
                 ) as prof:
-                    run_kda(x, plan, args.communication)
+                    run_kda(x, plan, args.communication, fuse_beta_sigmoid=fuse_beta_sigmoid)
                     torch.npu.synchronize()
                     prof.step()
             metadata.update(passed=passed, accuracy_checked=bool(checks), checks=checks,

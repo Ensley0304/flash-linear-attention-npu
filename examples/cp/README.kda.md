@@ -5,15 +5,20 @@ the KDA example; GDN is outside this update.
 
 ## Supported path
 
-- A2/A3, B=1, Hk=Hv, K=V=128, BF16 Q/K/V, FP32 raw gate/beta/parameters.
+- A2/A3/A5, B=1, Hk=Hv, K=V=128, BF16 Q/K/V, FP32 raw gate/beta/parameters.
 - Equal contiguous or zigzag token shards, including packed and empty sequences.
-- Fused QK L2Norm, beta sigmoid and safe gate (`lower_bound=-5`).
+- Fused QK L2Norm and safe gate (`lower_bound=-5`); beta sigmoid mode depends on the platform.
 - Saved intermediates (`disable_recompute=True` / Prepare `backward_mode="save"`).
 - Zero initial state, no final-state loss; explicit forward/backward calls.
 - Output and all five token gradients are BSND (beta gradient is BSN).
 
-A5's fused beta sigmoid backward is reserved in the current API, so this
-example rejects A5 rather than silently selecting different semantics.
+`--beta-sigmoid auto` (default) uses fused sigmoid on A2/A3. A5's fused
+sigmoid backward is reserved, so A5 computes `beta_eff = sigmoid(beta)` in
+FP32 before the operator and applies `d_beta = d_beta_eff * beta_eff *
+(1-beta_eff)` after backward. Both no-CP and CP use this same rule. The selected
+mode is recorded in every result; timing/profiling includes these operations.
+`--beta-sigmoid external` also allows comparison on A2/A3. Explicit `fused`
+on A5 is rejected. This adapts the example, not the A5 kernel's capabilities.
 
 ## CP input contract
 
@@ -56,10 +61,10 @@ the following capabilities:
 | Chunk size | 32 or 64 at the public entry | 64 |
 | Grouped value heads | HV divisible by H | Hk=Hv in this backward composition |
 | Q/K/V dtype | Backend-dependent, including FP16/BF16 | BF16 in the KDA backward stages |
-| Gate / normalization options | Configurable | Fused L2Norm, sigmoid and safe gate with lower_bound=-5 |
+| Gate / normalization options | Configurable | Fused L2Norm and safe gate with lower_bound=-5; A5 sigmoid is external |
 | State representation | K-first or V-first | K-first internally |
 | Recompute | Configurable | Saved intermediates, as requested for this example |
-| Platforms / graph capture | Backend-dependent; Ascend CP graph mode currently rejected | A2/A3 eager execution |
+| Platforms / graph capture | Backend-dependent; Ascend CP graph mode currently rejected | A2/A3/A5 eager execution |
 
 These are remaining operator or example-mode differences, not new restrictions
 on sequence partitioning. Do not remove kernel guards to claim broader support.
@@ -104,10 +109,13 @@ ranks in both communication modes.
 The total backward (no CP) uses `layout="BSND"`: V and output token gradients
 are BSND; `do`, raw gate and original beta are always token-major. Saved
 normalized Q/K, reciprocal norms and `beta_eff` stay head-major. Both original
-beta and FP32 `beta_eff` must be passed with fused sigmoid enabled.
+beta and FP32 `beta_eff` must be passed with fused sigmoid enabled. Without
+fused sigmoid, pass the effective beta as `beta` and set `beta_eff=None`.
 
-The CP path must use staged backward to inject `dht` into Dhu. Small Prepare's
-explicit `layout="BNSD"` applies to Aqk, Vnew and do together. Small Finalize
+The CP path must use staged backward to inject `dht` into Dhu. Small Prepare uses
+`layout="NTD"` for A5 variable-length support (also supported on A2/A3): remove
+the unit batch axis from Aqk, Vnew, do and h, then restore it on the outputs.
+These are views without data copies. Small Finalize
 takes head-major tensors and **saved beta_eff**, with `output_layout="BSND"`
 controlling all five token gradients. These are different contracts: do not
 copy the total backward argument order/layout into small Finalize. No custom

@@ -7,6 +7,9 @@ import unittest
 from unittest.mock import patch
 
 import torch
+# assert_close lazily imports DTensor on newer torch. Load its registrations
+# before patch.dict(sys.modules), which would otherwise remove imported modules.
+import torch.distributed.tensor
 
 spec = importlib.util.spec_from_file_location(
     "kda_cp", Path(__file__).resolve().parents[1] / "examples/cp/chunk_kda_cp.py")
@@ -16,6 +19,32 @@ torch.set_num_threads(1)
 
 
 class KdaCpTests(unittest.TestCase):
+    def test_external_beta_sigmoid_chain_rule(self):
+        """Check the operator's effective-beta gradient becomes a logits gradient."""
+        inputs = example.make_inputs(5, 3, 29)
+        logits = inputs["beta"].clone().requires_grad_(True)
+        effective = logits.sigmoid()
+        (effective.square().sum() / 2).backward()
+        token_shape = (1, 5, 3, 128)
+
+        def forward(q, k, v, g, beta, *args, **kwargs):
+            self.assertFalse(kwargs["use_beta_sigmoid_in_kernel"])
+            torch.testing.assert_close(beta, effective.detach())
+            return (torch.zeros(token_shape),) + (None,) * 11
+
+        def backward(q, k, v, beta, *args, **kwargs):
+            self.assertFalse(kwargs["use_beta_sigmoid_in_kernel"])
+            self.assertIsNone(kwargs["beta_eff"])
+            torch.testing.assert_close(beta, effective.detach().transpose(1, 2))
+            return (torch.zeros(token_shape), torch.zeros(token_shape), torch.zeros(token_shape),
+                    beta.clone(), torch.zeros(token_shape), None, torch.zeros(3), torch.zeros(3, 128))
+
+        fake = types.ModuleType("fla_npu.ops")
+        fake.ascendc = types.SimpleNamespace(chunk_kda_fwd=forward, chunk_kda_bwd=backward)
+        with patch.dict(sys.modules, {"fla_npu.ops": fake}):
+            result = example.run_kda(inputs, {"cu": [0, 5]}, "none", fuse_beta_sigmoid=False)
+        torch.testing.assert_close(result["dbeta"], logits.grad.transpose(1, 2))
+
     def test_allgather_only_merges_same_sequence_neighbours(self):
         summaries = []
         for r in range(4):
