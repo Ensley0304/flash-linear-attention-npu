@@ -3,6 +3,7 @@
 本目录提供 flash-linear-attention-npu 的端到端示例与算子开发参考模板：
 
 - `flash_gated_delta_rule.py`：GDN 模块端到端接入示例，组装 GDN 相关前向/反向算子，覆盖 AscendC 与 Triton 调用链。
+- [`cp/chunk_kda_cp.py`](cp/README.kda.md)：KDA 前后向示例，显式选择不开 CP、AllGather 或 PTP，支持 packed 序列精度检查和 profiling。
 - `add_example/`：一个完整的 Ascend C 算子工程模板（add 算子），包含 `op_host`（def / tiling / infershape）、`op_kernel`、`op_graph` 与测试工程，可作为新增 Ascend C 算子的目录结构参考。
 - `fast_kernel_launch_example/`：演示如何使用 Ascend C + PyTorch Extension 能力开发自定义 NPU 算子，单个交付件完成算子开发与 PyTorch 框架适配，并支持 `<<<>>>` 语法启动核函数。
 
