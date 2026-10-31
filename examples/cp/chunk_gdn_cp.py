@@ -1,32 +1,26 @@
 #!/usr/bin/env python3
-"""A2/A3/A5 GDN CP 正反向示例与精度检查（保存中间量，不重计算）。
+"""GDN forward/backward: no CP, AllGather, or PTP (recursive doubling).
 
-本文件独立包含：参数解析、输入生成、完整序列 CPU 参考、CP 通信、
-分阶段前后向调用和精度检查，不依赖另一个 CP 示例 或公共示例文件。
+A2/A3/A5, B=1, Hv/Hk=1..4, K=V=128, BF16 QKV, FP32 gate/beta.
+Equal contiguous or zigzag token shards; packed sequences reset at global boundaries.
+Q/K are pre-normalized; beta is already activated; g is a natural-log token gate.
+Saved intermediates (no recompute), chunk_size=64; token outputs are BSND/BSN.
+Explicit backward calls, no autograd wrapper or external state/state loss.
 
-支持范围：连续等长切分，B=1、Hv 为 Hk 的整数倍、K=V=128、BF16、chunk_size=64。
-本示例限制 Hv/Hk 为 1～4，与 A5 Prepare/Finalize 的当前限制一致。
-暂不覆盖变长打包序列、交错切分、外部初始状态或末状态损失；显式调用反向，
-不是自动求导封装。完整 CPU 输入仅用于对照，每个进程只把自己的切片放到 NPU。
-
-前向：Prepare -> CP pre_fwd -> all_gather/merge -> FwdH -> FwdO。
-反向：DvLocal -> CP pre_bwd -> all_gather/merge -> Dhu(dht) -> Finalize。
-Merge 得到的末端梯度直接传给 Dhu，算子包需包含 PR #933 的 dht 支持。
-
-A2/A3 将 Prepare 和反向 Finalize 展开为独立小算子，普通 GDN 阶段使用
-自然对数门控，仅 CP 预处理使用转换后的 log2 门控。
-
-运行（需要包含 CP 和对应 GDN 小算子的本机架构算子包）：
-    torchrun --standalone --nproc_per_node=2 examples/cp/chunk_gdn_cp.py --accuracy-check
-    python examples/cp/chunk_gdn_cp.py --device 0 --accuracy-check
-    torchrun --standalone --nproc_per_node=2 examples/cp/chunk_gdn_cp.py --heads 2 --value-heads 6 --accuracy-check
+python examples/cp/chunk_gdn_cp.py --communication none --accuracy-check
+torchrun --standalone --nproc_per_node=4 examples/cp/chunk_gdn_cp.py \
+    --communication allgather --accuracy-check
+Replace allgather with ptp to run the ordered P/E scan from MindSpeed issue #4.
 """
 from __future__ import annotations
 
 import argparse
-import math
 from datetime import timedelta
+import json
+import math
 import os
+from pathlib import Path
+import time
 
 import torch
 import torch.distributed as dist
@@ -35,62 +29,103 @@ import torch.nn.functional as F
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tokens", type=int, default=256, help="切分前的全局序列长度")
-    parser.add_argument("--heads", type=int, default=2, help="Q/K 的 head 数 Hk")
-    parser.add_argument("--value-heads", type=int, default=None, help="V/g/beta 的 head 数 Hv，默认等于 --heads")
+    parser.add_argument("--communication", choices=("none", "allgather", "ptp"), default="allgather")
+    parser.add_argument("--tokens", type=int, default=256, help="global token count")
+    parser.add_argument("--heads", type=int, default=2)
+    parser.add_argument("--partition", choices=("contiguous", "zigzag"), default="contiguous")
+    parser.add_argument("--value-heads", type=int, help="value heads; defaults to --heads, Hv/Hk=1..4")
+    parser.add_argument("--cu-seqlens", help="global packed offsets, e.g. 0,130,256")
     parser.add_argument("--seed", type=int, default=20261010)
-    parser.add_argument("--device", type=int, default=None, help="单进程使用的设备编号；torchrun 按 LOCAL_RANK 分配设备")
-    parser.add_argument("--accuracy-check", action="store_true")
-    # 沿用 chunk_kda.py 的逐元素容差和余弦相似度判据，额外检查 CP 边界状态。
+    parser.add_argument("--device", type=int)
+    parser.add_argument("--accuracy-check", action="store_true", help="compare with CPU recurrence (small inputs)")
+    parser.add_argument("--cpu-reference-only", action="store_true")
+    parser.add_argument("--reference", type=Path, help="compare with a saved no-CP NPU result")
+    parser.add_argument("--save-result", type=Path, help="save outputs/gradients from a single-rank run")
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--profile", action="store_true", help="save CANN op_summary and timeline after timing")
     parser.add_argument("--output-tol", type=float, default=0.005)
     parser.add_argument("--grad-tol", type=float, default=0.008)
     parser.add_argument("--gate-tol", type=float, default=0.02)
     parser.add_argument("--boundary-tol", type=float, default=0.02)
-    parser.add_argument("--cpu-reference-only", action="store_true", help="仅检查 CPU 参考，不执行 NPU 算子或跨卡通信")
     args = parser.parse_args(argv)
     world = int(os.environ.get("WORLD_SIZE", "1"))
-    if args.tokens <= 0 or args.tokens % (64 * world):
-        parser.error("--tokens must be a positive multiple of 64 * WORLD_SIZE")
-    if not 1 <= args.heads <= 128:
-        parser.error("--heads must be in [1,128]")
-    if args.value_heads is None:
-        args.value_heads = args.heads
-    if not 1 <= args.value_heads <= 128 or args.value_heads % args.heads:
-        parser.error("--value-heads 必须在 [1,128] 内，且为 --heads 的整数倍")
-    if args.value_heads // args.heads > 4:
-        parser.error("当前示例要求 Hv/Hk 在 [1,4] 内")
+    parts = world * (2 if args.partition == "zigzag" else 1)
+    if world < 1 or args.tokens < parts or args.tokens % parts:
+        parser.error("tokens must be at least and divisible by WORLD_SIZE (2*WORLD_SIZE for zigzag)")
+    if args.heads < 1 or args.warmup < 0 or args.iterations < 1:
+        parser.error("heads must be positive, warmup >= 0, iterations >= 1")
+    args.value_heads = args.heads if args.value_heads is None else args.value_heads
+    if args.value_heads % args.heads or not 1 <= args.value_heads // args.heads <= 4:
+        parser.error("value-heads must be heads times an integer in [1,4]")
     if min(args.output_tol, args.grad_tol, args.gate_tol, args.boundary_tol) <= 0:
         parser.error("tolerances must be positive")
-    if args.cpu_reference_only and world != 1:
-        parser.error("--cpu-reference-only must run without torchrun")
-    if world > 1 and args.device is not None:
-        parser.error("use ASCEND_RT_VISIBLE_DEVICES with torchrun, not --device")
+    if world > 1 and (args.communication == "none" or args.device is not None
+                      or args.cpu_reference_only or args.save_result is not None):
+        parser.error("none/device/cpu-reference-only/save-result require a single process")
+    if args.communication == "none" and args.partition != "contiguous":
+        parser.error("--partition applies to CP; use contiguous for the no-CP reference")
+    if args.profile and args.output_dir is None:
+        parser.error("--profile requires --output-dir")
+    if (args.accuracy_check or args.cpu_reference_only) and args.tokens * args.value_heads > 8192:
+        parser.error("CPU autograd reference is limited to tokens*value_heads <= 8192; use --reference for large cases")
+    try:
+        args.cu = ([int(s) for s in args.cu_seqlens.split(",")]
+                   if args.cu_seqlens else [0, args.tokens])
+    except ValueError:
+        parser.error("cu-seqlens must contain comma-separated integers")
+    if (len(args.cu) < 2 or args.cu[0] != 0 or args.cu[-1] != args.tokens
+            or any(b < a for a, b in zip(args.cu, args.cu[1:]))):
+        parser.error("cu-seqlens must be nondecreasing from 0 to tokens")
     return args
 
 
-def make_inputs(tokens, heads, seed, value_heads=None):
-    """与 chunk_kda.py 一致，先将输入转换到实际计算精度，再计算参考结果。
+def build_partition(cu, tokens, rank, world, partition):
+    """Match FLA's equal intervals and local [front; back] order for zigzag."""
+    num_parts = world * (2 if partition == "zigzag" else 1)
+    part_len = tokens // num_parts
+    slots = [rank] if partition == "contiguous" else [rank, num_parts - 1 - rank]
+    plan = dict(rank=rank, world=world, num_parts=num_parts, part_len=part_len, cu=[0], parts=[])
+    for i, slot in enumerate(slots):
+        lo, hi = slot * part_len, (slot + 1) * part_len
+        segments = [(a, b) for a, b in zip(cu, cu[1:]) if a < hi and b > lo and b > a]
+        first = len(plan["cu"]) - 1
+        plan["cu"].extend(i * part_len + min(b, hi) - lo for a, b in segments)
+        plan["parts"].append(dict(slot=slot, lo=lo, hi=hi, first=first, last=len(plan["cu"]) - 2,
+                                  prefix=slot - segments[0][0] // part_len,
+                                  suffix=(segments[-1][1] - 1) // part_len - slot))
+    plan["indices"] = [value for seq, (a, b) in enumerate(zip(plan["cu"], plan["cu"][1:]))
+                       for chunk in range((b - a + 63) // 64) for value in (seq, chunk)]
+    return plan
 
-    采用较缓的衰减以保留跨进程影响；衰减过强可能掩盖 CP 状态未正确传递的问题。
-    """
+
+def make_inputs(tokens, heads, seed, lo=0, hi=None, device="cpu", value_heads=None):
+    """Preserve the original GDN input distribution; move only this shard to NPU."""
     gen = torch.Generator().manual_seed(seed)
-    shape = (1, heads, tokens, 128)
     value_heads = heads if value_heads is None else value_heads
-    if heads <= 0 or value_heads < heads or value_heads % heads:
-        raise ValueError("Hv 必须为 Hk 的正整数倍")
-    value_shape = (1, value_heads, tokens, 128)
-    rand = lambda s: torch.randn(s, generator=gen)
-    values = {"q": F.normalize(rand(shape), dim=-1).bfloat16(),
-              "k": F.normalize(rand(shape), dim=-1).bfloat16(),
-              "v": (0.5 * rand(value_shape)).bfloat16(),
-              "beta": torch.sigmoid(rand(value_shape[:-1])).float(),
-              "do": rand(value_shape).bfloat16()}
-    # GDN 输入 g 是自然对数域的逐词元门控；Prepare 输出以 2 为底的分块累积值。
-    values["g"] = (-0.01 - 0.01 * torch.rand(value_shape[:-1], generator=gen)).float()
-    return values
+    result = {}
+    for name in ("q", "k", "v", "beta", "do", "g"):
+        h = heads if name in ("q", "k") else value_heads
+        shape = (1, h, tokens) if name in ("beta", "g") else (1, h, tokens, 128)
+        if name == "g":
+            value = -0.01 - 0.01 * torch.rand(shape, generator=gen)
+        else:
+            value = torch.randn(shape, generator=gen)
+            if name in ("q", "k"):
+                value = F.normalize(value, dim=-1)
+            elif name == "v":
+                value *= 0.5
+            elif name == "beta":
+                value = value.sigmoid()
+            if name != "beta":
+                value = value.bfloat16()
+        result[name] = value[:, :, lo:hi].contiguous().to(device)
+    return result
 
 
-def recurrent_reference(inputs, scale, local_tokens):
+@torch.enable_grad()
+def recurrent_reference(inputs, cu, local_tokens):
     """对未切分的完整序列执行独立的逐词元递推，并用自动求导计算梯度。
 
     梯度包含整个序列的损失，因此前面切片也会收到后面切片传来的梯度。
@@ -108,12 +143,14 @@ def recurrent_reference(inputs, scale, local_tokens):
     state = torch.zeros(1, v.shape[1], 128, 128)
     boundaries, outputs = [state], []
     for t in range(q.shape[2]):
+        if t in cu:
+            state = torch.zeros_like(state)
         decay = gate[:, :, t].exp()
         state = state * decay[..., None, None]
         key = k[:, :, t]
         delta = (v[:, :, t] - (key.unsqueeze(-1) * state).sum(-2)) * beta[:, :, t, None]
         state = state + key.unsqueeze(-1) * delta.unsqueeze(-2)
-        outputs.append((q[:, :, t, :, None] * state).sum(-2) * scale)
+        outputs.append((q[:, :, t, :, None] * state).sum(-2) * 128 ** -0.5)
         if (t + 1) % local_tokens == 0:
             # 在当前词元输出之后新增计算图边，使此处梯度只包含后续进程的损失，
             # 与传入本进程的末状态梯度 dht 保持一致。
@@ -122,8 +159,8 @@ def recurrent_reference(inputs, scale, local_tokens):
             boundaries.append(state)
     out = torch.stack(outputs, dim=2)
     (out * inputs["do"].float()).sum().backward()
-    result = {"o": out.detach()}
-    result.update({"d" + n: leaf.grad.detach() for n, leaf in leaves.items()})
+    result = {"o": out.detach().transpose(1, 2).contiguous()}
+    result.update({"d" + n: leaf.grad.detach().transpose(1, 2).contiguous() for n, leaf in leaves.items()})
     # 全局末状态不参与额外损失，其后也没有词元，因此末状态梯度为零。
     dh = [torch.zeros_like(boundaries[0])]
     dh += [s.grad.detach() if s.grad is not None else torch.zeros_like(s)
@@ -131,198 +168,281 @@ def recurrent_reference(inputs, scale, local_tokens):
     return result, [s.detach() for s in boundaries], dh
 
 
-def metric(actual, expected, tol, cos_min=0.999):
-    actual, expected = actual.detach().float().cpu(), expected.detach().float().cpu()
-    finite = bool(torch.isfinite(actual).all() and torch.isfinite(expected).all())
-    error = float(torch.linalg.vector_norm(actual - expected)
-                  / torch.linalg.vector_norm(expected).clamp_min(1e-8))
-    close = bool(torch.allclose(actual, expected, rtol=tol, atol=tol))
-    if expected.count_nonzero().item() == 0:
-        cosine = 1.0 if close else 0.0
-    else:
-        cosine = float(F.cosine_similarity(actual.flatten(), expected.flatten(), dim=0))
-    return finite and close and cosine >= cos_min, error, cosine
+def exchange_boundary(summaries, plan, *, forward, communication):
+    """Summary [E | M] maps H -> M @ H + E. Return only same-sequence state.
 
-
-def merge_boundary(summary, *, forward, rank, world):
-    """所有进程都参与通信，包括无需接收前缀或后缀状态的首尾进程。
-
-    进程编号顺序就是序列顺序。通信和合并使用 FP32，再将 [H,K,V] 转成
-    FwdH/Dhu 所需的 BF16 [1,H,K,V]。合并算子不接受 N=0，
-    因此前向首进程、反向末进程直接使用零边界状态。
+    PTP follows issue #4 section 4.6: inclusive P is sent, exclusive E is local.
+    Every round sends the OLD P; compositions use fresh buffers. Reverse backward
+    interval order, but keep the same matrix multiplication order. A packed reset
+    zeroes outgoing M, so earlier sequences cannot leak through the scan.
     """
-    from fla_npu.ops.ascendc import merge_fwd_bwd_kernel
-
-    summary = summary.reshape(-1, 128, 256).float().contiguous()
-    gathered = [torch.empty_like(summary) for _ in range(world)]
-    if world > 1:
-        dist.all_gather(gathered, summary)
+    world, num_parts = plan["world"], plan["num_parts"]
+    parts = plan["parts"]
+    states = summaries.new_zeros((len(plan["cu"]) - 1, summaries.shape[1], 128, 128))
+    if communication == "allgather":
+        from fla_npu.ops.ascendc import merge_fwd_bwd_kernel
+        gathered = [torch.empty_like(summaries) for _ in range(world)]
+        dist.all_gather(gathered, summaries.contiguous())
+        gathered = torch.stack(gathered)
+        # Global sequence order is fronts ascending, then backs descending.
+        chain = (gathered[:, 0].contiguous() if len(parts) == 1
+                 else torch.cat((gathered[:, 0], gathered[:, 1].flip(0))))
+        for part in parts:
+            count = part["prefix" if forward else "suffix"]
+            if count:
+                merge_fwd_bwd_kernel(
+                    states[part["first" if forward else "last"]], chain, count, part["slot"],
+                    forward=forward, state_v_first=False,
+                )
+    elif communication == "ptp":
+        # Logical order follows the scan direction; zigzag puts two nodes on each rank.
+        slots = [p["slot"] if forward else num_parts - 1 - p["slot"] for p in parts]
+        owners = list(range(world)) if len(parts) == 1 else list(range(world)) + list(range(world - 1, -1, -1))
+        if not forward:
+            owners.reverse()
+        inclusive = {slot: summaries[i].clone() for i, slot in enumerate(slots)}
+        exclusive = {slot: None for slot in slots}
+        for slot, part in zip(slots, parts):
+            if part["first"] != part["last"] or part["prefix" if forward else "suffix"] == 0:
+                inclusive[slot][..., 128:].zero_()
+        distance = 1
+        while distance < num_parts:
+            received = {}
+            operations = []
+            # Sort by global edge to match repeated messages between the same peers
+            # without transport tags. Same-rank edges use the OLD local snapshot.
+            edges = {(slot, slot + distance) for slot in slots if slot + distance < num_parts}
+            edges.update((slot - distance, slot) for slot in slots if slot >= distance)
+            for source, target in sorted(edges):
+                if source in inclusive and target in inclusive:
+                    received[target] = inclusive[source]
+                elif source in inclusive:
+                    operations.append(dist.P2POp(dist.isend, inclusive[source], owners[target]))
+                else:
+                    received[target] = torch.empty_like(inclusive[target])
+                    operations.append(dist.P2POp(dist.irecv, received[target], owners[source]))
+            if operations:
+                for request in dist.batch_isend_irecv(operations):
+                    request.wait()
+            updated = inclusive.copy()
+            for slot, earlier in received.items():
+                # compose(earlier, later) = [M_later E_earlier + E_later | M_later M_earlier]
+                if slot + 2 * distance < num_parts:
+                    merged = torch.bmm(inclusive[slot][..., 128:].contiguous(), earlier)
+                    merged[..., :128].add_(inclusive[slot][..., :128])
+                    updated[slot] = merged
+                if exclusive[slot] is None:
+                    exclusive[slot] = earlier
+                else:
+                    merged = torch.bmm(exclusive[slot][..., 128:].contiguous(), earlier)
+                    merged[..., :128].add_(exclusive[slot][..., :128])
+                    exclusive[slot] = merged
+            inclusive = updated
+            distance *= 2
+        for slot, part in zip(slots, parts):
+            if part["prefix" if forward else "suffix"]:
+                states[part["first" if forward else "last"]].copy_(exclusive[slot][..., :128])
     else:
-        gathered[0].copy_(summary)
-    count = rank if forward else world - rank - 1
-    boundary = torch.zeros(summary.shape[0], 128, 128,
-                           device=summary.device, dtype=torch.float32)
-    if count:
-        merge_fwd_bwd_kernel(boundary, torch.stack(gathered), count, rank,
-                             forward=forward, state_v_first=False)
-    return boundary.unsqueeze(0).to(torch.bfloat16)
+        raise ValueError("boundary exchange requires allgather or ptp")
+    # FwdH selects recurrent-state precision from h0: preserve FP32.
+    # Dhu's terminal gradient ABI instead requires BF16.
+    return states if forward else states.bfloat16()
 
 
-def dhu_with_boundary(q, k, w, do, dv, gate, dht, *, scale, use_exp2=True):
-    from fla_npu.ops.ascendc import chunk_gated_delta_rule_bwd_dhu
-
-    dh, _, dv_scan = chunk_gated_delta_rule_bwd_dhu(
-        q, k, w, do, dv, scale, 64, g=gate, h0=None, dht=dht, use_exp2=use_exp2)
-    return dh, dv_scan
-
-
-def run_gdn_a5(x, *, scale, rank, world):
-    from fla_npu.ops.ascendc import (
-        chunk_gated_delta_rule_fwd_prepare, chunk_fwd_h, chunk_fwd_o,
-        pre_process_fwd_kernel_merged, chunk_delta_h_bwd_preprocess,
-        chunk_bwd_dv_local,
-        chunk_gated_delta_rule_bwd_finalize,
-    )
-
+def run_gdn(x, plan, communication, *, is_a5=False):
+    """Keep all forward/backward stages and both boundary exchanges visible."""
+    from fla_npu.ops import ascendc as op
     q, k, v, g, beta, do = (x[n] for n in ("q", "k", "v", "g", "beta", "do"))
-    q, k, _, _, beta_eff, gc, w, u, a = chunk_gated_delta_rule_fwd_prepare(
-        q, k, v, g, beta, use_exp2=True, output_a=True)
-    hm = pre_process_fwd_kernel_merged(k, w, u, g=gc,
-                                      cu_seqlens=[0, q.shape[2]], chunk_size=64)
-    h0 = merge_boundary(hm[0], forward=True, rank=rank, world=world)
-    h, v_new, _ = chunk_fwd_h(k, w, u, g=gc, initial_state=h0,
-                              use_exp2=True, save_new_value=True)
-    # A5 的 exp2 FwdO 路径要求输出 BSND/TND，此处再转回统一使用的 BNSD。
-    o = chunk_fwd_o(q, k, v_new, h, scale, g=gc, use_exp2=True,
-                    output_layout="BSND").permute(0, 2, 1, 3).contiguous()
-
-    # DvLocal 没有 use_exp2 开关，内部使用 exp()，因此只将它的门控输入转回
-    # 自然对数域；其他阶段仍使用以 2 为底的累积门控 gc。
-    dv_local = chunk_bwd_dv_local(q, k, do, gc * math.log(2.0), scale, 64)
-    dhm = chunk_delta_h_bwd_preprocess(q, k, w, do, dv_local, scale, 64,
-                                      g=gc, cu_seqlens=[0, q.shape[2]])
-    dht = merge_boundary(dhm, forward=False, rank=rank, world=world)
-    dh, du = dhu_with_boundary(q, k, w, do, dv_local, gc, dht,
-                              scale=scale)
-    gradients = chunk_gated_delta_rule_bwd_finalize(
-        q, k, v, v_new, do, du, gc, beta_eff, h, dh, a,
-        scale=scale, use_exp2=True)
-    return dict(zip(("dq", "dk", "dv", "dbeta", "dg"), gradients), o=o, h0=h0, dht=dht)
-
-
-def run_gdn_a2_a3(x, *, scale, rank, world):
-    """复用 A2/A3 独立小算子，在状态递推之前插入 CP 边界通信。
-
-    前向保存 A、w、h、v_new，反向直接读取，不重算前向中间量。
-    gc 是自然对数域的分块累积门控，gc_cp 仅供两个 CP 预处理使用。
-    """
-    from fla_npu.ops.ascendc import (
-        chunk_local_cumsum, chunk_scaled_dot_kkt, solve_tri, recompute_w_u_fwd,
-        chunk_gated_delta_rule_fwd_h, chunk_fwd_o, chunk_bwd_dv_local,
-        pre_process_fwd_kernel_merged, chunk_delta_h_bwd_preprocess,
-        chunk_bwd_dqkwg, prepare_wy_repr_bwd_da, prepare_wy_repr_bwd_full,
+    cu, indices, scale = plan["cu"], plan["indices"], 128 ** -0.5
+    q, k, _, _, beta_eff, gc, w, u, a = op.chunk_gated_delta_rule_fwd_prepare(
+        q, k, v, g, beta, cu_seqlens=cu, chunk_indices=indices,
+        use_exp2=True, output_a=True,
     )
-
-    q, k, v, g, beta, do = (x[n] for n in ("q", "k", "v", "g", "beta", "do"))
-    gc = chunk_local_cumsum(g, 64, head_first=True)
-    gc_cp = (gc / math.log(2.0)).contiguous()
-    kkt = chunk_scaled_dot_kkt(k, gc, beta, chunk_size=64)
-    # SolveTri 接收 BSND，其他 WY 阶段使用 BNSD；输入输出均转为 BF16。
-    a = solve_tri(kkt.permute(0, 2, 1, 3).to(q.dtype).contiguous(), layout="bsnd")
-    a = a.permute(0, 2, 1, 3).contiguous()
-    w, u = recompute_w_u_fwd(k, v, beta, a, 64, g=gc)
-    hm = pre_process_fwd_kernel_merged(k, w, u, g=gc_cp,
-                                      cu_seqlens=[0, q.shape[2]], chunk_size=64)
-    h0 = merge_boundary(hm[0], forward=True, rank=rank, world=world)
-    h, v_new, _ = chunk_gated_delta_rule_fwd_h(k, w, u, g=gc, initial_state=h0,
-                                               chunk_size=64)
-    o = chunk_fwd_o(q, k, v_new, h, scale, g=gc, use_exp2=False)
-
-    dv_local = chunk_bwd_dv_local(q, k, do, gc, scale, 64)
-    dhm = chunk_delta_h_bwd_preprocess(q, k, w, do, dv_local, scale, 64,
-                                      g=gc_cp, cu_seqlens=[0, q.shape[2]])
-    dht = merge_boundary(dhm, forward=False, rank=rank, world=world)
-    dh, du = dhu_with_boundary(q, k, w, do, dv_local, gc, dht,
-                              scale=scale, use_exp2=False)
-    dq, dk, dw, dg = chunk_bwd_dqkwg(q, k, v_new, gc, h, do, dh, du, 64,
-                                    scale=scale, use_exp2=False)
-    da = prepare_wy_repr_bwd_da(k, v, beta, a, dw, du, gc, chunk_size=64)
-    dk_wy, dv, dbeta, dg_wy = prepare_wy_repr_bwd_full(k, v, beta, a, da, dw, du, gc, 64)
-    # 两路贡献先相加，再对分块累积门控做反向累加，得到原始逐词元 g 的梯度。
-    dg = chunk_local_cumsum((dg + dg_wy).contiguous(), 64, reverse=True, head_first=True)
-    return dict(o=o, dq=dq, dk=dk + dk_wy, dv=dv, dbeta=dbeta, dg=dg, h0=h0, dht=dht)
-
-
-def run_gdn(x, *, scale, rank, world, architecture="a5"):
-    runner = run_gdn_a5 if architecture == "a5" else run_gdn_a2_a3
-    return runner(x, scale=scale, rank=rank, world=world)
-
+    # Preserve FP32 recurrent state in both the no-CP baseline and CP runs.
+    h0 = q.new_zeros((len(cu) - 1, v.shape[1], 128, 128), dtype=torch.float32)
+    if communication != "none":
+        summaries = q.new_zeros((len(plan["parts"]), v.shape[1], 128, 256), dtype=torch.float32)
+        for i, part in enumerate(plan["parts"]):
+            if part["suffix"]:
+                summaries[i] = op.pre_process_fwd_kernel_merged(
+                    k, w, u, g=gc, cu_seqlens=cu[part["last"]:part["last"] + 2], chunk_size=64,
+                )[0]
+        h0 = exchange_boundary(summaries, plan, forward=True, communication=communication)
+    h, vn, _ = op.chunk_fwd_h(
+        k, w, u, g=gc, initial_state=h0, cu_seqlens=cu, chunk_indices=indices,
+        save_new_value=True, output_final_state=False, use_exp2=True,
+    )
+    # A2/A3 FwdO requires exp() and BNSD; A5 supports exp2() and direct BSND.
+    gc_ln = gc * math.log(2.0)
+    o = op.chunk_fwd_o(q, k, vn, h, scale, g=gc if is_a5 else gc_ln,
+                       cu_seqlens=cu, chunk_indices=indices, use_exp2=is_a5,
+                       output_layout="BSND" if is_a5 else "BNSD")
+    if not is_a5:
+        o = o.transpose(1, 2)
+    # DvLocal always uses exp(); other stages retain Prepare's log2 gate.
+    dv_local = op.chunk_bwd_dv_local(
+        q, k, do, gc_ln, scale, 64, cu_seqlens=cu, chunk_indices=indices,
+    )
+    dht = None
+    if communication != "none":
+        summaries = q.new_zeros((len(plan["parts"]), v.shape[1], 128, 256), dtype=torch.float32)
+        for i, part in enumerate(plan["parts"]):
+            if part["prefix"]:
+                summaries[i] = op.pre_process_bwd_kernel_merged(
+                    q, k, w, do, dv_local, scale, 64,
+                    g=gc, cu_seqlens=cu[part["first"]:part["first"] + 2],
+                )
+        dht = exchange_boundary(summaries, plan, forward=False, communication=communication)
+    dh, _, du = op.chunk_gated_delta_rule_bwd_dhu(
+        q, k, w, do, dv_local, scale, 64, g=gc, dht=dht,
+        cu_seqlens=cu, chunk_indices=indices, use_exp2=True,
+    )
+    dq, dk, dv, db, dg = op.chunk_gated_delta_rule_bwd_finalize(
+        q, k, v, vn, do, du, gc, beta_eff, h, dh, a,
+        cu_seqlens=cu, chunk_indices=indices, scale=scale, use_exp2=True,
+    )
+    result = dict(o=o, dq=dq.transpose(1, 2), dk=dk.transpose(1, 2), dv=dv.transpose(1, 2),
+                  dbeta=db.transpose(1, 2), dg=dg.transpose(1, 2))
+    if communication != "none":
+        result.update(h0=h0, dht=dht)
+    return result
 
 
 def main(argv=None):
     args = parse_args(argv)
-    world = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
     torch.set_num_threads(1)
-    local_tokens = args.tokens // world
-    source = make_inputs(args.tokens, args.heads, args.seed, args.value_heads)
-    scale = 128 ** -0.5
+    rank, world = int(os.environ.get("RANK", "0")), int(os.environ.get("WORLD_SIZE", "1"))
+    plan = build_partition(args.cu, args.tokens, rank, world, args.partition)
+    first = plan["parts"][0]
+    lo, hi = first["lo"], first["hi"]
     if args.cpu_reference_only:
-        outputs, _, _ = recurrent_reference(source, scale, local_tokens)
-        if not all(bool(torch.isfinite(x).all()) for x in outputs.values()):
-            raise RuntimeError("nonfinite CPU reference")
-        print("gdn: CPU reference only OK; no NPU/CP operators executed")
+        result, _, _ = recurrent_reference(make_inputs(args.tokens, args.heads, args.seed, value_heads=args.value_heads), args.cu, plan["part_len"])
+        assert all(torch.isfinite(t).all() for t in result.values())
+        print("CPU reference PASS; no NPU operators executed")
         return 0
-
-    # 先加载包内 OPP，再显式初始化 NPU 运行环境。
-    import fla_npu  # noqa: F401
-    import torch_npu  # noqa: F401
-
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    device_id = local_rank if args.device is None else args.device
+    import fla_npu
+    import torch_npu
+    device_id = int(os.environ.get("LOCAL_RANK", "0")) if args.device is None else args.device
     torch.npu.set_device(device_id)
-    device = torch.device(f"npu:{device_id}")
     device_name = torch.npu.get_device_name(device_id)
-    if "Ascend950" in device_name:
-        architecture = "a5"
-    elif "Ascend910B" in device_name or "Ascend910_93" in device_name:
-        architecture = "a2_a3"
-    else:
-        raise RuntimeError(f"此示例仅支持 A2/A3/A5，当前设备为 {device_name}")
-    if rank == 0:
-        print(f"GDN CP: device={device_name}, architecture={architecture}, world={world}, "
-              f"Hk={args.heads}, Hv={args.value_heads}, GVA={args.value_heads // args.heads}", flush=True)
-    if world > 1:
-        dist.init_process_group("hccl", timeout=timedelta(seconds=180))
+    is_a5 = "Ascend950" in device_name
+    if not is_a5 and not device_name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93")):
+        raise RuntimeError(f"This GDN example supports A2/A3/A5, got {device_name}")
+    if args.communication != "none":
+        # Establish a collective before the first P2P round (HCCL initialization).
+        if world == 1:
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ.setdefault("MASTER_PORT", "29500")
+        dist.init_process_group("hccl", rank=rank, world_size=world, timeout=timedelta(seconds=180))
+        dist.barrier()
+    output_dir = args.output_dir / f"rank{rank}" if args.output_dir else None
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        lo, hi = rank * local_tokens, (rank + 1) * local_tokens
-        local = {name: x[:, :, lo:hi].contiguous().to(device) for name, x in source.items()}
+        x = make_inputs(args.tokens, args.heads, args.seed, lo, hi, f"npu:{device_id}", value_heads=args.value_heads)
+        if args.partition == "zigzag":
+            back = plan["parts"][1]
+            y = make_inputs(args.tokens, args.heads, args.seed, back["lo"], back["hi"], f"npu:{device_id}", value_heads=args.value_heads)
+            for name in x:
+                x[name] = torch.cat((x[name], y[name]), dim=2)
+            del y
+        metadata = dict(communication=args.communication, rank=rank, world=world, tokens=args.tokens,
+                        partition=args.partition,
+                        heads=args.heads, value_heads=args.value_heads, cu_seqlens=args.cu, seed=args.seed, disable_recompute=True,
+                        device=device_name, torch=str(torch.__version__), torch_npu=str(torch_npu.__version__),
+                        package=fla_npu.__file__, local_plan={k: v for k, v in plan.items() if k != "indices"})
+        print(json.dumps(metadata), flush=True)
         with torch.no_grad():
-            actual = run_gdn(local, scale=scale, rank=rank, world=world, architecture=architecture)
-        torch.npu.synchronize()
-        passed = all(bool(torch.isfinite(x).all()) for x in actual.values())
-        if args.accuracy_check:
-            ref, states, dstates = recurrent_reference(source, scale, local_tokens)
-            ref = {name: x[:, :, lo:hi]
-                   for name, x in ref.items()}
-            ref.update(h0=states[rank], dht=dstates[rank + 1])
-            for name, expected in ref.items():
-                gate_grad = name in ("dbeta", "dg")
-                tol = (args.boundary_tol if name in ("h0", "dht") else
-                       args.gate_tol if gate_grad else
-                       args.output_tol if name == "o" else args.grad_tol)
-                ok, error, cosine = metric(actual[name], expected, tol, 0.99 if gate_grad else 0.999)
-                passed &= ok
-                print(f"rank={rank} {name}: rel_l2={error:.6g} cosine={cosine:.6g} "
-                      f"tol={tol:g} {'PASS' if ok else 'FAIL'}", flush=True)
-        flag = torch.tensor([int(passed)], device=device, dtype=torch.int32)
-        if world > 1:
-            dist.all_reduce(flag, op=dist.ReduceOp.MIN)
-        passed = bool(flag.item())
-        if rank == 0:
-            mode = "accuracy" if args.accuracy_check else "finite smoke (accuracy unchecked)"
-            print(f"gdn CP world={world} {mode}: {'PASS' if passed else 'FAIL'}", flush=True)
-        return 0 if passed else 1
+            actual = run_gdn(x, plan, args.communication, is_a5=is_a5)
+            torch.npu.synchronize()
+            passed = all(bool(torch.isfinite(t).all()) for t in actual.values())
+            checks = {}
+            reference = None
+            if args.accuracy_check:
+                reference, states, dstates = recurrent_reference(
+                    make_inputs(args.tokens, args.heads, args.seed, value_heads=args.value_heads), args.cu, plan["part_len"],
+                )
+            elif args.reference:
+                payload = torch.load(args.reference, map_location="cpu", weights_only=True, mmap=True)
+                for name in ("tokens", "heads", "value_heads", "cu_seqlens", "seed"):
+                    if payload["metadata"][name] != metadata[name]:
+                        raise ValueError(f"reference input mismatch: {name}")
+                reference = payload["outputs"]
+            if reference is not None:
+                reference = {n: torch.cat([t[:, p["lo"]:p["hi"]] for p in plan["parts"]], dim=1)
+                             for n, t in reference.items() if n not in ("h0", "dht")}
+                if args.accuracy_check and args.communication != "none":
+                    boundary = torch.zeros_like(actual["h0"], device="cpu")
+                    terminal = torch.zeros_like(actual["dht"], device="cpu")
+                    for part in plan["parts"]:
+                        if part["prefix"]:
+                            boundary[part["first"]] = states[part["slot"]][0]
+                        if part["suffix"]:
+                            terminal[part["last"]] = dstates[part["slot"] + 1][0]
+                    reference.update(h0=boundary, dht=terminal)
+                for name, expected in reference.items():
+                    value, expected = actual[name].float().cpu(), expected.float().contiguous()
+                    if value.shape != expected.shape:
+                        raise RuntimeError(f"{name}: {value.shape} != {expected.shape}")
+                    tol = (args.boundary_tol if name in ("h0", "dht") else args.output_tol if name == "o"
+                           else args.gate_tol if name in ("dbeta", "dg") else args.grad_tol)
+                    delta = (value - expected).abs()
+                    bad = int((delta > tol + tol * expected.abs()).sum())
+                    finite = bool(torch.isfinite(value).all() and torch.isfinite(expected).all())
+                    # Long model vectors need FP64 accumulation: FP32 norm/dot
+                    # reductions can even yield a spurious cosine above one.
+                    actual_norm = torch.linalg.vector_norm(value, dtype=torch.float64)
+                    expected_norm = torch.linalg.vector_norm(expected, dtype=torch.float64)
+                    rel_l2 = float(torch.linalg.vector_norm(delta, dtype=torch.float64)
+                                   / expected_norm.clamp_min(1e-8))
+                    cosine = (float(((value * expected).sum(dtype=torch.float64)
+                                     / (actual_norm * expected_norm).clamp_min(1e-16)).clamp(-1, 1))
+                              if expected_norm > 0 else float(bad == 0))
+                    cos_min = 0.99 if name in ("dbeta", "dg") else 0.999
+                    ok = finite and bad == 0 and cosine >= cos_min
+                    checks[name] = dict(passed=ok, mismatches=bad, rel_l2=rel_l2,
+                                        max_abs=float(delta.max()), cosine=cosine, tol=tol, cos_min=cos_min)
+                    passed &= ok
+                    print(f"rank={rank} {name}: {json.dumps(checks[name])}", flush=True)
+            if args.save_result:
+                args.save_result.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(dict(metadata=metadata, outputs={n: t.cpu() for n, t in actual.items()}), args.save_result)
+            del actual, reference
+            flag = torch.tensor([int(passed)], dtype=torch.int32, device=f"npu:{device_id}")
+            if dist.is_initialized():
+                dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+            passed = bool(flag.item())
+            # Validation and CPU copies are excluded from timing/profiling.
+            for _ in range(args.warmup):
+                run_gdn(x, plan, args.communication, is_a5=is_a5)
+            torch.npu.synchronize()
+            if dist.is_initialized():
+                dist.barrier()
+            torch.npu.synchronize()
+            start = time.perf_counter()
+            for _ in range(args.iterations):
+                run_gdn(x, plan, args.communication, is_a5=is_a5)
+            torch.npu.synchronize()
+            elapsed = (time.perf_counter() - start) * 1000 / args.iterations
+            times = torch.tensor([elapsed], device=f"npu:{device_id}", dtype=torch.float32)
+            if dist.is_initialized():
+                dist.all_reduce(times, op=dist.ReduceOp.MAX)
+            if args.profile:
+                with torch_npu.profiler.profile(
+                    activities=[torch_npu.profiler.ProfilerActivity.CPU, torch_npu.profiler.ProfilerActivity.NPU],
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(str(output_dir / "profiling")),
+                    record_shapes=True,
+                ) as prof:
+                    run_gdn(x, plan, args.communication, is_a5=is_a5)
+                    torch.npu.synchronize()
+                    prof.step()
+            metadata.update(passed=passed, accuracy_checked=bool(checks), checks=checks,
+                            warmup=args.warmup, iterations=args.iterations,
+                            rank_ms=elapsed, max_rank_ms=float(times.item()))
+            if output_dir:
+                (output_dir / "result.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            print(f"RESULT {json.dumps(metadata)}", flush=True)
+            return 0 if passed else 1
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()

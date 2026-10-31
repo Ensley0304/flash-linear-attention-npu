@@ -4,99 +4,115 @@
 
 | 示例 | CP 调用方式 | 切分及长度要求 |
 | --- | --- | --- |
-| [GDN](#gdn) | `torchrun --nproc_per_node=N ...`，使用原有 AllGather 路径 | 连续等长切分，全局长度须整除 `64 × N` |
+| [GDN](#gdn) | `--communication none/allgather/ptp`，CP 卡数由 `torchrun` 决定 | 连续或 zigzag，支持 packed；连续全局长度整除 `N`，zigzag 整除 `2 × N`，无需局部长度按 64 对齐 |
 | [KDA](#kda) | `--communication none/allgather/ptp`，CP 卡数由 `torchrun` 决定 | 连续或 zigzag，支持 packed；连续全局长度整除 `N`，zigzag 整除 `2 × N`，无需局部长度按 64 对齐 |
 
-两者都沿 token 维切分，每卡保留全部 head。以下分别说明各自的输入参数、接口和支持范围；本次更新未修改 GDN 接入代码。
+两者都沿 token 维切分，每卡保留全部 head。以下分别说明各自的输入参数、接口和支持范围。
 
 ## GDN
 
-### 环境
+### 环境与支持范围
 
-在 Linux 昇腾服务器上加载 CANN，激活已安装 `torch`、`torch_npu`、`fla_npu` 的环境。算子包需包含对应平台的 GDN 小算子和 CP 算子，安装见[开发者指南](../../docs/开发者指南.md)。
+使用包含主线 `34851b76c9986aeb9dd9826a4ca57c3ba0c205f1` 的匹配平台算子包；该版本已合入 A2/A3 的独立 Prepare。加载 CANN 后，激活安装了 `torch`、`torch_npu`、`fla_npu` 的环境，安装说明见[开发者指南](../../docs/开发者指南.md)。
 
 ```bash
 export PYTHONNOUSERSITE=1
 export TORCH_DEVICE_BACKEND_AUTOLOAD=0
-export FLA_NPU_STABLE_ABI=ctypes
-export HCCL_EXEC_TIMEOUT=120
+export HCCL_EXEC_TIMEOUT=180
 ```
 
-包需提供 `pre_process_fwd_kernel_merged`、`chunk_delta_h_bwd_preprocess`（反向预处理旧名）、`merge_fwd_bwd_kernel`。
+使用包的默认 Python 后端。需要 `chunk_gated_delta_rule_fwd_prepare`、`chunk_fwd_h`、`chunk_fwd_o`、`chunk_bwd_dv_local`、`chunk_gated_delta_rule_bwd_dhu`、`chunk_gated_delta_rule_bwd_finalize`，以及 `pre_process_fwd_kernel_merged`、`pre_process_bwd_kernel_merged`、`merge_fwd_bwd_kernel`。
 
-GDN 均直接向 Dhu 传入 Merge 得到的 `dht`，算子包还需包含 [PR #933](https://github.com/flashserve/flash-linear-attention-npu/pull/933) 的修复；旧 Dhu 会忽略该参数，不能用于本示例。
+- 接口覆盖 A2/A3/A5；各平台实机验证结果需分别确认。本次先验证 A2，不能替代 A3/A5 验证。
+- B=1、K=V=128、BF16 Q/K/V/do、FP32 g/beta、chunk_size=64。保留 GVA，示例范围为 `Hv/Hk ∈ {1,2,3,4}`。
+- Q/K 在进入示例计算前已做 L2Norm，beta 是已激活值；g 是自然对数域逐 token gate。返回的是对这些输入的梯度，不包含前置 L2Norm/sigmoid 的反向。
+- 保存前向 A、W/U、h、v_new，反向直接使用，不重新计算前向中间量。
+- 支持连续等长或 zigzag 切分，以及 packed/空序列边界；不支持外部初始状态、末状态损失和不等长分片。多机、整层卷积/FSDP 不在本次验证范围。
 
-### 运行
+### 运行：不开 CP、AllGather、PTP
 
-在仓库根目录执行，将设备 `0,1` 替换为分配到的卡。脚本自动识别平台；双卡时全局 T=256，每卡处理 128 个 token。
+`--tokens` 是切分前的全局 token 数，`torchrun --nproc_per_node` 决定本机 CP 卡数。以下设备号需替换为分配到的空闲卡。
 
 ```bash
-# GDN 双卡
-ASCEND_RT_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 \
-  examples/cp/chunk_gdn_cp.py --tokens 256 --heads 2 --accuracy-check
-
-# GDN 双卡 GVA：Hk=2，Hv=6
-ASCEND_RT_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 \
-  examples/cp/chunk_gdn_cp.py --tokens 256 --heads 2 --value-heads 6 --accuracy-check
-
-# GDN single NPU
+# 不开 CP：仍走相同小算子链，跳过 CP 预处理和通信。
 ASCEND_RT_VISIBLE_DEVICES=0 python examples/cp/chunk_gdn_cp.py \
-  --device 0 --tokens 128 --heads 2 --accuracy-check
+  --communication none --accuracy-check
 
-# GDN CPU reference only
-python examples/cp/chunk_gdn_cp.py --tokens 128 --heads 2 --cpu-reference-only
+# AllGather，CP=4。
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 \
+  examples/cp/chunk_gdn_cp.py --communication allgather --accuracy-check
+
+# PTP，CP=4，GVA：Hk=2、Hv=6。
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 \
+  examples/cp/chunk_gdn_cp.py --communication ptp \
+  --heads 2 --value-heads 6 --accuracy-check
+
+# PTP + zigzag + packed，每卡持有两段，每段 65 token。
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 \
+  examples/cp/chunk_gdn_cp.py --communication ptp --partition zigzag \
+  --tokens 520 --heads 2 --value-heads 6 \
+  --cu-seqlens 0,0,1,64,65,130,131,259,260,519,520 --accuracy-check
+
+# 仅 CPU 参考，不执行 NPU 或通信。
+python examples/cp/chunk_gdn_cp.py --tokens 128 --cpu-reference-only
 ```
 
-双卡成功时打印 `gdn CP world=2 accuracy: PASS`，退出码为 0。`--accuracy-check` 检查输出、梯度及 h0/dht；不加该参数只检查结果有限。
+连续切分要求 `tokens >= CP` 且整除 CP；zigzag 要求 `tokens >= 2*CP` 且整除 `2*CP`。局部长度和单条 packed 序列无需按 64 对齐，head 数无需整除 CP。分片规则及 AllGather/PTP 的摘要扫描与下文 KDA 相同；GVA 的状态/摘要使用 Hv 个 head。
 
-### 命令行参数
+### 前后向调用链与输入
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `--tokens` | `256` | 全局长度，须为 `64 × WORLD_SIZE` 的正整数倍 |
-| `--heads` | `2` | Q/K head 数，范围 `[1,128]` |
-| `--value-heads` | 等于 heads | 仅 GDN；Hv 在 `[1,128]`，Hv/Hk 为 1、2、3 或 4 |
-| `--device` | `0` | 仅单进程使用；多进程由 LOCAL_RANK 选卡 |
-| `--seed` | `20261010` | 随机种子 |
-| `--accuracy-check` | 关闭 | 与完整序列 CPU 参考比较 |
-| `--cpu-reference-only` | 关闭 | 只运行 CPU 参考，不使用 torchrun |
-| `--output-tol` | `0.005` | 输出 atol/rtol |
-| `--grad-tol` | `0.008` | dq/dk/dv atol/rtol |
-| `--gate-tol` | `0.02` | 门控及其参数梯度 atol/rtol |
-| `--boundary-tol` | `0.02` | h0/dht atol/rtol |
+`run_gdn(x, plan, communication)` 中直接列出全部阶段，A2/A3/A5 通过相同公共接口调用：
 
-精度检查同时要求结果有限、普通量余弦相似度 ≥0.999、门控梯度 ≥0.99；`rel_l2` 仅供参考。
+```text
+前向：FwdPrepare → pre_process_fwd → exchange_boundary → FwdH(h0) → FwdO
+反向：DvLocal → pre_process_bwd → exchange_boundary → Dhu(dht) → BwdFinalize
+```
 
-### 模型调用入参
+`exchange_boundary` 选择 AllGather + Merge 或 PTP 递归倍增扫描。AllGather 收集各段摘要后合并；PTP 在通信轮次间合成摘要，反向按相反的序列顺序扫描。两种方式都只把同一条 packed 序列的状态传到对应边界。FwdH 接收 FP32 h0，Dhu 接收 BF16 dht；不开 CP 时使用 FP32 零初态，以保持基准和 CP 的状态精度一致。
 
-内部入口为 `run_gdn(x, *, scale, rank, world, architecture="a5")`，同时执行前向和显式反向。`x` 为下表字典，`L=T/world`。
+Prepare 输出以 2 为底的分块累积门控，供 FwdH、CP 预处理、Dhu 和 Finalize 使用。DvLocal 内部使用自然指数，因此接收 `gc * ln(2)`。A2/A3 FwdO 也使用自然指数并输出 BNSD，示例随后转为 BSND 视图；A5 FwdO 直接使用 exp2 并输出 BSND。直接调用 `run_gdn` 时用 `is_a5=True` 选择后者，CLI 自动识别设备。GVA 的共享 Q/K 梯度由 Finalize 在组内求和。
 
-四维输入使用连续 **BNSD `[B,H,T,D]`** 布局；BSND 输入先做 `permute(0,2,1,3).contiguous()`。固定 `B=1`、`K=V=128`，Q/K 已做 L2 归一化。
+`plan` 由 `build_partition(global_cu, global_tokens, rank, world, partition)` 生成；输入按 `plan["parts"]` 顺序取本地片段，zigzag 为前段后接后段。设本地总长度为 `L=tokens/world`：
 
-#### GDN
-
-| 键 | dtype | 本地 shape | 说明 |
+| `x` 键 | dtype | 本地 shape | 含义 |
 | --- | --- | --- | --- |
-| `q`、`k` | BF16 | `[1,Hk,L,128]` | Q/K |
-| `v`、`do` | BF16 | `[1,Hv,L,128]` | value、上游输出梯度 |
+| `q`、`k` | BF16 | `[1,Hk,L,128]` | 已归一化的 Q/K |
+| `v`、`do` | BF16 | `[1,Hv,L,128]` | value 和上游输出梯度 |
 | `g` | FP32 | `[1,Hv,L]` | 自然对数域逐 token gate，未做 cumsum |
 | `beta` | FP32 | `[1,Hv,L]` | 已激活的更新系数，非 logits |
 
-返回 `o/dq/dk/dv/dbeta/dg/h0/dht`。`o/dv` 使用 Hv，`dq/dk` 使用 Hk；GVA 的共享 Q/K 梯度求和。`h0/dht` 为 `[1,Hv,128,128]`。
+返回 `o/dq/dk/dv/dbeta/dg`；token 输出为 BSND，beta/g 梯度为 BSN。CP 模式额外返回 `h0/dht`，shape 为 `[本地逻辑序列数,Hv,128,128]`，无跨卡依赖的边界为零。`dq/dk` 使用 Hk，其他输出使用 Hv。
 
-#### 调用约定
+这是显式前后向示例，不是 autograd 层。直接调用前需初始化 NPU；CP 模式需初始化 HCCL。模型集成应使用模型的 CP 通信组，不能直接把默认进程组当作所有并行场景的 CP 组。
 
-- `scale=128**-0.5`；`architecture` 为 `"a5"` 或 `"a2_a3"`。
-- 直接调用前加载 `fla_npu`、初始化 NPU，并将输入放到本 rank 设备；多卡先初始化 HCCL，`rank/world` 与默认进程组一致。有其他并行组时，需改为使用模型的 CP 组。
-- 仅沿 token 维连续等长切分。
-- 示例未封装 autograd。训练接入需拆开前后向并保存中间量；`dq/dk` 不含 L2Norm backward。
+### 精度检查、计时与 profiling
 
-### 支持范围
+`--accuracy-check` 使用独立 FP32 递推/autograd 标杆，检查输出、五项梯度以及 CP 的 h0/dht。CPU 标杆限制 `tokens * value_heads <= 8192`，这是参考计算的资源限制，不是算子输入限制。输出、dq/dk/dv、gate 梯度、边界的 atol/rtol 默认分别为 0.005、0.008、0.02、0.02，同时检查有限性和余弦相似度；不通过时返回非零退出码。
 
-- `chunk_size=64`，保存中间量、不开重计算。GDN 支持 GVA。
-- GDN 直接传入 dht 的版本此前已在 A2 验证单卡、双卡和 GVA；本次 KDA 更新不修改 GDN 代码，也未重新做 GDN 的 NPU 验证。
-- 不覆盖 varlen/packed、zigzag、不等长切分、外部非零初始状态、末状态损失和多机验证。
-- Dhu 直接使用 `dht`，不追加虚拟 chunk；未做性能验收。
+大用例使用 `--save-result` 保存同包不开 CP 的 NPU 结果，再用 `--reference` 比较；这不能替代独立 CPU 精度验收。计时排除输入生成、CPU 参考和文件写入，包含完整前后向及 CP 通信，报告最慢 rank 的平均耗时。`--profile` 单独采集一轮预热后的执行。
+
+```bash
+ASCEND_RT_VISIBLE_DEVICES=0 python examples/cp/chunk_gdn_cp.py \
+  --communication none --tokens 131072 --heads 32 \
+  --cu-seqlens 0,70290,129130,131072 --warmup 5 --iterations 20 \
+  --save-result /path/to/gdn-no-cp.pt --output-dir /path/to/gdn-none --profile
+
+ASCEND_RT_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 \
+  examples/cp/chunk_gdn_cp.py --communication ptp \
+  --tokens 131072 --heads 32 --cu-seqlens 0,70290,129130,131072 \
+  --warmup 5 --iterations 20 --reference /path/to/gdn-no-cp.pt \
+  --output-dir /path/to/gdn-ptp --profile
+# 将 ptp 改成 allgather，并使用独立 output-dir，可采集 AllGather。
+```
+
+每卡结果在 `<output-dir>/rankN/result.json`；profiling 在对应的 `profiling/PROF_*` 下。导出原始 CSV：
+
+```bash
+msprof --export=on --output=/path/to/PROF_directory --summary-format=csv
+```
+
+保留每卡的 `op_summary*.csv`、结果、源码版本和 wheel hash。PTP 的主要区别是摘要存储和传递方式，并不保证耗时比 AllGather 低。
+
 
 ## KDA
 
