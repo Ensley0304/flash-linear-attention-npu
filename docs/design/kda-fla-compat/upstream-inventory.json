@@ -1,0 +1,778 @@
+{
+  "upstream_commit": "c55dc553edf44701bf703715ed052d811f8a6376",
+  "source": "tests/ops/test_kda.py",
+  "sha256": "81c3a30f7859e66e933179eb338c5e5d38e8236327f65be88a97be597c71d81f",
+  "note": "Static inventory only. Parametrized case counts require pytest collection. Exclusions require explicit scope evidence. Prior 96-case subset is not full-suite acceptance.",
+  "tests": [
+    {
+      "name": "test_naive_chunk",
+      "line": 49,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"HV\", \"D\", \"scale\", \"gate_logit_normalizer\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-HV{}-D{}-scale{}-gate_logit_normalizer{}-{}\".format(*test))\n        for test in [\n            (1, 64, 1, 1, 64, 1, 1, torch.float),\n            (2, 512, 3, 3, 60, 1, 1, torch.float),\n            (4, 1024, 4, 4, 128, 0.1, 1, torch.float),\n            (4, 1024, 4, 4, 128, 1, 10, torch.float),\n\n            (1, 64, 1, 2, 64, 1, 1, torch.float),\n            (2, 512, 2, 4, 60, 1, 1, torch.float),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_naive_chunk[B1-T64-H1-HV1-D64-scale1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_naive_chunk[B2-T512-H3-HV3-D60-scale1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_naive_chunk[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_naive_chunk[B4-T1024-H4-HV4-D128-scale1-gate_logit_normalizer10-torch.float32]",
+        "tests/ops/test_kda.py::test_naive_chunk[B1-T64-H1-HV2-D64-scale1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_naive_chunk[B2-T512-H2-HV4-D60-scale1-gate_logit_normalizer1-torch.float32]"
+      ],
+      "collected_count": 6
+    },
+    {
+      "name": "test_chunk_invalid_chunk_size",
+      "line": 87,
+      "public_adapter_hooked": false,
+      "decorators": [],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_invalid_chunk_size"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_fused_recurrent",
+      "line": 116,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"HV\", \"D\", \"scale\", \"gate_logit_normalizer\", \"use_qk_l2norm_in_kernel\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-HV{}-D{}-scale{}-gate_logit_normalizer{}-use_qk_l2norm{}-{}\".format(*test))\n        for test in [\n            (1, 64, 1, 1, 64, 1, 1, False, torch.float),\n            (2, 512, 3, 3, 60, 1, 1, False, torch.float),\n            (3, 1000, 4, 4, 100, 0.1, 1, True, torch.float),\n            (4, 1024, 4, 4, 128, 0.1, 1, False, torch.float),\n            (2, 512, 2, 4, 60, 1, 1, False, torch.float),\n            (2, 1024, 2, 8, 128, 0.1, 1, True, torch.float),\n            (2, 4, 2, 4, 7, 1, 1, False, torch.float),\n            (2, 4, 2, 4, 8, 1, 1, False, torch.bfloat16),\n            (2, 4, 2, 4, 9, 1, 1, False, torch.float16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent[B1-T64-H1-HV1-D64-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B2-T512-H3-HV3-D60-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B3-T1000-H4-HV4-D100-scale0.1-gate_logit_normalizer1-use_qk_l2normTrue-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B2-T512-H2-HV4-D60-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B2-T1024-H2-HV8-D128-scale0.1-gate_logit_normalizer1-use_qk_l2normTrue-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B2-T4-H2-HV4-D7-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B2-T4-H2-HV4-D8-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_fused_recurrent[B2-T4-H2-HV4-D9-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float16]"
+      ],
+      "collected_count": 9
+    },
+    {
+      "name": "test_fused_recurrent_output_buffer",
+      "line": 182,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.smoke",
+        "pytest.mark.parametrize(\n    ('packed', 'supplied_output', 'state_v_first'),\n    [\n        pytest.param(False, False, False, id='dense-allocated'),\n        pytest.param(False, True, True, id='dense-supplied'),\n        pytest.param(True, False, False, id='packed-zero-tail'),\n        pytest.param(True, True, True, id='packed-preserved-tail'),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_output_buffer[dense-allocated]",
+        "tests/ops/test_kda.py::test_fused_recurrent_output_buffer[dense-supplied]",
+        "tests/ops/test_kda.py::test_fused_recurrent_output_buffer[packed-zero-tail]",
+        "tests/ops/test_kda.py::test_fused_recurrent_output_buffer[packed-preserved-tail]"
+      ],
+      "collected_count": 4
+    },
+    {
+      "name": "test_fused_recurrent_empty_varlen_state",
+      "line": 233,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize('state_v_first', [False, True], ids=['kv', 'vk'])"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_empty_varlen_state[kv]",
+        "tests/ops/test_kda.py::test_fused_recurrent_empty_varlen_state[vk]"
+      ],
+      "collected_count": 2
+    },
+    {
+      "name": "test_fused_recurrent_empty_spec_decoding",
+      "line": 264,
+      "public_adapter_hooked": false,
+      "decorators": [],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_empty_spec_decoding"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_fused_recurrent_use_beta_sigmoid_in_kernel",
+      "line": 307,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"D\", \"allow_neg_eigval\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-D{}-allow_neg_eigval{}-{}\".format(*test))\n        for test in [\n            (2, 256, 4, 64, False, torch.float),\n            (2, 256, 4, 64, True, torch.float),\n            (1, 512, 3, 60, True, torch.float),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_use_beta_sigmoid_in_kernel[B2-T256-H4-D64-allow_neg_eigvalFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_use_beta_sigmoid_in_kernel[B2-T256-H4-D64-allow_neg_eigvalTrue-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_use_beta_sigmoid_in_kernel[B1-T512-H3-D60-allow_neg_eigvalTrue-torch.float32]"
+      ],
+      "collected_count": 3
+    },
+    {
+      "name": "test_fused_recurrent_state_v_first",
+      "line": 366,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"D\", \"scale\", \"gate_logit_normalizer\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-D{}-scale{}-gate_logit_normalizer{}-{}\".format(*test))\n        for test in [\n            (1, 64, 1, 64, 1, 1, torch.float),\n            (2, 512, 3, 60, 1, 1, torch.float),\n            (3, 1000, 4, 100, 0.1, 1, torch.float),\n            (4, 1024, 4, 128, 0.1, 1, torch.float),\n            (2, 4, 4, 9, 1, 1, torch.bfloat16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B1-T64-H1-D64-scale1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B2-T512-H3-D60-scale1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B3-T1000-H4-D100-scale0.1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B4-T1024-H4-D128-scale0.1-gate_logit_normalizer1-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B2-T4-H4-D9-scale1-gate_logit_normalizer1-torch.bfloat16]"
+      ],
+      "collected_count": 5
+    },
+    {
+      "name": "test_fused_recurrent_gate_in_kernel",
+      "line": 436,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"HV\", \"D\", \"scale\", \"has_a_log\", \"has_dt_bias\", \"safe_gate\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-HV{}-D{}-scale{}-has_a_log{}-has_dt_bias{}-safe_gate{}-{}\".format(*test))\n        for test in [\n            (1, 64, 1, 1, 64, 1, True, False, False, torch.float),\n            (2, 256, 2, 2, 64, 1, True, True, False, torch.float),\n            (2, 512, 2, 4, 64, 0.1, True, True, True, torch.float16),\n            (3, 1000, 2, 8, 128, 1, True, False, False, torch.float16),\n            (4, 1024, 4, 4, 128, 0.1, True, True, True, torch.float16),\n            (1, 64, 1, 1, 64, 1, False, False, True, torch.float),\n            (2, 256, 2, 4, 64, 1, False, True, True, torch.float),\n            (2, 63, 2, 4, 64, 1, False, True, False, torch.bfloat16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B1-T64-H1-HV1-D64-scale1-has_a_logTrue-has_dt_biasFalse-safe_gateFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T256-H2-HV2-D64-scale1-has_a_logTrue-has_dt_biasTrue-safe_gateFalse-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T512-H2-HV4-D64-scale0.1-has_a_logTrue-has_dt_biasTrue-safe_gateTrue-torch.float16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B3-T1000-H2-HV8-D128-scale1-has_a_logTrue-has_dt_biasFalse-safe_gateFalse-torch.float16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B4-T1024-H4-HV4-D128-scale0.1-has_a_logTrue-has_dt_biasTrue-safe_gateTrue-torch.float16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B1-T64-H1-HV1-D64-scale1-has_a_logFalse-has_dt_biasFalse-safe_gateTrue-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T256-H2-HV4-D64-scale1-has_a_logFalse-has_dt_biasTrue-safe_gateTrue-torch.float32]",
+        "tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T63-H2-HV4-D64-scale1-has_a_logFalse-has_dt_biasTrue-safe_gateFalse-torch.bfloat16]"
+      ],
+      "collected_count": 8
+    },
+    {
+      "name": "test_fused_recurrent_vllm_decode",
+      "line": 511,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"H\", \"D\", \"scale\", \"gate_logit_normalizer\", \"use_qk_l2norm_in_kernel\", \"use_gate_in_kernel\", \"safe_gate\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-H{}-D{}-scale{}-norm{}-qk_l2{}-gate{}-safe_gate{}-dtype{}\".format(*test))\n        for test in [\n            (16, 16, 128, 0.1, 1.0, True, False, False, torch.bfloat16),\n            (32, 8, 64, 1.0, 1.0, False, False, False, torch.float16),\n            (7, 32, 128, 0.5, 0.5, True, False, False, torch.bfloat16),\n            (16, 16, 128, 0.1, 1.0, True, True, False, torch.bfloat16),\n            (32, 8, 64, 1.0, 1.0, False, True, False, torch.float16),\n            (7, 32, 128, 0.5, 0.5, True, True, True, torch.bfloat16),\n        ]\n    ],\n)",
+        "pytest.mark.skipif(not (IS_NVIDIA or IS_NPU), reason='test_fused_recurrent_vllm_decode requires CUDA or NPU')"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B16-H16-D128-scale0.1-norm1.0-qk_l2True-gateFalse-safe_gateFalse-dtypetorch.bfloat16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B32-H8-D64-scale1.0-norm1.0-qk_l2False-gateFalse-safe_gateFalse-dtypetorch.float16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B7-H32-D128-scale0.5-norm0.5-qk_l2True-gateFalse-safe_gateFalse-dtypetorch.bfloat16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B16-H16-D128-scale0.1-norm1.0-qk_l2True-gateTrue-safe_gateFalse-dtypetorch.bfloat16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B32-H8-D64-scale1.0-norm1.0-qk_l2False-gateTrue-safe_gateFalse-dtypetorch.float16]",
+        "tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B7-H32-D128-scale0.5-norm0.5-qk_l2True-gateTrue-safe_gateTrue-dtypetorch.bfloat16]"
+      ],
+      "collected_count": 6
+    },
+    {
+      "name": "test_fused_recurrent_indexed_state",
+      "line": 632,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    ('state_v_first', 'packed', 'index_stride', 'accepted_tokens'),\n    [\n        pytest.param(False, False, 2, 2, id='dense-strided-accepted'),\n        pytest.param(True, True, 2, 2, id='packed-vfirst-strided-accepted'),\n        pytest.param(False, True, 1, 1, id='packed-contiguous-first'),\n    ],\n)",
+        "pytest.mark.skipif(not (IS_NVIDIA or IS_NPU), reason='Indexed KDA requires CUDA or NPU')"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_state[dense-strided-accepted]",
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_state[packed-vfirst-strided-accepted]",
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_state[packed-contiguous-first]"
+      ],
+      "collected_count": 3
+    },
+    {
+      "name": "test_fused_recurrent_indexed_output",
+      "line": 653,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    ('state_v_first', 'packed', 'index_stride', 'accepted_tokens', 'state_output'),\n    [\n        pytest.param(True, False, 1, 1, 'separate', id='dense-vfirst-token-states'),\n        pytest.param(False, True, 2, 2, 'separate', id='packed-strided-token-states'),\n        pytest.param(False, False, 2, 2, 'none', id='dense-strided-no-state'),\n        pytest.param(True, True, 1, 1, 'none', id='packed-vfirst-no-state'),\n    ],\n)",
+        "pytest.mark.skipif(not (IS_NVIDIA or IS_NPU), reason='Indexed KDA requires CUDA or NPU')"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_output[dense-vfirst-token-states]",
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_output[packed-strided-token-states]",
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_output[dense-strided-no-state]",
+        "tests/ops/test_kda.py::test_fused_recurrent_indexed_output[packed-vfirst-no-state]"
+      ],
+      "collected_count": 4
+    },
+    {
+      "name": "test_chunk",
+      "line": 825,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\n        \"B\",\n        \"T\",\n        \"H\",\n        \"HV\",\n        \"D\",\n        \"scale\",\n        \"gate_logit_normalizer\",\n        \"mask_p\",\n        \"use_qk_l2norm_in_kernel\",\n        \"use_gate_in_kernel\",\n        \"has_a_log\",\n        \"dtype\",\n        \"safe_gate\",\n        \"disable_recompute\",\n        \"chunk_size\",\n    ),\n    [\n        pytest.param(\n            *test,\n            id=(\n                \"B{}-T{}-H{}-HV{}-D{}-scale{}-gate_logit_normalizer{}-mask_p{}\"\n                \"-use_qk_l2norm{}-use_gate{}-has_a_log{}-{}-safe_gate{}-disable_recompute{}-chunk_size{}\"\n            ).format(*test),\n        )\n        for test in [\n            (1, 63, 1, 1, 64, 1, 1, 0, False, False, False, torch.float16, True, False, 64),\n            (2, 500, 3, 3, 60, 1, 1, 0, False, False, False, torch.float16, True, True, 64),\n            (2, 1000, 3, 3, 64, 0.1, 1, 0.5, False, False, False, torch.float16, False, True, 64),\n            (3, 1024, 4, 4, 100, 1, 0.1, 0, False, False, False, torch.float16, False, False, 64),\n            (4, 1024, 4, 4, 128, 0.1, 1, 0, False, False, False, torch.float16, True, True, 64),\n            (4, 1024, 4, 4, 128, 0.1, 1, 0, True, False, False, torch.float16, True, False, 64),\n            (2, 1500, 4, 4, 128, 0.1, 10, 0, False, True, True, torch.float16, False, True, 64),\n            (4, 2048, 8, 8, 64, 0.1, 1, 0, False, True, True, torch.float16, True, True, 64),\n\n            (2, 1024, 2, 4, 64, 0.1, 1, 0, False, False, False, torch.float16, False, False, 64),\n            (2, 1024, 2, 8, 64, 0.1, 1, 0, False, True, True, torch.float16, False, False, 64),\n            (2, 1024, 4, 8, 128, 0.1, 1, 0, True, True, True, torch.float16, False, False, 64),\n            (2, 160, 2, 4, 64, 0.1, 1, 0, False, True, True, torch.float16, True, True, 32),\n\n            (2, 1024, 2, 4, 64, 0.1, 1, 0, True, True, True, torch.bfloat16, True, False, 64),\n            (2, 1024, 2, 4, 64, 0.1, 1, 0, False, True, True, torch.bfloat16, False, False, 64),\n            (2, 160, 2, 4, 64, 0.1, 1, 0, False, True, True, torch.bfloat16, True, True, 32),\n            (2, 1024, 2, 8, 128, 0.1, 1, 0, True, True, True, torch.bfloat16, False, False, 64),\n            (1, 65, 1, 1, 64, 1, 1, 0, False, True, False, torch.float16, False, False, 64),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk[B1-T63-H1-HV1-D64-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T500-H3-HV3-D60-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1000-H3-HV3-D64-scale0.1-gate_logit_normalizer1-mask_p0.5-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeTrue-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B3-T1024-H4-HV4-D100-scale1-gate_logit_normalizer0.1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normTrue-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1500-H4-HV4-D128-scale0.1-gate_logit_normalizer10-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.float16-safe_gateFalse-disable_recomputeTrue-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B4-T2048-H8-HV8-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV8-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1024-H4-HV8-D128-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normTrue-use_gateTrue-has_a_logTrue-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T160-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size32]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normTrue-use_gateTrue-has_a_logTrue-torch.bfloat16-safe_gateTrue-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.bfloat16-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B2-T160-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.bfloat16-safe_gateTrue-disable_recomputeTrue-chunk_size32]",
+        "tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV8-D128-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normTrue-use_gateTrue-has_a_logTrue-torch.bfloat16-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk[B1-T65-H1-HV1-D64-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64]"
+      ],
+      "collected_count": 17
+    },
+    {
+      "name": "test_chunk_causality",
+      "line": 951,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"T\", \"P\", \"H\", \"D\", \"chunk_size\", \"use_gate_in_kernel\"),\n    [\n        pytest.param(\n            *test,\n            use_gate_in_kernel,\n            id=\"T{}-P{}-H{}-D{}-chunk_size{}-use_gate{}\".format(*test, use_gate_in_kernel),\n        )\n        for use_gate_in_kernel in [False, True]\n        for test in [\n            (16, 6, 2, 64, 64),\n            (32, 6, 2, 64, 32),\n            (22, 21, 4, 128, 64),\n            (40, 33, 2, 64, 32),\n            (70, 65, 2, 64, 64),\n        ]\n    ],\n)",
+        "pytest.mark.skipif(IS_NPU, reason=\"Ascend uses separate intra kernels whose anchors are unchanged\")"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_causality[T16-P6-H2-D64-chunk_size64-use_gateFalse]",
+        "tests/ops/test_kda.py::test_chunk_causality[T32-P6-H2-D64-chunk_size32-use_gateFalse]",
+        "tests/ops/test_kda.py::test_chunk_causality[T22-P21-H4-D128-chunk_size64-use_gateFalse]",
+        "tests/ops/test_kda.py::test_chunk_causality[T40-P33-H2-D64-chunk_size32-use_gateFalse]",
+        "tests/ops/test_kda.py::test_chunk_causality[T70-P65-H2-D64-chunk_size64-use_gateFalse]",
+        "tests/ops/test_kda.py::test_chunk_causality[T16-P6-H2-D64-chunk_size64-use_gateTrue]",
+        "tests/ops/test_kda.py::test_chunk_causality[T32-P6-H2-D64-chunk_size32-use_gateTrue]",
+        "tests/ops/test_kda.py::test_chunk_causality[T22-P21-H4-D128-chunk_size64-use_gateTrue]",
+        "tests/ops/test_kda.py::test_chunk_causality[T40-P33-H2-D64-chunk_size32-use_gateTrue]",
+        "tests/ops/test_kda.py::test_chunk_causality[T70-P65-H2-D64-chunk_size64-use_gateTrue]"
+      ],
+      "collected_count": 10
+    },
+    {
+      "name": "test_chunk_lower_bound",
+      "line": 1024,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"lower_bound\", \"dtype\", \"use_gate_in_kernel\", \"cu_seqlens\", \"gate_pattern\"),\n    [\n        pytest.param(\n            lower_bound,\n            dtype,\n            use_gate_in_kernel,\n            cu_seqlens,\n            gate_pattern,\n            id=f\"lower_bound{lower_bound}-{dtype}-use_gate{use_gate_in_kernel}-cu_seqlens{cu_seqlens}-{gate_pattern}\",\n        )\n        for cu_seqlens in [None, [0, 1, 17, 38]]\n        for use_gate_in_kernel in [False, True]\n        for dtype in [torch.bfloat16, torch.float16]\n        for lower_bound in [-5.0, -2.0, -0.01]\n        for gate_pattern in (\n            [\"random\", \"lower_bound\", \"zero\", \"mixed\"] if not use_gate_in_kernel and lower_bound == -5.0 else [\"random\"]\n        )\n    ],\n)",
+        "pytest.mark.skipif(IS_NPU, reason=\"Ascend uses separate intra kernels whose anchors are unchanged\")"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-lower_bound]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-zero]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-mixed]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateFalse-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-lower_bound]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-zero]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-mixed]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateFalse-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateFalse-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateTrue-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateTrue-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateTrue-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateTrue-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateTrue-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateTrue-cu_seqlensNone-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-lower_bound]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-zero]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-mixed]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-lower_bound]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-zero]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-mixed]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random]",
+        "tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random]"
+      ],
+      "collected_count": 36
+    },
+    {
+      "name": "test_chunk_state_v_first",
+      "line": 1126,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"D\", \"scale\", \"gate_logit_normalizer\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-D{}-scale{}-gate_logit_normalizer{}-{}\".format(*test))\n        for test in [\n            (1, 63, 1, 64, 1, 1, torch.float16),\n            (2, 500, 3, 60, 1, 1, torch.float16),\n            (3, 1024, 4, 128, 0.1, 1, torch.float16),\n            (4, 2048, 8, 64, 0.1, 1, torch.float16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_state_v_first[B1-T63-H1-D64-scale1-gate_logit_normalizer1-torch.float16]",
+        "tests/ops/test_kda.py::test_chunk_state_v_first[B2-T500-H3-D60-scale1-gate_logit_normalizer1-torch.float16]",
+        "tests/ops/test_kda.py::test_chunk_state_v_first[B3-T1024-H4-D128-scale0.1-gate_logit_normalizer1-torch.float16]",
+        "tests/ops/test_kda.py::test_chunk_state_v_first[B4-T2048-H8-D64-scale0.1-gate_logit_normalizer1-torch.float16]"
+      ],
+      "collected_count": 4
+    },
+    {
+      "name": "test_chunk_use_beta_sigmoid_in_kernel",
+      "line": 1193,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"D\", \"allow_neg_eigval\", \"dtype\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-D{}-allow_neg_eigval{}-{}\".format(*test))\n        for test in [\n            (1, 8192, 96, 128, False, torch.bfloat16),\n            (1, 8192, 96, 128, True, torch.bfloat16),\n            (2, 96, 2, 64, True, torch.float16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_use_beta_sigmoid_in_kernel[B1-T8192-H96-D128-allow_neg_eigvalFalse-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_use_beta_sigmoid_in_kernel[B1-T8192-H96-D128-allow_neg_eigvalTrue-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_use_beta_sigmoid_in_kernel[B2-T96-H2-D64-allow_neg_eigvalTrue-torch.float16]"
+      ],
+      "collected_count": 3
+    },
+    {
+      "name": "test_chunk_varlen",
+      "line": 1272,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"H\", \"D\", \"mask_p\", \"cu_seqlens\", \"dtype\", \"use_gate_in_kernel\", \"safe_gate\", \"disable_recompute\", \"chunk_size\"),\n    [\n        pytest.param(\n            *test,\n            id=(\"H{}-D{}-mask_p{}-cu_seqlens{}-{}-gate{}\" \"-safe_gate{}-disable_recompute{}-chunk_size{}\").format(*test),\n        )\n        for test in [\n            (4, 60, 0.1, [0, 15], torch.float16, True, False, False, 64),\n            (4, 64, 0.9, [0, 256, 500, 1000], torch.float16, True, False, False, 64),\n            (4, 128, 0.5, [0, 256, 500, 1000], torch.float16, False, False, False, 64),\n            (4, 100, 0, [0, 15, 100, 300, 1200, 2000], torch.float16, True, False, False, 64),\n            (4, 256, 0, [0, 100, 300, 1200, 3000, 4096], torch.float16, False, True, True, 64),\n            (4, 60, 0.1, [0, 31, 96, 160], torch.float16, True, False, True, 32),\n        ]\n    ],\n)",
+        "pytest.mark.smoke"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_varlen[H4-D60-mask_p0.1-cu_seqlens[0, 15]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk_varlen[H4-D64-mask_p0.9-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk_varlen[H4-D128-mask_p0.5-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateFalse-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk_varlen[H4-D100-mask_p0-cu_seqlens[0, 15, 100, 300, 1200, 2000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk_varlen[H4-D256-mask_p0-cu_seqlens[0, 100, 300, 1200, 3000, 4096]-torch.float16-gateFalse-safe_gateTrue-disable_recomputeTrue-chunk_size64]",
+        "tests/ops/test_kda.py::test_chunk_varlen[H4-D60-mask_p0.1-cu_seqlens[0, 31, 96, 160]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeTrue-chunk_size32]"
+      ],
+      "collected_count": 6
+    },
+    {
+      "name": "test_chunk_varlen_prefill",
+      "line": 1399,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"H\", \"D\", \"mask_p\", \"cu_seqlens\", \"dtype\", \"use_gate_in_kernel\", \"safe_gate\", \"disable_recompute\"),\n    [\n        pytest.param(*test, id=\"H{}-D{}-mask_p{}-cu_seqlens{}-{}-gate{}-safe_gate{}-disable_recompute{}\".format(*test))\n        for test in [\n            (4, 60, 0.1, [0, 8192], torch.float16, True, False, False),\n            (4, 64, 0.9, [0, 256, 500, 1000], torch.float16, True, False, False),\n            (4, 128, 0.5, [0, 256, 500, 1000], torch.float16, False, False, False),\n            (4, 100, 0, [0, 15, 100, 300, 1200, 2000], torch.float16, True, False, False),\n            (4, 256, 0, [0, 100, 300, 1200, 3000, 4096], torch.float16, False, True, True),\n        ]\n    ],\n)",
+        "torch.inference_mode()"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D60-mask_p0.1-cu_seqlens[0, 8192]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse]",
+        "tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D64-mask_p0.9-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse]",
+        "tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D128-mask_p0.5-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateFalse-safe_gateFalse-disable_recomputeFalse]",
+        "tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D100-mask_p0-cu_seqlens[0, 15, 100, 300, 1200, 2000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse]",
+        "tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D256-mask_p0-cu_seqlens[0, 100, 300, 1200, 3000, 4096]-torch.float16-gateFalse-safe_gateTrue-disable_recomputeTrue]"
+      ],
+      "collected_count": 5
+    },
+    {
+      "name": "test_chunk_collinear_keys_l2norm",
+      "line": 1500,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"H\", \"D\", \"cu_seqlens\", \"use_qk_l2norm_in_kernel\", \"dtype\"),\n    [\n        pytest.param(\n            *test,\n            id=f\"H{test[0]}-D{test[1]}-cu{test[2]}-l2norm{test[3]}-{test[4]}\",\n        )\n        for test in [\n            (8, 128, [0, 256, 512], False, torch.bfloat16),\n            (8, 128, [0, 256, 512], True, torch.bfloat16),\n            (4, 128, [0, 17, 81, 212], True, torch.bfloat16),\n            (4, 128, None, True, torch.bfloat16),\n            (4, 128, [0, 256, 512], True, torch.float16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H8-D128-cu[0, 256, 512]-l2normFalse-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H8-D128-cu[0, 256, 512]-l2normTrue-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H4-D128-cu[0, 17, 81, 212]-l2normTrue-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H4-D128-cuNone-l2normTrue-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H4-D128-cu[0, 256, 512]-l2normTrue-torch.float16]"
+      ],
+      "collected_count": 5
+    },
+    {
+      "name": "test_chunk_varlen_fused_training_contract",
+      "line": 1615,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"H\", \"D\", \"cu_seqlens\", \"disable_recompute\", \"dtype\"),\n    [\n        pytest.param(\n            *test,\n            id=f\"H{test[0]}-D{test[1]}-cu{test[2]}-no_recompute{test[3]}-{test[4]}\",\n        )\n        for test in [\n            (8, 128, [0, 1, 14, 78, 256], True, torch.bfloat16),\n            (8, 128, [0, 1, 14, 78, 256], False, torch.bfloat16),\n            (16, 128, [0, 19, 147, 512], True, torch.bfloat16),\n        ]\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_varlen_fused_training_contract[H8-D128-cu[0, 1, 14, 78, 256]-no_recomputeTrue-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_varlen_fused_training_contract[H8-D128-cu[0, 1, 14, 78, 256]-no_recomputeFalse-torch.bfloat16]",
+        "tests/ops/test_kda.py::test_chunk_varlen_fused_training_contract[H16-D128-cu[0, 19, 147, 512]-no_recomputeTrue-torch.bfloat16]"
+      ],
+      "collected_count": 3
+    },
+    {
+      "name": "test_gate",
+      "line": 1720,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"D\", \"HAS_A_LOG\", \"HAS_BIAS\", \"LOWER_BOUND\"),\n    [\n        pytest.param(*test, id=\"B{}-T{}-H{}-D{}-a_log{}-bias{}-lowerbound{}\".format(*test))\n        for test in [\n            (1, 2, 2, 12, True, False, -5.0),\n            (1, 32, 2, 16, True, False, -5.0),\n            (2, 64, 4, 32, True, False, -5.0),\n            (4, 128, 8, 64, True, False, -5.0),\n            (4, 128, 8, 128, True, False, None),\n            (1, 2, 2, 12, True, True, None),\n            (1, 32, 2, 16, True, True, None),\n            (2, 64, 4, 32, True, True, None),\n            (4, 128, 8, 64, True, True, None),\n            (4, 128, 8, 128, True, True, None),\n            (1, 2, 2, 12, False, False, -5.0),\n            (2, 64, 4, 32, False, False, -5.0),\n            (4, 128, 8, 64, False, True, -5.0),\n            (4, 128, 8, 128, False, True, -5.0),\n            (1, 32, 2, 16, False, True, None),\n        ]\n    ],\n)",
+        "pytest.mark.parametrize('dtype', [torch.float32, torch.float16, torch.bfloat16])",
+        "pytest.mark.parametrize('grad_scale', [1., 1e-8])"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0]",
+        "tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone]"
+      ],
+      "collected_count": 90
+    },
+    {
+      "name": "test_chunk_return_intermediate_states",
+      "line": 1786,
+      "public_adapter_hooked": true,
+      "decorators": [
+        "pytest.mark.parametrize(\"dtype\", [torch.bfloat16])"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "chunk_training",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_return_intermediate_states[dtype0]"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_flash_kda_chunk",
+      "line": 1953,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "_SKIP_FLASH_KDA",
+        "pytest.mark.parametrize(\n    (\"B\", \"T\", \"H\", \"D\", \"allow_neg_eigval\", \"has_A\", \"has_bias\", \"positional\"),\n    [\n        pytest.param(1, 1024, 4, 128, False, True, True, False, id=\"dense\"),\n        pytest.param(2, 2048, 8, 128, False, True, True, False, id=\"batched\"),\n        pytest.param(1, 4096, 16, 128, False, True, True, False, id=\"long\"),\n        pytest.param(1, 1024, 4, 128, True, True, True, False, id=\"negative-eigenvalues\"),\n        pytest.param(1, 1024, 4, 128, False, False, True, False, id=\"no-A\"),\n        pytest.param(1, 1024, 4, 128, False, True, False, False, id=\"no-bias\"),\n        pytest.param(1, 1024, 4, 128, False, True, True, True, id=\"positional\"),\n        pytest.param(1, 1024, 4, 128, True, True, True, True, id=\"positional-negative-eigenvalues\"),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_flash_kda_chunk[dense]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[batched]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[long]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[negative-eigenvalues]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[no-A]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[no-bias]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[positional]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk[positional-negative-eigenvalues]"
+      ],
+      "collected_count": 8
+    },
+    {
+      "name": "test_flash_kda_chunk_varlen",
+      "line": 2000,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "_SKIP_FLASH_KDA",
+        "pytest.mark.parametrize(\n    (\"H\", \"D\", \"cu_seqlens\", \"allow_neg_eigval\", \"has_A\", \"has_bias\"),\n    [\n        pytest.param(4, 128, [0, 256, 500, 1000], False, True, True, id=\"varlen\"),\n        pytest.param(8, 128, [0, 100, 300, 1200, 2000], False, True, True, id=\"multi-sequence\"),\n        pytest.param(16, 128, [0, 101, 303, 1205, 3007, 4096], False, True, True, id=\"unaligned\"),\n        pytest.param(4, 128, [0, 256, 500, 1000], True, True, True, id=\"negative-eigenvalues\"),\n        pytest.param(4, 128, [0, 256, 500, 1000], False, False, True, id=\"no-A\"),\n        pytest.param(4, 128, [0, 256, 500, 1000], False, True, False, id=\"no-bias\"),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_flash_kda_chunk_varlen[varlen]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk_varlen[multi-sequence]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk_varlen[unaligned]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk_varlen[negative-eigenvalues]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk_varlen[no-A]",
+        "tests/ops/test_kda.py::test_flash_kda_chunk_varlen[no-bias]"
+      ],
+      "collected_count": 6
+    },
+    {
+      "name": "test_partition_chunk_indices_full_tail_uses_host_metadata",
+      "line": 2089,
+      "public_adapter_hooked": false,
+      "decorators": [],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_partition_chunk_indices_full_tail_uses_host_metadata"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_ascend_tail_padding_strided_gather",
+      "line": 2101,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend strided tail gather requires NPU')",
+        "pytest.mark.parametrize('rank', [2, 3, 4])"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_ascend_tail_padding_strided_gather[2]",
+        "tests/ops/test_kda.py::test_ascend_tail_padding_strided_gather[3]",
+        "tests/ops/test_kda.py::test_ascend_tail_padding_strided_gather[4]"
+      ],
+      "collected_count": 3
+    },
+    {
+      "name": "test_triton_ascend_backend_routing",
+      "line": 2184,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend KDA backend routing is only exercised on NPU')"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_triton_ascend_backend_routing"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_triton_ascend_kda_autotune_pruning",
+      "line": 2250,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend KDA autotuning is only exercised on NPU')",
+        "pytest.mark.parametrize(\n    ('capacity_kib', 'D', 'expected_blocks'),\n    [\n        pytest.param(64, 256, {8}, id='fallback-64kib'),\n        pytest.param(192, 60, {8, 16, 32}, id='padded-k64'),\n        pytest.param(192, 100, {8, 16}, id='padded-k128'),\n        pytest.param(192, 256, {8}, id='limited-192kib'),\n        pytest.param(256, 256, {8, 16}, id='expanded-256kib'),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[fallback-64kib]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[padded-k64]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[padded-k128]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[limited-192kib]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[expanded-256kib]"
+      ],
+      "collected_count": 5
+    },
+    {
+      "name": "test_triton_ascend_kda_config_validation",
+      "line": 2274,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend KDA autotuning is only exercised on NPU')",
+        "pytest.mark.parametrize(\n    ('config', 'accepted'),\n    [\n        pytest.param({'BC': 8}, True, id='legacy-defaults'),\n        pytest.param({'BC': 8, 'LOOP_UNROLL': 2, 'multibuffer': False, 'set_workspace_multibuffer': 1},\n                     True, id='joint-config'),\n        pytest.param({'BC': 8, 'LOOP_UNROLL': 3}, False, id='invalid-unroll'),\n        pytest.param({'BC': 8, 'multibuffer': False, 'set_workspace_multibuffer': 4}, False, id='invalid-workspace'),\n        pytest.param({'BC': 8, 'multibuffer': True, 'set_workspace_multibuffer': 1}, False, id='mixed-compile-options'),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[legacy-defaults]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[joint-config]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[invalid-unroll]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[invalid-workspace]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[mixed-compile-options]"
+      ],
+      "collected_count": 5
+    },
+    {
+      "name": "test_triton_ascend_kda_resource_cache",
+      "line": 2291,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend KDA tiling is only exercised on NPU')",
+        "pytest.mark.parametrize(\n    ('module_name', 'helper_name', 'args', 'expected'),\n    [\n        pytest.param('chunk_intra', '_get_inter_bk', (256,), (128, 32, 128), id='inter-tile'),\n        pytest.param('gate', 'get_chunk_cumsum_bs', (64, 256), (64, 16, 64), id='gate-tile'),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_triton_ascend_kda_resource_cache[inter-tile]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_resource_cache[gate-tile]"
+      ],
+      "collected_count": 2
+    },
+    {
+      "name": "test_triton_ascend_kda_launch_grid",
+      "line": 2316,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend KDA launches are only exercised on NPU')",
+        "pytest.mark.parametrize(\n    ('tg_total', 'hv_total'),\n    [\n        pytest.param(65, 9, id='time-split'),\n        pytest.param(3, 257, id='head-split'),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_triton_ascend_kda_launch_grid[time-split]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_launch_grid[head-split]"
+      ],
+      "collected_count": 2
+    },
+    {
+      "name": "test_triton_ascend_kda_autotune_candidates",
+      "line": 2349,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(backends._DISPATCH_DISABLED, reason='Backend dispatch was disabled before import')",
+        "pytest.mark.skipif(not IS_NPU, reason='Triton-Ascend KDA autotuning is only exercised on NPU')",
+        "pytest.mark.parametrize(\n    ('packed', 'D', 'T', 'H', 'HV'),\n    [\n        pytest.param(False, 60, 65, 3, 9, id='dense-padded-k64'),\n        pytest.param(False, 64, 128, 4, 32, id='dense-aligned-k64'),\n        pytest.param(False, 128, 128, 4, 32, id='dense-aligned-k128'),\n        pytest.param(True, 256, 65, 3, 3, id='packed-k256'),\n    ],\n)"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[dense-padded-k64]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[dense-aligned-k64]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[dense-aligned-k128]",
+        "tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[packed-k256]"
+      ],
+      "collected_count": 4
+    },
+    {
+      "name": "test_flash_kda_dispatch",
+      "line": 2390,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(backends._DISPATCH_DISABLED, reason='Backend dispatch was disabled before import')",
+        "pytest.mark.parametrize('route', ['accepted', 'disabled', 'unavailable', 'training', 'gate-not-fused'])"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_flash_kda_dispatch[accepted]",
+        "tests/ops/test_kda.py::test_flash_kda_dispatch[disabled]",
+        "tests/ops/test_kda.py::test_flash_kda_dispatch[unavailable]",
+        "tests/ops/test_kda.py::test_flash_kda_dispatch[training]",
+        "tests/ops/test_kda.py::test_flash_kda_dispatch[gate-not-fused]"
+      ],
+      "collected_count": 5
+    },
+    {
+      "name": "test_chunk_bwd_tilelang_dispatch",
+      "line": 2438,
+      "public_adapter_hooked": false,
+      "decorators": [
+        "pytest.mark.skipif(backends._DISPATCH_DISABLED, reason='Backend dispatch was disabled before import')"
+      ],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_bwd_tilelang_dispatch"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_chunk_bwd_tilelang_verifier_rejects_graph",
+      "line": 2454,
+      "public_adapter_hooked": false,
+      "decorators": [],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_bwd_tilelang_verifier_rejects_graph"
+      ],
+      "collected_count": 1
+    },
+    {
+      "name": "test_chunk_bwd_ascend_verifier",
+      "line": 2459,
+      "public_adapter_hooked": false,
+      "decorators": [],
+      "status": "not_run_in_integrated_build",
+      "classification": "requires_scope_review",
+      "collected_nodeids": [
+        "tests/ops/test_kda.py::test_chunk_bwd_ascend_verifier"
+      ],
+      "collected_count": 1
+    }
+  ],
+  "collected_total": 277,
+  "collection_platform": "A3; existing baseline venv; collection only, not execution"
+}
