@@ -30,6 +30,7 @@ class Cube {
     AscendC::GlobalTensor<float> inputs_, results_;
     uint64_t packet_ = 0, output_ = 0, packets_ = 0, outputs_ = 0;
     uint64_t load_=0;
+    uint32_t mReadDone_[BANKS]{};
     uint64_t transported_=0;
     bool dynamic_=false;
     struct ResidentOperand {uint64_t address=0;uint32_t n=0,d=0,stride=0,nzStride=0;bool valid=false;};
@@ -76,6 +77,10 @@ public:
         outputs_ = outputs;
         dynamic_=dynamic;
         AscendC::SetHF32Mode(false);
+        // TPipe reserves and pre-seeds M_MTE1 IDs 0/1/2 on arch2201.
+        // Our post-MMAD Set/Wait pairs must own distinct, initially empty IDs.
+        for(uint32_t i=0;i<BANKS;++i)
+            mReadDone_[i]=pipe_.AllocEventID<AscendC::HardEvent::M_MTE1>();
     }
     // Public inputs are immutable throughout the record; scratch producers
     // invalidate their range at the stage/band publication boundary.
@@ -164,8 +169,8 @@ public:
             mm.cmatrixInitVal = begin == 0 && !accumulate;
             mm.kDirectionAlign = transposeA;
             Mmad(c, a2, b2, mm);
-            Set<HardEvent::M_MTE1>(slot);
-            Wait<HardEvent::M_MTE1>(slot);
+            Set<HardEvent::M_MTE1>(mReadDone_[slot]);
+            Wait<HardEvent::M_MTE1>(mReadDone_[slot]);
             ++load_;
             if(!direct)++packet_;
         }
@@ -209,6 +214,10 @@ public:
         if(dynamic_)for(uint64_t i=transported_>2?transported_-2:0;i<transported_;++i) {
             AscendC::CrossCoreWaitFlag<0x2,PIPE_FIX>(ResultFree(i));
         }
+        // Every owned token was consumed immediately after its MMAD.
+        // Keep TPipe reserved tokens untouched for its destructor.
+        for(uint32_t i=0;i<BANKS;++i)
+            pipe_.ReleaseEventID<AscendC::HardEvent::M_MTE1>(mReadDone_[i]);
     }
 };
 } // namespace KDA::Arch22::Pipeline64
