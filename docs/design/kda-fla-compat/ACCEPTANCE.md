@@ -43,3 +43,11 @@ python -m pytest tests/ops/test_kda.py -p public_backward_plugin -q --maxfail=5
 5. 任一窗口仅组件通过、仅原型、仅保存模式完成或仍用慢C64基线，都不能结束整体验收。
 
 修复公开包日志见 `evidence/tail-align-full-upstream.log`。本轮结果1 failed、60 passed，35.62秒；仍未完成完整脚本验收。
+
+## 后续诊断轮（非最终验收）
+
+命令追加 `-k "not fused_recurrent and not naive_chunk and not HV4 and not HV8 and not HV16"`，结果 **153 passed、60 skipped、64 deselected**，722.45秒。此轮用于继续定位，过滤条件也排除了部分等head用例，不能当作完整支持范围验收。日志见 `evidence/tail-align-scope-upstream.log`。
+
+为避免宽泛字符串过滤，已从收集节点生成 `upstream-chunk-selection.json`：90个被公开适配器接管的chunk节点中，8个明确H/HV不等；其余82个为待逐项执行/核对清单，无head标签的节点仍需查看实际参数。排除节点不计通过。最终不得沿用上述宽泛过滤器宣称完整脚本通过。
+
+集成诊断占用的A3 device0现已释放，窗口2的同板device1可采性能；测试仍须实时核对外部进程。

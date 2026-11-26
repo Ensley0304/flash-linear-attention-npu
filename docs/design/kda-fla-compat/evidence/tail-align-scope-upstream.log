@@ -1,0 +1,1199 @@
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:13: FutureWarning: triton.language.extra.cann.extension.atan2 is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.atan2 instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.atan2")
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:35: FutureWarning: triton.language.extra.cann.extension.isfinited is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.isfinited instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.isfinited")
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:49: FutureWarning: triton.language.extra.cann.extension.finitef is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.finitef instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.finitef")
+
+tests/ops/test_kda.py::test_chunk_invalid_chunk_size PASSED              [  0%]
+tests/ops/test_kda.py::test_chunk[B1-T63-H1-HV1-D64-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     torch_npu.env:patch_getenv.py:15 get env FLA_NPU_OP_API_LIBS = /root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  0%]
+tests/ops/test_kda.py::test_chunk[B2-T500-H3-HV3-D60-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000002 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  1%]
+tests/ops/test_kda.py::test_chunk[B2-T1000-H3-HV3-D64-scale0.1-gate_logit_normalizer1-mask_p0.5-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  1%]
+tests/ops/test_kda.py::test_chunk[B1-T65-H1-HV1-D64-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000002 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  2%]
+tests/ops/test_kda.py::test_chunk_causality[T16-P6-H2-D64-chunk_size64-use_gateFalse] SKIPPED [  2%]
+tests/ops/test_kda.py::test_chunk_causality[T32-P6-H2-D64-chunk_size32-use_gateFalse] SKIPPED [  3%]
+tests/ops/test_kda.py::test_chunk_causality[T22-P21-H4-D128-chunk_size64-use_gateFalse] SKIPPED [  3%]
+tests/ops/test_kda.py::test_chunk_causality[T40-P33-H2-D64-chunk_size32-use_gateFalse] SKIPPED [  4%]
+tests/ops/test_kda.py::test_chunk_causality[T70-P65-H2-D64-chunk_size64-use_gateFalse] SKIPPED [  4%]
+tests/ops/test_kda.py::test_chunk_causality[T16-P6-H2-D64-chunk_size64-use_gateTrue] SKIPPED [  5%]
+tests/ops/test_kda.py::test_chunk_causality[T32-P6-H2-D64-chunk_size32-use_gateTrue] SKIPPED [  5%]
+tests/ops/test_kda.py::test_chunk_causality[T22-P21-H4-D128-chunk_size64-use_gateTrue] SKIPPED [  6%]
+tests/ops/test_kda.py::test_chunk_causality[T40-P33-H2-D64-chunk_size32-use_gateTrue] SKIPPED [  6%]
+tests/ops/test_kda.py::test_chunk_causality[T70-P65-H2-D64-chunk_size64-use_gateTrue] SKIPPED [  7%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-random] SKIPPED [  7%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-lower_bound] SKIPPED [  7%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-zero] SKIPPED [  8%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-mixed] SKIPPED [  8%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateFalse-cu_seqlensNone-random] SKIPPED [  9%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateFalse-cu_seqlensNone-random] SKIPPED [  9%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-random] SKIPPED [ 10%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-lower_bound] SKIPPED [ 10%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-zero] SKIPPED [ 11%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlensNone-mixed] SKIPPED [ 11%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateFalse-cu_seqlensNone-random] SKIPPED [ 12%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateFalse-cu_seqlensNone-random] SKIPPED [ 12%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateTrue-cu_seqlensNone-random] SKIPPED [ 13%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateTrue-cu_seqlensNone-random] SKIPPED [ 13%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateTrue-cu_seqlensNone-random] SKIPPED [ 14%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateTrue-cu_seqlensNone-random] SKIPPED [ 14%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateTrue-cu_seqlensNone-random] SKIPPED [ 15%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateTrue-cu_seqlensNone-random] SKIPPED [ 15%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 15%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-lower_bound] SKIPPED [ 16%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-zero] SKIPPED [ 16%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-mixed] SKIPPED [ 17%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 17%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 18%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 18%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-lower_bound] SKIPPED [ 19%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-zero] SKIPPED [ 19%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-mixed] SKIPPED [ 20%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 20%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateFalse-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 21%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.bfloat16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 21%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.bfloat16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 22%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.bfloat16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 22%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-5.0-torch.float16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 23%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-2.0-torch.float16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 23%]
+tests/ops/test_kda.py::test_chunk_lower_bound[lower_bound-0.01-torch.float16-use_gateTrue-cu_seqlens[0, 1, 17, 38]-random] SKIPPED [ 23%]
+tests/ops/test_kda.py::test_chunk_state_v_first[B1-T63-H1-D64-scale1-gate_logit_normalizer1-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 24%]
+tests/ops/test_kda.py::test_chunk_state_v_first[B2-T500-H3-D60-scale1-gate_logit_normalizer1-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 24%]
+tests/ops/test_kda.py::test_chunk_state_v_first[B3-T1024-H4-D128-scale0.1-gate_logit_normalizer1-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 25%]
+tests/ops/test_kda.py::test_chunk_state_v_first[B4-T2048-H8-D64-scale0.1-gate_logit_normalizer1-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 25%]
+tests/ops/test_kda.py::test_chunk_use_beta_sigmoid_in_kernel[B1-T8192-H96-D128-allow_neg_eigvalFalse-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000488 ratio: 0.000010
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000122 ratio: 0.000023
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000488 ratio: 0.000014
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000488 ratio: 0.000008
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32           db_raw diff: 0.000977 ratio: 0.000015
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 26%]
+tests/ops/test_kda.py::test_chunk_use_beta_sigmoid_in_kernel[B1-T8192-H96-D128-allow_neg_eigvalTrue-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000488 ratio: 0.000011
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.000030
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000488 ratio: 0.000017
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.001953 ratio: 0.000010
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32           db_raw diff: 0.001953 ratio: 0.000020
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 26%]
+tests/ops/test_kda.py::test_chunk_use_beta_sigmoid_in_kernel[B2-T96-H2-D64-allow_neg_eigvalTrue-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32           db_raw diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 27%]
+tests/ops/test_kda.py::test_chunk_varlen[H4-D60-mask_p0.1-cu_seqlens[0, 15]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000006 ratio: 0.000027
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000003 ratio: 0.000005
+PASSED                                                                   [ 27%]
+tests/ops/test_kda.py::test_chunk_varlen[H4-D64-mask_p0.9-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.001953 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000073 ratio: 0.000017
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000044 ratio: 0.000026
+PASSED                                                                   [ 28%]
+tests/ops/test_kda.py::test_chunk_varlen[H4-D128-mask_p0.5-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateFalse-safe_gateFalse-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000507 ratio: 0.000252
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.011719 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000366 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.001591 ratio: 0.000479
+INFO     fla.utils.testing:testing.py:32               db diff: 0.003906 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [ 28%]
+tests/ops/test_kda.py::test_chunk_varlen[H4-D100-mask_p0-cu_seqlens[0, 15, 100, 300, 1200, 2000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000005 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000003 ratio: 0.000004
+PASSED                                                                   [ 29%]
+tests/ops/test_kda.py::test_chunk_varlen[H4-D256-mask_p0-cu_seqlens[0, 100, 300, 1200, 3000, 4096]-torch.float16-gateFalse-safe_gateTrue-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.001953 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 29%]
+tests/ops/test_kda.py::test_chunk_varlen[H4-D60-mask_p0.1-cu_seqlens[0, 31, 96, 160]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeTrue-chunk_size32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000021 ratio: 0.000020
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000008 ratio: 0.000010
+PASSED                                                                   [ 30%]
+tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D60-mask_p0.1-cu_seqlens[0, 8192]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000001 ratio: 0.000001
+PASSED                                                                   [ 30%]
+tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D64-mask_p0.9-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 30%]
+tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D128-mask_p0.5-cu_seqlens[0, 256, 500, 1000]-torch.float16-gateFalse-safe_gateFalse-disable_recomputeFalse] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000379 ratio: 0.000240
+PASSED                                                                   [ 31%]
+tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D100-mask_p0-cu_seqlens[0, 15, 100, 300, 1200, 2000]-torch.float16-gateTrue-safe_gateFalse-disable_recomputeFalse] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000002 ratio: 0.000000
+PASSED                                                                   [ 31%]
+tests/ops/test_kda.py::test_chunk_varlen_prefill[H4-D256-mask_p0-cu_seqlens[0, 100, 300, 1200, 3000, 4096]-torch.float16-gateFalse-safe_gateTrue-disable_recomputeTrue] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 32%]
+tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H8-D128-cu[0, 256, 512]-l2normFalse-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.010254 ratio: 0.013761
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.011719 ratio: 0.013771
+INFO     fla.utils.testing:testing.py:32               db diff: 0.002197 ratio: 0.014594
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.002655 ratio: 0.089843
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.003738 ratio: 0.070055
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000355 ratio: 0.242269
+PASSED                                                                   [ 32%]
+tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H8-D128-cu[0, 256, 512]-l2normTrue-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.008301 ratio: 0.012695
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.041748 ratio: 0.013948
+INFO     fla.utils.testing:testing.py:32               db diff: 0.005371 ratio: 0.014673
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.001862 ratio: 0.083767
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.003876 ratio: 0.067307
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000546 ratio: 0.307643
+PASSED                                                                   [ 33%]
+tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H4-D128-cu[0, 17, 81, 212]-l2normTrue-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.007324 ratio: 0.011741
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.031494 ratio: 0.012447
+INFO     fla.utils.testing:testing.py:32               db diff: 0.002441 ratio: 0.014046
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.001274 ratio: 0.076086
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.002090 ratio: 0.060727
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000425 ratio: 0.304926
+PASSED                                                                   [ 33%]
+tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H4-D128-cuNone-l2normTrue-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.008789 ratio: 0.014205
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.029297 ratio: 0.015713
+INFO     fla.utils.testing:testing.py:32               db diff: 0.004761 ratio: 0.017395
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.001663 ratio: 0.086992
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005371 ratio: 0.070272
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000469 ratio: 0.376036
+PASSED                                                                   [ 34%]
+tests/ops/test_kda.py::test_chunk_collinear_keys_l2norm[H4-D128-cu[0, 256, 512]-l2normTrue-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.002441 ratio: 0.002819
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.002197 ratio: 0.002825
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000327 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000690 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000110 ratio: 0.000000
+PASSED                                                                   [ 34%]
+tests/ops/test_kda.py::test_chunk_varlen_fused_training_contract[H8-D128-cu[0, 1, 14, 78, 256]-no_recomputeTrue-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000122 ratio: 0.004936
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.003702
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.003676
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.004640
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000122 ratio: 0.004018
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.004683
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.002399 ratio: 0.006529
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000253 ratio: 0.003284
+PASSED                                                                   [ 35%]
+tests/ops/test_kda.py::test_chunk_varlen_fused_training_contract[H8-D128-cu[0, 1, 14, 78, 256]-no_recomputeFalse-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000122 ratio: 0.004936
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.003676
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.003676
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.004640
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000122 ratio: 0.004018
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.004663
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.002437 ratio: 0.006508
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000257 ratio: 0.003279
+PASSED                                                                   [ 35%]
+tests/ops/test_kda.py::test_chunk_varlen_fused_training_contract[H16-D128-cu[0, 19, 147, 512]-no_recomputeTrue-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000244 ratio: 0.004927
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.003676
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.003702
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.004693
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000122 ratio: 0.004127
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000488 ratio: 0.004652
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.003169 ratio: 0.004382
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000444 ratio: 0.003554
+PASSED                                                                   [ 36%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.gate.fused_kda_gate -> triton_ascend
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000002 ratio: 0.000001
+PASSED                                                                   [ 36%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000005 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000014 ratio: 0.000004
+PASSED                                                                   [ 37%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000006 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000079 ratio: 0.000006
+PASSED                                                                   [ 37%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000014 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000108 ratio: 0.000003
+PASSED                                                                   [ 38%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.007812 ratio: 0.000000
+PASSED                                                                   [ 38%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000004 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 38%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000336 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000006 ratio: 0.000000
+PASSED                                                                   [ 39%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000366 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000023 ratio: 0.000000
+PASSED                                                                   [ 39%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000004 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.003906 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000076 ratio: 0.000000
+PASSED                                                                   [ 40%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.005859 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000122 ratio: 0.000000
+PASSED                                                                   [ 40%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 41%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 41%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000010 ratio: 0.000000
+PASSED                                                                   [ 42%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000009 ratio: 0.000000
+PASSED                                                                   [ 42%]
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 43%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000004 ratio: 0.000074
+PASSED                                                                   [ 43%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000010 ratio: 0.000003
+PASSED                                                                   [ 44%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000028 ratio: 0.000001
+PASSED                                                                   [ 44%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000397 ratio: 0.000008
+PASSED                                                                   [ 45%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.015625 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.004883 ratio: 0.000000
+PASSED                                                                   [ 45%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 46%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000008 ratio: 0.000000
+PASSED                                                                   [ 46%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000015 ratio: 0.000000
+PASSED                                                                   [ 46%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.031250 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.002930 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000084 ratio: 0.000000
+PASSED                                                                   [ 47%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.015625 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.003906 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000092 ratio: 0.000000
+PASSED                                                                   [ 47%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 48%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000122 ratio: 0.000000
+PASSED                                                                   [ 48%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000009 ratio: 0.000000
+PASSED                                                                   [ 49%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.001953 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000011 ratio: 0.000000
+PASSED                                                                   [ 49%]
+tests/ops/test_kda.py::test_gate[1.0-dtype1-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 50%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000004 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [ 50%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000022 ratio: 0.000020
+PASSED                                                                   [ 51%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000002
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000040 ratio: 0.000003
+PASSED                                                                   [ 51%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000977 ratio: 0.000002
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000301 ratio: 0.000004
+PASSED                                                                   [ 52%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.062500 ratio: 0.000012
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.007812 ratio: 0.000000
+PASSED                                                                   [ 52%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000002 ratio: 0.000000
+PASSED                                                                   [ 53%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000008 ratio: 0.000000
+PASSED                                                                   [ 53%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000023 ratio: 0.000000
+PASSED                                                                   [ 53%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.031250 ratio: 0.000010
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.003906 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000065 ratio: 0.000000
+PASSED                                                                   [ 54%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.031250 ratio: 0.000009
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.007812 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000122 ratio: 0.000000
+PASSED                                                                   [ 54%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 55%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000006
+PASSED                                                                   [ 55%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000488 ratio: 0.000005
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000010 ratio: 0.000000
+PASSED                                                                   [ 56%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.001953 ratio: 0.000009
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000011 ratio: 0.000000
+PASSED                                                                   [ 56%]
+tests/ops/test_kda.py::test_gate[1.0-dtype2-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 57%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [ 57%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000002
+PASSED                                                                   [ 58%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000005
+PASSED                                                                   [ 58%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000003
+PASSED                                                                   [ 59%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 59%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000004 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 60%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000008 ratio: 0.000000
+PASSED                                                                   [ 60%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000019 ratio: 0.000000
+PASSED                                                                   [ 61%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000122 ratio: 0.000000
+PASSED                                                                   [ 61%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000153 ratio: 0.000000
+PASSED                                                                   [ 61%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 62%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 62%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000010 ratio: 0.000000
+PASSED                                                                   [ 63%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000010 ratio: 0.000000
+PASSED                                                                   [ 63%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype0-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 64%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000003
+PASSED                                                                   [ 64%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000002
+PASSED                                                                   [ 65%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [ 65%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000007
+PASSED                                                                   [ 66%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 66%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000002 ratio: 0.000000
+PASSED                                                                   [ 67%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000009 ratio: 0.000000
+PASSED                                                                   [ 67%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000019 ratio: 0.000000
+PASSED                                                                   [ 68%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000061 ratio: 0.000000
+PASSED                                                                   [ 68%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000092 ratio: 0.000000
+PASSED                                                                   [ 69%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 69%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 69%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000009 ratio: 0.000000
+PASSED                                                                   [ 70%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000010 ratio: 0.000000
+PASSED                                                                   [ 70%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype1-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 71%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 71%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T32-H2-D16-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000009
+PASSED                                                                   [ 72%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B2-T64-H4-D32-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000003
+PASSED                                                                   [ 72%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D64-a_logTrue-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000004
+PASSED                                                                   [ 73%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D128-a_logTrue-biasFalse-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 73%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T2-H2-D12-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000002 ratio: 0.000000
+PASSED                                                                   [ 74%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T32-H2-D16-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000008 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000008 ratio: 0.000000
+PASSED                                                                   [ 74%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B2-T64-H4-D32-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000015 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000038 ratio: 0.000000
+PASSED                                                                   [ 75%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D64-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000006
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000092 ratio: 0.000000
+PASSED                                                                   [ 75%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D128-a_logTrue-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000004
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000102 ratio: 0.000000
+PASSED                                                                   [ 76%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T2-H2-D12-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 76%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B2-T64-H4-D32-a_logFalse-biasFalse-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [ 76%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D64-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000005
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000011 ratio: 0.000000
+PASSED                                                                   [ 77%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B4-T128-H8-D128-a_logFalse-biasTrue-lowerbound-5.0] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000007
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000010 ratio: 0.000000
+PASSED                                                                   [ 77%]
+tests/ops/test_kda.py::test_gate[1e-08-dtype2-B1-T32-H2-D16-a_logFalse-biasTrue-lowerboundNone] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000001 ratio: 0.000000
+PASSED                                                                   [ 78%]
+tests/ops/test_kda.py::test_chunk_return_intermediate_states[dtype0] PASSED [ 78%]
+tests/ops/test_kda.py::test_flash_kda_chunk[dense] SKIPPED (FlashKDA...) [ 79%]
+tests/ops/test_kda.py::test_flash_kda_chunk[batched] SKIPPED (FlashK...) [ 79%]
+tests/ops/test_kda.py::test_flash_kda_chunk[long] SKIPPED (FlashKDA ...) [ 80%]
+tests/ops/test_kda.py::test_flash_kda_chunk[negative-eigenvalues] SKIPPED [ 80%]
+tests/ops/test_kda.py::test_flash_kda_chunk[no-A] SKIPPED (FlashKDA ...) [ 81%]
+tests/ops/test_kda.py::test_flash_kda_chunk[no-bias] SKIPPED (FlashK...) [ 81%]
+tests/ops/test_kda.py::test_flash_kda_chunk[positional] SKIPPED (Fla...) [ 82%]
+tests/ops/test_kda.py::test_flash_kda_chunk[positional-negative-eigenvalues] SKIPPED [ 82%]
+tests/ops/test_kda.py::test_flash_kda_chunk_varlen[varlen] SKIPPED (...) [ 83%]
+tests/ops/test_kda.py::test_flash_kda_chunk_varlen[multi-sequence] SKIPPED [ 83%]
+tests/ops/test_kda.py::test_flash_kda_chunk_varlen[unaligned] SKIPPED    [ 84%]
+tests/ops/test_kda.py::test_flash_kda_chunk_varlen[negative-eigenvalues] SKIPPED [ 84%]
+tests/ops/test_kda.py::test_flash_kda_chunk_varlen[no-A] SKIPPED (Fl...) [ 84%]
+tests/ops/test_kda.py::test_flash_kda_chunk_varlen[no-bias] SKIPPED      [ 85%]
+tests/ops/test_kda.py::test_partition_chunk_indices_full_tail_uses_host_metadata PASSED [ 85%]
+tests/ops/test_kda.py::test_ascend_tail_padding_strided_gather[2] PASSED [ 86%]
+tests/ops/test_kda.py::test_ascend_tail_padding_strided_gather[3] PASSED [ 86%]
+tests/ops/test_kda.py::test_ascend_tail_padding_strided_gather[4] PASSED [ 87%]
+tests/ops/test_kda.py::test_triton_ascend_backend_routing 
+-------------------------------- live log call ---------------------------------
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.modules.norm.l2norm.l2norm_fwd -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.gate.kda_gate_chunk_cumsum -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk_intra.chunk_kda_fwd_intra -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.common.chunk_delta_h.chunk_gated_delta_rule_fwd_h -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.gla.chunk.chunk_gla_fwd_o_gk -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.wy_fast.recompute_w_u_fwd -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk_bwd.chunk_kda_bwd_dAv -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.common.chunk_delta_h.chunk_gated_delta_rule_bwd_dhu -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk_bwd.chunk_kda_bwd_wy_dqkg_fused -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk_intra.chunk_kda_bwd_intra -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.utils.cumsum.chunk_local_cumsum -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.gate.kda_gate_bwd -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.modules.norm.l2norm.l2norm_bwd -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk_intra_token_parallel.chunk_kda_fwd_intra_token_parallel -> triton_ascend
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.fused_recurrent.fused_recurrent_kda_fwd -> triton_ascend
+PASSED                                                                   [ 87%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[fallback-64kib] PASSED [ 88%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[padded-k64] PASSED [ 88%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[padded-k128] PASSED [ 89%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[limited-192kib] PASSED [ 89%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_pruning[expanded-256kib] PASSED [ 90%]
+tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[legacy-defaults] PASSED [ 90%]
+tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[joint-config] PASSED [ 91%]
+tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[invalid-unroll] PASSED [ 91%]
+tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[invalid-workspace] PASSED [ 92%]
+tests/ops/test_kda.py::test_triton_ascend_kda_config_validation[mixed-compile-options] PASSED [ 92%]
+tests/ops/test_kda.py::test_triton_ascend_kda_resource_cache[inter-tile] PASSED [ 92%]
+tests/ops/test_kda.py::test_triton_ascend_kda_resource_cache[gate-tile] PASSED [ 93%]
+tests/ops/test_kda.py::test_triton_ascend_kda_launch_grid[time-split] PASSED [ 93%]
+tests/ops/test_kda.py::test_triton_ascend_kda_launch_grid[head-split] PASSED [ 94%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[dense-padded-k64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000494
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000121 ratio: 0.000281
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.005859 ratio: 0.000379
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.005859 ratio: 0.001070
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000812
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003529 ratio: 0.000561
+INFO     fla.utils.testing:testing.py:32               db diff: 0.015625 ratio: 0.001038
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000708 ratio: 0.000649
+PASSED                                                                   [ 94%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[dense-aligned-k64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000506
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000143 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.007812 ratio: 0.000397
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.009766 ratio: 0.001075
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005737 ratio: 0.000813
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.004287 ratio: 0.000563
+INFO     fla.utils.testing:testing.py:32               db diff: 0.019531 ratio: 0.001049
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.001066 ratio: 0.000669
+PASSED                                                                   [ 95%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[dense-aligned-k128] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000504
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000114 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.015625 ratio: 0.000401
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.007812 ratio: 0.001018
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005859 ratio: 0.000822
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003980 ratio: 0.000558
+INFO     fla.utils.testing:testing.py:32               db diff: 0.025391 ratio: 0.001044
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000926 ratio: 0.000653
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000504
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000114 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.015625 ratio: 0.000401
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.007812 ratio: 0.001018
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005859 ratio: 0.000822
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003980 ratio: 0.000558
+INFO     fla.utils.testing:testing.py:32               db diff: 0.025391 ratio: 0.001044
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000926 ratio: 0.000653
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000504
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000114 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.015625 ratio: 0.000401
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.007812 ratio: 0.001018
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005859 ratio: 0.000822
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003980 ratio: 0.000558
+INFO     fla.utils.testing:testing.py:32               db diff: 0.025391 ratio: 0.001044
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000926 ratio: 0.000653
+INFO     fla.utils.testing:testing.py:32                o diff: 0.001953 ratio: 0.000504
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000114 ratio: 0.000333
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.015625 ratio: 0.000401
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.007812 ratio: 0.001018
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.005859 ratio: 0.000822
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.003980 ratio: 0.000558
+INFO     fla.utils.testing:testing.py:32               db diff: 0.025391 ratio: 0.001044
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000926 ratio: 0.000653
+PASSED                                                                   [ 95%]
+tests/ops/test_kda.py::test_triton_ascend_kda_autotune_candidates[packed-k256] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000977 ratio: 0.003278
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.002841 ratio: 0.000353
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000977 ratio: 0.002930
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.125000 ratio: 0.004338
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.003237
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.050721 ratio: 0.002124
+INFO     fla.utils.testing:testing.py:32               db diff: 0.031250 ratio: 0.002491
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000542 ratio: 0.000131
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000977 ratio: 0.003278
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.002841 ratio: 0.000353
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000977 ratio: 0.002930
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.125000 ratio: 0.004338
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.003237
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.050721 ratio: 0.002124
+INFO     fla.utils.testing:testing.py:32               db diff: 0.031250 ratio: 0.002491
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000542 ratio: 0.000131
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000977 ratio: 0.003278
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.002841 ratio: 0.000353
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000977 ratio: 0.002930
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.125000 ratio: 0.004338
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.003237
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.050721 ratio: 0.002124
+INFO     fla.utils.testing:testing.py:32               db diff: 0.031250 ratio: 0.002491
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000542 ratio: 0.000131
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000977 ratio: 0.003278
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.002841 ratio: 0.000353
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000977 ratio: 0.002930
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.125000 ratio: 0.004338
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.003237
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.050721 ratio: 0.002124
+INFO     fla.utils.testing:testing.py:32               db diff: 0.031250 ratio: 0.002491
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000542 ratio: 0.000131
+PASSED                                                                   [ 96%]
+tests/ops/test_kda.py::test_flash_kda_dispatch[accepted] 
+-------------------------------- live log call ---------------------------------
+INFO     torch_npu.env:patch_getenv.py:15 get env FLA_FLASH_KDA = 1
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk.chunk_kda -> flash_kda
+PASSED                                                                   [ 96%]
+tests/ops/test_kda.py::test_flash_kda_dispatch[disabled] PASSED          [ 97%]
+tests/ops/test_kda.py::test_flash_kda_dispatch[unavailable] PASSED       [ 97%]
+tests/ops/test_kda.py::test_flash_kda_dispatch[training] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.backends:backends.py:183 [FLA Backend] fla.ops.kda.chunk.chunk_kda -> flash_kda rejected: FlashKDA only supports inference mode
+PASSED                                                                   [ 98%]
+tests/ops/test_kda.py::test_flash_kda_dispatch[gate-not-fused] PASSED    [ 98%]
+tests/ops/test_kda.py::test_chunk_bwd_tilelang_dispatch 
+-------------------------------- live log call ---------------------------------
+INFO     torch_npu.env:patch_getenv.py:15 get env FLA_TILELANG = 1
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.chunk_bwd.chunk_kda_bwd_wy_dqkg_fused -> tilelang
+PASSED                                                                   [ 99%]
+tests/ops/test_kda.py::test_chunk_bwd_tilelang_verifier_rejects_graph PASSED [ 99%]
+tests/ops/test_kda.py::test_chunk_bwd_ascend_verifier PASSED             [100%]
+
+=============================== warnings summary ===============================
+tests/ops/test_kda.py::test_chunk[B1-T63-H1-HV1-D64-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeFalse-chunk_size64]
+  /root/wys/fla-compat-a2a3/upstream/tests/ops/test_kda.py:871: UserWarning: Cannot create tensor with interal format while allow_internel_format=False, tensor will be created with base format. (Triggered internally at ../torch_npu/csrc/aten/common/TensorFactories.cpp:340.)
+    do = torch.randn_like(v)
+
+tests/ops/test_kda.py::test_gate[1.0-dtype0-B1-T2-H2-D12-a_logTrue-biasFalse-lowerbound-5.0]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/ascend_ub_manager.py:162: UserWarning: Using fallback UB capacity (65536 bytes): Cannot import tbe.common.platform.get_soc_spec. Source CANN set_env.sh or set ASCEND_UB_CAPACITY_BITS.
+    self._ub_capacity_bits = ub_capacity_bits or self._detect_ub_capacity()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==== 153 passed, 60 skipped, 64 deselected, 2 warnings in 722.45s (0:12:02) ====
