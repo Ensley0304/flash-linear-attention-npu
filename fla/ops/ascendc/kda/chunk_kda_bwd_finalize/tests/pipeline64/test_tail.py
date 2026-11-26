@@ -13,7 +13,7 @@ run.argtypes=[ctypes.POINTER(ctypes.c_void_p)]+[ctypes.c_uint32]*7+[ctypes.c_voi
 run.restype=None
 cases=[]
 for k in [60,64,100,128,256]:
- for m in [1,16,64]:
+ for m in [1,2,7,9,16,17,31,33,52,63,64]:
   for case in range(18):
    norm=case%2;gate=(case//2)%3;bm=case//6;exp2=case%2;dtype=1+case%2
    dt=torch.float16 if dtype==1 else torch.bfloat16

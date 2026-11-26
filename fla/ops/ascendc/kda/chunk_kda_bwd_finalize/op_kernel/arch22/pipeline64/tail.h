@@ -164,7 +164,9 @@ public:
             Adds(temp,temp,1.f,in.rows);PipeBarrier<PIPE_V>();
             Mul(temp,temp,beta,in.rows);PipeBarrier<PIPE_V>();Mul(db,db,temp,in.rows);PipeBarrier<PIPE_V>();
         }
-        const uint32_t half=(in.rows+1)/2,begin=lane_*half,valid=in.rows>begin?in.rows-begin:0;
+        // Cast/Vector source addresses must be 32-byte aligned. A balanced
+        // split of a 52-row tail starts lane 1 at float 26 (104 bytes).
+        const uint32_t half=Pad8((in.rows+1)/2),begin=lane_*half,valid=in.rows>begin?in.rows-begin:0;
         const uint32_t count=valid<half?valid:half;
         if(count)WriteBlock<BetaT>(db[begin],in.dbeta.address+begin*sizeof(BetaT),count,1,count,Pad16(count));
         ReduceSum(small_,totalA,aux,n);ScalarReady();Exchange(in.exchange,small_.GetValue(0),0.f);

@@ -1,0 +1,562 @@
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:13: FutureWarning: triton.language.extra.cann.extension.atan2 is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.atan2 instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.atan2")
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:35: FutureWarning: triton.language.extra.cann.extension.isfinited is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.isfinited instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.isfinited")
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:49: FutureWarning: triton.language.extra.cann.extension.finitef is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.finitef instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.finitef")
+
+tests/ops/test_kda.py::test_naive_chunk[B1-T64-H1-HV1-D64-scale1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000001 ratio: 0.000002
+PASSED                                                                   [  0%]
+tests/ops/test_kda.py::test_naive_chunk[B2-T512-H3-HV3-D60-scale1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [  0%]
+tests/ops/test_kda.py::test_naive_chunk[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [  1%]
+tests/ops/test_kda.py::test_naive_chunk[B4-T1024-H4-HV4-D128-scale1-gate_logit_normalizer10-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000001 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  1%]
+tests/ops/test_kda.py::test_naive_chunk[B1-T64-H1-HV2-D64-scale1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [  1%]
+tests/ops/test_kda.py::test_naive_chunk[B2-T512-H2-HV4-D60-scale1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+PASSED                                                                   [  2%]
+tests/ops/test_kda.py::test_chunk_invalid_chunk_size PASSED              [  2%]
+tests/ops/test_kda.py::test_fused_recurrent[B1-T64-H1-HV1-D64-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.backends:backends.py:198 [FLA Backend] fla.ops.kda.fused_recurrent.fused_recurrent_kda_fwd -> triton_ascend
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  2%]
+tests/ops/test_kda.py::test_fused_recurrent[B2-T512-H3-HV3-D60-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  3%]
+tests/ops/test_kda.py::test_fused_recurrent[B3-T1000-H4-HV4-D100-scale0.1-gate_logit_normalizer1-use_qk_l2normTrue-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  3%]
+tests/ops/test_kda.py::test_fused_recurrent[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  3%]
+tests/ops/test_kda.py::test_fused_recurrent[B2-T512-H2-HV4-D60-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  4%]
+tests/ops/test_kda.py::test_fused_recurrent[B2-T1024-H2-HV8-D128-scale0.1-gate_logit_normalizer1-use_qk_l2normTrue-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  4%]
+tests/ops/test_kda.py::test_fused_recurrent[B2-T4-H2-HV4-D7-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  5%]
+tests/ops/test_kda.py::test_fused_recurrent[B2-T4-H2-HV4-D8-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  5%]
+tests/ops/test_kda.py::test_fused_recurrent[B2-T4-H2-HV4-D9-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  5%]
+tests/ops/test_kda.py::test_fused_recurrent_output_buffer[dense-allocated] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  6%]
+tests/ops/test_kda.py::test_fused_recurrent_output_buffer[dense-supplied] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  6%]
+tests/ops/test_kda.py::test_fused_recurrent_output_buffer[packed-zero-tail] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000004 ratio: 0.000002
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  6%]
+tests/ops/test_kda.py::test_fused_recurrent_output_buffer[packed-preserved-tail] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000004 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  7%]
+tests/ops/test_kda.py::test_fused_recurrent_empty_varlen_state[kv] PASSED [  7%]
+tests/ops/test_kda.py::test_fused_recurrent_empty_varlen_state[vk] PASSED [  7%]
+tests/ops/test_kda.py::test_fused_recurrent_empty_spec_decoding PASSED   [  8%]
+tests/ops/test_kda.py::test_fused_recurrent_use_beta_sigmoid_in_kernel[B2-T256-H4-D64-allow_neg_eigvalFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  8%]
+tests/ops/test_kda.py::test_fused_recurrent_use_beta_sigmoid_in_kernel[B2-T256-H4-D64-allow_neg_eigvalTrue-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  9%]
+tests/ops/test_kda.py::test_fused_recurrent_use_beta_sigmoid_in_kernel[B1-T512-H3-D60-allow_neg_eigvalTrue-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  9%]
+tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B1-T64-H1-D64-scale1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [  9%]
+tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B2-T512-H3-D60-scale1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 10%]
+tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B3-T1000-H4-D100-scale0.1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 10%]
+tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B4-T1024-H4-D128-scale0.1-gate_logit_normalizer1-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 10%]
+tests/ops/test_kda.py::test_fused_recurrent_state_v_first[B2-T4-H4-D9-scale1-gate_logit_normalizer1-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 11%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B1-T64-H1-HV1-D64-scale1-has_a_logTrue-has_dt_biasFalse-safe_gateFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 11%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T256-H2-HV2-D64-scale1-has_a_logTrue-has_dt_biasTrue-safe_gateFalse-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 11%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T512-H2-HV4-D64-scale0.1-has_a_logTrue-has_dt_biasTrue-safe_gateTrue-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 12%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B3-T1000-H2-HV8-D128-scale1-has_a_logTrue-has_dt_biasFalse-safe_gateFalse-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 12%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B4-T1024-H4-HV4-D128-scale0.1-has_a_logTrue-has_dt_biasTrue-safe_gateTrue-torch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 12%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B1-T64-H1-HV1-D64-scale1-has_a_logFalse-has_dt_biasFalse-safe_gateTrue-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 13%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T256-H2-HV4-D64-scale1-has_a_logFalse-has_dt_biasTrue-safe_gateTrue-torch.float32] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 13%]
+tests/ops/test_kda.py::test_fused_recurrent_gate_in_kernel[B2-T63-H2-HV4-D64-scale1-has_a_logFalse-has_dt_biasTrue-safe_gateFalse-torch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 14%]
+tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B16-H16-D128-scale0.1-norm1.0-qk_l2True-gateFalse-safe_gateFalse-dtypetorch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000977 ratio: 0.003727
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.001966 ratio: 0.000208
+INFO     fla.utils.testing:testing.py:32     Untouched ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 14%]
+tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B32-H8-D64-scale1.0-norm1.0-qk_l2False-gateFalse-safe_gateFalse-dtypetorch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     Untouched ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 14%]
+tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B7-H32-D128-scale0.5-norm0.5-qk_l2True-gateFalse-safe_gateFalse-dtypetorch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.003906 ratio: 0.003590
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.001579 ratio: 0.000247
+INFO     fla.utils.testing:testing.py:32     Untouched ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 15%]
+tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B16-H16-D128-scale0.1-norm1.0-qk_l2True-gateTrue-safe_gateFalse-dtypetorch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000977 ratio: 0.003451
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.001382 ratio: 0.000322
+INFO     fla.utils.testing:testing.py:32     Untouched ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 15%]
+tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B32-H8-D64-scale1.0-norm1.0-qk_l2False-gateTrue-safe_gateFalse-dtypetorch.float16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000002 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     Untouched ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 15%]
+tests/ops/test_kda.py::test_fused_recurrent_vllm_decode[B7-H32-D128-scale0.5-norm0.5-qk_l2True-gateTrue-safe_gateTrue-dtypetorch.bfloat16] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.007812 ratio: 0.003792
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.002124 ratio: 0.000208
+INFO     fla.utils.testing:testing.py:32     Untouched ht diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 16%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_state[dense-strided-accepted] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     updated pool diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32   resumed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32    resumed state diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 16%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_state[packed-vfirst-strided-accepted] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     updated pool diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32   resumed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32    resumed state diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 16%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_state[packed-contiguous-first] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     updated pool diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32   resumed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32    resumed state diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 17%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_output[dense-vfirst-token-states] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     token states diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32   resumed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32    resumed state diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 17%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_output[packed-strided-token-states] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32     token states diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32   resumed output diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32    resumed state diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 18%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_output[dense-strided-no-state] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 18%]
+tests/ops/test_kda.py::test_fused_recurrent_indexed_output[packed-vfirst-no-state] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32   indexed output diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 18%]
+tests/ops/test_kda.py::test_chunk[B1-T63-H1-HV1-D64-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     torch_npu.env:patch_getenv.py:15 get env FLA_NPU_OP_API_LIBS = /root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 19%]
+tests/ops/test_kda.py::test_chunk[B2-T500-H3-HV3-D60-scale1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000002 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 19%]
+tests/ops/test_kda.py::test_chunk[B2-T1000-H3-HV3-D64-scale0.1-gate_logit_normalizer1-mask_p0.5-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 19%]
+tests/ops/test_kda.py::test_chunk[B3-T1024-H4-HV4-D100-scale1-gate_logit_normalizer0.1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000001 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000002 ratio: 0.000005
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 20%]
+tests/ops/test_kda.py::test_chunk[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000004 ratio: 0.000002
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 20%]
+tests/ops/test_kda.py::test_chunk[B4-T1024-H4-HV4-D128-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normTrue-use_gateFalse-has_a_logFalse-torch.float16-safe_gateTrue-disable_recomputeFalse-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000366 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000244 ratio: 0.000859
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.002930 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.003906 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.001876 ratio: 0.001008
+INFO     fla.utils.testing:testing.py:32               db diff: 0.031250 ratio: 0.001815
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000080 ratio: 0.001668
+PASSED                                                                   [ 20%]
+tests/ops/test_kda.py::test_chunk[B2-T1500-H4-HV4-D128-scale0.1-gate_logit_normalizer10-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.float16-safe_gateFalse-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000000 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000031 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000033 ratio: 0.000005
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000005 ratio: 0.000003
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 21%]
+tests/ops/test_kda.py::test_chunk[B4-T2048-H8-HV8-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateTrue-has_a_logTrue-torch.float16-safe_gateTrue-disable_recomputeTrue-chunk_size64] 
+-------------------------------- live log call ---------------------------------
+INFO     fla.utils.testing:testing.py:32                o diff: 0.000061 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               ht diff: 0.000002 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32               dq diff: 0.000977 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dk diff: 0.000122 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dv diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dg diff: 0.000244 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               db diff: 0.000488 ratio: 0.000000
+INFO     fla.utils.testing:testing.py:32               dA diff: 0.000017 ratio: 0.000001
+INFO     fla.utils.testing:testing.py:32            dbias diff: 0.000028 ratio: 0.000002
+INFO     fla.utils.testing:testing.py:32              dh0 diff: 0.000000 ratio: 0.000000
+PASSED                                                                   [ 21%]
+tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64] [W1127 01:03:35.226536370 ToKernelNpu.cpp:41] Warning: Device do not support double dtype now, dtype cast replace with float. (function operator())
+FAILED [ 22%]
+
+=================================== FAILURES ===================================
+_ test_chunk[B2-T1024-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64] _
+
+B = 2, T = 1024, H = 2, HV = 4, D = 64, scale = 0.1, gate_logit_normalizer = 1
+mask_p = 0, use_qk_l2norm_in_kernel = False, use_gate_in_kernel = False
+has_a_log = False, dtype = torch.float16, safe_gate = False
+disable_recompute = False, chunk_size = 64
+
+    @pytest.mark.parametrize(
+        (
+            "B",
+            "T",
+            "H",
+            "HV",
+            "D",
+            "scale",
+            "gate_logit_normalizer",
+            "mask_p",
+            "use_qk_l2norm_in_kernel",
+            "use_gate_in_kernel",
+            "has_a_log",
+            "dtype",
+            "safe_gate",
+            "disable_recompute",
+            "chunk_size",
+        ),
+        [
+            pytest.param(
+                *test,
+                id=(
+                    "B{}-T{}-H{}-HV{}-D{}-scale{}-gate_logit_normalizer{}-mask_p{}"
+                    "-use_qk_l2norm{}-use_gate{}-has_a_log{}-{}-safe_gate{}-disable_recompute{}-chunk_size{}"
+                ).format(*test),
+            )
+            for test in [
+                (1, 63, 1, 1, 64, 1, 1, 0, False, False, False, torch.float16, True, False, 64),
+                (2, 500, 3, 3, 60, 1, 1, 0, False, False, False, torch.float16, True, True, 64),
+                (2, 1000, 3, 3, 64, 0.1, 1, 0.5, False, False, False, torch.float16, False, True, 64),
+                (3, 1024, 4, 4, 100, 1, 0.1, 0, False, False, False, torch.float16, False, False, 64),
+                (4, 1024, 4, 4, 128, 0.1, 1, 0, False, False, False, torch.float16, True, True, 64),
+                (4, 1024, 4, 4, 128, 0.1, 1, 0, True, False, False, torch.float16, True, False, 64),
+                (2, 1500, 4, 4, 128, 0.1, 10, 0, False, True, True, torch.float16, False, True, 64),
+                (4, 2048, 8, 8, 64, 0.1, 1, 0, False, True, True, torch.float16, True, True, 64),
+    
+                (2, 1024, 2, 4, 64, 0.1, 1, 0, False, False, False, torch.float16, False, False, 64),
+                (2, 1024, 2, 8, 64, 0.1, 1, 0, False, True, True, torch.float16, False, False, 64),
+                (2, 1024, 4, 8, 128, 0.1, 1, 0, True, True, True, torch.float16, False, False, 64),
+                (2, 160, 2, 4, 64, 0.1, 1, 0, False, True, True, torch.float16, True, True, 32),
+    
+                (2, 1024, 2, 4, 64, 0.1, 1, 0, True, True, True, torch.bfloat16, True, False, 64),
+                (2, 1024, 2, 4, 64, 0.1, 1, 0, False, True, True, torch.bfloat16, False, False, 64),
+                (2, 160, 2, 4, 64, 0.1, 1, 0, False, True, True, torch.bfloat16, True, True, 32),
+                (2, 1024, 2, 8, 128, 0.1, 1, 0, True, True, True, torch.bfloat16, False, False, 64),
+                (1, 65, 1, 1, 64, 1, 1, 0, False, True, False, torch.float16, False, False, 64),
+            ]
+        ],
+    )
+    def test_chunk(
+        B: int,
+        T: int,
+        H: int,
+        HV: int,
+        D: int,
+        scale: float,
+        gate_logit_normalizer: float,
+        mask_p: float,
+        use_qk_l2norm_in_kernel: bool,
+        use_gate_in_kernel: bool,
+        has_a_log: bool,
+        dtype: torch.dtype,
+        safe_gate: bool,
+        disable_recompute: bool,
+        chunk_size: int,
+    ):
+        torch.manual_seed(42)
+        q = torch.rand(B, T, H, D, dtype=dtype)
+        k = torch.rand(B, T, H, D, dtype=dtype)
+        v = torch.rand(B, T, HV, D, dtype=dtype)
+        g = torch.randn(B, T, HV, D, dtype=torch.float if not use_gate_in_kernel else dtype)
+        A_log = None
+        if use_gate_in_kernel:
+            A_log = torch.randn(HV, dtype=torch.float) if has_a_log else None
+            dt_bias = torch.randn(HV * D, dtype=torch.float)
+        else:
+            g = F.logsigmoid(g) / gate_logit_normalizer
+            g = g * (torch.rand_like(g) > mask_p)
+        if safe_gate:
+            lower_bound = -5.0
+            if not use_gate_in_kernel:
+                g = g.clamp(-5, 0)
+            naive_kda_gate_fn = naive_kda_lowerbound_gate
+        else:
+            lower_bound = None
+            naive_kda_gate_fn = naive_kda_gate
+    
+        beta = torch.randn(B, T, HV, dtype=dtype).sigmoid()
+        h0 = torch.randn(B, HV, D, D, dtype=torch.float32)
+        if A_log is not None:
+            A_log = A_log.to(device).requires_grad_(True)
+        if use_gate_in_kernel:
+            dt_bias = dt_bias.to(device).requires_grad_(True)
+        q, k, v, g, beta, h0 = map(lambda x: x.to(device).requires_grad_(True), (q, k, v, g, beta, h0))
+    
+        do = torch.randn_like(v)
+        dht = torch.randn_like(h0)
+    
+        ref, ref_ht = naive_recurrent_kda(
+            q=F.normalize(q.clone(), p=2, dim=-1),
+            k=F.normalize(k.clone(), p=2, dim=-1),
+            v=v.clone(),
+            g=(naive_kda_gate_fn(g, A_log, dt_bias) if use_gate_in_kernel else g.clone()),
+            beta=beta.clone(),
+            scale=scale,
+            initial_state=h0.clone(),
+            output_final_state=True,
+        )
+        ((ref * do).sum() + (ref_ht * dht).sum()).backward(retain_graph=True)
+        if A_log is not None:
+            ref_dA, A_log.grad = A_log.grad, None
+        if use_gate_in_kernel:
+            ref_dbias, dt_bias.grad = dt_bias.grad, None
+        ref_dq, ref_dk, ref_dv, ref_dg, ref_db, ref_dh0 = q.grad, k.grad, v.grad, g.grad, beta.grad, h0.grad
+        q.grad = k.grad = v.grad = g.grad = beta.grad = h0.grad = None
+    
+>       tri, tri_ht = chunk_kda(
+            q=F.normalize(q.clone(), p=2, dim=-1) if not use_qk_l2norm_in_kernel else q.clone(),
+            k=F.normalize(k.clone(), p=2, dim=-1) if not use_qk_l2norm_in_kernel else k.clone(),
+            v=v.clone(),
+            g=g.clone(),
+            beta=beta.clone(),
+            A_log=(A_log.clone() if A_log is not None else None),
+            dt_bias=(dt_bias.clone() if use_gate_in_kernel else None),
+            scale=scale,
+            initial_state=h0.clone(),
+            output_final_state=True,
+            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+            use_gate_in_kernel=use_gate_in_kernel,
+            safe_gate=safe_gate,
+            lower_bound=lower_bound,
+            disable_recompute=disable_recompute,
+            chunk_size=chunk_size,
+        )
+
+tests/ops/test_kda.py:892: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../fla-compat-d22/upstream-tests/public_backward_plugin.py:56: in public_chunk
+    result=PublicChunk.apply(q,k,v,g,beta,A_log,dt_bias,initial_state,kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/a3_fla/lib/python3.12/site-packages/torch/autograd/function.py:583: in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../fla-compat-d22/upstream-tests/public_backward_plugin.py:30: in forward
+    result=npu_chunk_kda_fwd(q,k,v,g,beta,scale,A_log=None if a is None else a.reshape(-1),dt_bias=bias,initial_state=h0,q_hat_out=qh,k_hat_out=kh,q_rstd_out=qr,k_rstd_out=kr,beta_eff_out=be,**opts)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../venv/lib/python3.12/site-packages/fla_npu/ops/ascendc/__init__.py:401: in wrapper
+    return bound[0](*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+../venv/lib/python3.12/site-packages/fla_npu/ops/ascendc/_stable.py:1437: in npu_chunk_kda_fwd
+    result = _op("npu_chunk_kda_fwd")(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <OpOverloadPacket(op='fla_npu_stable.npu_chunk_kda_fwd')>
+args = (tensor([[[[1.2335e-01, 1.5979e-01, 9.4238e-02,  ..., 7.0801e-02,
+           2.1915e-03, 9.2041e-02],
+          [1.744...  [0.6831, 0.7720, 0.3708, 0.6367]]], device='npu:0',
+       dtype=torch.float16, grad_fn=<CloneBackward0>), None, ...)
+kwargs = {}
+
+    def __call__(self, /, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        # overloading __call__ to ensure torch.ops.foo.bar()
+        # is still callable from JIT
+        # We save the function ptr as the `op` attribute on
+        # OpOverloadPacket to access it here.
+    
+        # Directly calling OverloadPacket goes into C++, which will check
+        # the schema and cause an error for torchbind op when inputs consist of FakeScriptObject so we
+        # intercept it here and call TorchBindOpverload instead.
+        if self._has_torchbind_op_overload and _must_dispatch_in_python(args, kwargs):
+            # pyrefly: ignore [bad-argument-type]
+            return _call_overload_packet_from_python(self, *args, **kwargs)
+>       return self._op(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       RuntimeError: fla_npu(stable): aclnnChunkKdaFwdV2GetWorkspaceSize failed: 161002. Error message: [PID: 105580] 2026-11-27-01:03:35.460.769 Invalid_Argument(EZ0027): Parameters K/V/HK/HV of aclnnChunkKdaFwd have incorrect values 64/64. Reason: unsupported dimension pair or grouped heads on the general path.
+E               Solution: Check whether the parameter values meet the condition.
+
+/root/a3_fla/lib/python3.12/site-packages/torch/_ops.py:1209: RuntimeError
+=============================== warnings summary ===============================
+tests/ops/test_kda.py::test_naive_chunk[B1-T64-H1-HV1-D64-scale1-gate_logit_normalizer1-torch.float32]
+  /root/wys/fla-compat-a2a3/upstream/fla/ops/kda/naive.py:58: UserWarning: Cannot create tensor with interal format while allow_internel_format=False, tensor will be created with base format. (Triggered internally at ../torch_npu/csrc/aten/common/TensorFactories.cpp:340.)
+    o = torch.zeros_like(v)
+
+tests/ops/test_kda.py::test_fused_recurrent[B1-T64-H1-HV1-D64-scale1-gate_logit_normalizer1-use_qk_l2normFalse-torch.float32]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/ascend_ub_manager.py:162: UserWarning: Using fallback UB capacity (65536 bytes): Cannot import tbe.common.platform.get_soc_spec. Source CANN set_env.sh or set ASCEND_UB_CAPACITY_BITS.
+    self._ub_capacity_bits = ub_capacity_bits or self._detect_ub_capacity()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/ops/test_kda.py::test_chunk[B2-T1024-H2-HV4-D64-scale0.1-gate_logit_normalizer1-mask_p0-use_qk_l2normFalse-use_gateFalse-has_a_logFalse-torch.float16-safe_gateFalse-disable_recomputeFalse-chunk_size64]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+================== 1 failed, 60 passed, 2 warnings in 35.62s ===================

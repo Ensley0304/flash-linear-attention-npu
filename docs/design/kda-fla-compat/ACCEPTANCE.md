@@ -22,7 +22,11 @@ PYTHONPATH=/root/wys/fla-compat-d22/upstream-tests \
 python -m pytest tests/ops/test_kda.py -p public_backward_plugin -q --maxfail=5
 ```
 
-此为缺口定位轮，最多5个失败后停止，不等价于最终完整验收。外层900秒超时；任何超时必须记录为未完成。当前轮未通过、结果待收集。
+此为缺口定位轮，最多5个失败后停止，不等价于最终完整验收。外层900秒超时；任何超时必须记录为未完成。
+
+当前轮结果：53 passed、3 failed、3 errors，285.63秒，未完成全部277项。第一个失败是 `test_chunk` 的 B2/T500/H3/HV3/D60/FP16/scale1/保存模式；前向返回后反向同步报告507015。设备日志定位 `ChunkKdaBwdFinalize_*_301`，原因是Vector指令UB地址未对齐。后续同进程失败可能是context污染，不当作三个独立根因。
+
+静态定位：`Tail::RunBlocked` 的beta梯度按 `(rows+1)/2` 分片，T500最后一个chunk为52行，第二AIV从float偏移26即104字节开始Cast，违反32字节对齐。修复候选按 `Pad8((rows+1)/2)` 划分并按真实行数裁剪写回，新增2/7/9/17/31/33/52等尾块测试。当前候选仍待组件和公开接口验证，不计修复通过。原始日志见 `evidence/integration-baseline-suite.log`。
 
 ## 性能证据检查
 
