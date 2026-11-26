@@ -1,0 +1,2 @@
+# Preserve raw pytest log whitespace as collected.
+*.log -whitespace

@@ -26,7 +26,7 @@ python -m pytest tests/ops/test_kda.py -p public_backward_plugin -q --maxfail=5
 
 当前轮结果：53 passed、3 failed、3 errors，285.63秒，未完成全部277项。第一个失败是 `test_chunk` 的 B2/T500/H3/HV3/D60/FP16/scale1/保存模式；前向返回后反向同步报告507015。设备日志定位 `ChunkKdaBwdFinalize_*_301`，原因是Vector指令UB地址未对齐。后续同进程失败可能是context污染，不当作三个独立根因。
 
-静态定位：`Tail::RunBlocked` 的beta梯度按 `(rows+1)/2` 分片，T500最后一个chunk为52行，第二AIV从float偏移26即104字节开始Cast，违反32字节对齐。修复候选按 `Pad8((rows+1)/2)` 划分并按真实行数裁剪写回，新增2/7/9/17/31/33/52等尾块测试。当前候选仍待组件和公开接口验证，不计修复通过。原始日志见 `evidence/integration-baseline-suite.log`。
+静态定位：`Tail::RunBlocked` 的beta梯度按 `(rows+1)/2` 分片，T500最后一个chunk为52行，第二AIV从float偏移26即104字节开始Cast，违反32字节对齐。修复候选按 `Pad8((rows+1)/2)` 划分并按真实行数裁剪写回，新增2/7/9/17/31/33/52等尾块测试。修复后990项尾块组件检查通过，重新编译安装公开包后，原故障消失，上游推进到60 passed。下一失败为B2/T1024/H2/HV4/D64/FP16重算的GVA规格，被当前ACLNN范围校验拒绝；这不属于同一设备错误，也不计通过。GVA此前明确不在新增能力范围，保留失败记录，最终报告须区分原路径回归与新ACLNN覆盖。原始日志见 `evidence/integration-baseline-suite.log`。
 
 ## 性能证据检查
 
@@ -41,3 +41,5 @@ python -m pytest tests/ops/test_kda.py -p public_backward_plugin -q --maxfail=5
 3. 原快路径无确认退化；KV256不超过原KV128的5倍；C32两模式前反向与训练整链快于优化后C64。
 4. 三轮配对性能证据、实际源码/包身份、设备任务范围和测试日志完整。
 5. 任一窗口仅组件通过、仅原型、仅保存模式完成或仍用慢C64基线，都不能结束整体验收。
+
+修复公开包日志见 `evidence/tail-align-full-upstream.log`。本轮结果1 failed、60 passed，35.62秒；仍未完成完整脚本验收。
