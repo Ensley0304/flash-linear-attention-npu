@@ -11,6 +11,11 @@ public:
         // Four legacy dtype rows plus two fused-sigmoid rows: FP32 effective beta
         // may write BF16 db when the total API receives BF16 original logits.
         constexpr auto gateParam = REQUIRED;
+#ifdef KDA_BWD_STAGES_ARCH22
+        constexpr auto optionalGateParam = OPTIONAL;
+#else
+        constexpr auto optionalGateParam = REQUIRED;
+#endif
         const std::initializer_list<ge::DataType> bf16 = {
             ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> fp32 = {
@@ -40,8 +45,8 @@ public:
         ADD_INPUT("gk", REQUIRED, fp32);
         ADD_INPUT("raw_g", gateParam, rawTypes);
         ADD_INPUT("beta", REQUIRED, betaTypes);
-        ADD_INPUT("a_log", gateParam, fp32);
-        ADD_INPUT("dt_bias", gateParam, fp32);
+        ADD_INPUT("a_log", optionalGateParam, fp32);
+        ADD_INPUT("dt_bias", optionalGateParam, fp32);
         ADD_INPUT("akk", REQUIRED, bf16);
         ADD_INPUT("v_new", REQUIRED, bf16);
         ADD_INPUT("h", REQUIRED, bf16);

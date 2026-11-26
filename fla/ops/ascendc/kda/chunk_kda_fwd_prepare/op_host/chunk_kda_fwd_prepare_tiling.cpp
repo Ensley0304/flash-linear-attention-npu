@@ -346,7 +346,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
 
 bool CheckOptionalInput(gert::TilingContext *context,
                         const PrepareShapeInfo &shape, bool useGateInKernel,
-                        bool safeGate, bool &hasDtBias)
+                        bool safeGate, bool &hasDtBias, bool generalPath)
 {
     const auto *aLogDesc = context->GetOptionalInputDesc(PREPARE_INPUT_A_LOG);
     const auto *dtBiasDesc = context->GetOptionalInputDesc(PREPARE_INPUT_DT_BIAS);
@@ -377,22 +377,23 @@ bool CheckOptionalInput(gert::TilingContext *context,
         }
         return true;
     }
-    if (!hasALog) {
+    if (!hasALog && !generalPath) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "use_gate_in_kernel",
             "a_log=absent", "use_gate_in_kernel=true 时必须传入 a_log");
 
         return false;
     }
-    if (aLogDesc->GetDataType() != ge::DT_FLOAT ||
+    if ((hasALog && aLogDesc->GetDataType() != ge::DT_FLOAT) ||
         (dtBiasDesc != nullptr && dtBiasDesc->GetDataType() != ge::DT_FLOAT)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "a_log/dt_bias",
-            ge::TypeUtils::DataTypeToSerialString(aLogDesc->GetDataType()) + "," +
+            (hasALog ? ge::TypeUtils::DataTypeToSerialString(aLogDesc->GetDataType()) : std::string("absent")) + "," +
                 (dtBiasDesc == nullptr ? std::string("absent") :
                     ge::TypeUtils::DataTypeToSerialString(dtBiasDesc->GetDataType())),
             "a_log 和 dt_bias 只支持 FP32");
 
         return false;
     }
+    if (hasALog) {
     const auto &aLog = aLogShape->GetStorageShape();
     if (!HasShape(aLog, {shape.valueHeadNum})) {
         const std::string aLogActual = aLog.GetDimNum() == 1
@@ -403,6 +404,7 @@ bool CheckOptionalInput(gert::TilingContext *context,
             "[" + std::to_string(shape.valueHeadNum) + "]");
 
         return false;
+    }
     }
     if (hasDtBias) {
         const auto &dtBias = dtBiasShape->GetStorageShape();
@@ -589,7 +591,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
 
     bool hasDtBias = false;
     if (!CheckOptionalInput(context, shape, *useGatePtr, *safeGatePtr && (!generalPath || *useGatePtr),
-                            hasDtBias)) {
+                            hasDtBias, generalPath)) {
         return ge::GRAPH_FAILED;
     }
 

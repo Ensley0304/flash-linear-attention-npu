@@ -8,7 +8,8 @@ from public_backward_plugin import public_chunk
 @pytest.mark.parametrize("save",[True,False])
 @pytest.mark.parametrize("norm",[True,False])
 @pytest.mark.parametrize("beta_mode",[0,1,2])
-def test_k64_v32(dtype,save,norm,beta_mode):
+@pytest.mark.parametrize("chunk_size",[32,64])
+def test_k64_v32(dtype,save,norm,beta_mode,chunk_size):
     torch.manual_seed(42)
     B,T,H,K,V=1,129,2,64,32
     device=upstream.device
@@ -24,7 +25,7 @@ def test_k64_v32(dtype,save,norm,beta_mode):
     out,_=public_chunk(q,k,v,g,beta,A_log=a,dt_bias=bias,scale=.37,
         cu_seqlens=torch.tensor(cu),use_qk_l2norm_in_kernel=norm,use_gate_in_kernel=True,
         use_beta_sigmoid_in_kernel=bool(beta_mode),allow_neg_eigval=beta_mode==2,
-        safe_gate=True,lower_bound=-5.,disable_recompute=save)
+        safe_gate=True,lower_bound=-5.,disable_recompute=save,chunk_size=chunk_size)
     do=torch.randn_like(v)
     got=torch.autograd.grad(out,inputs,do)
     gate=upstream.naive_kda_lowerbound_gate(g.float(),a,bias,lower_bound=-5.)

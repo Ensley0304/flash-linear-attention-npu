@@ -16,6 +16,12 @@
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_STRUCT_H
 
 #include <cstdint>
+#if __has_include("../../../../kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/contract.h")
+#include "../../../../kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/contract.h"
+#else
+// Offline OPP compilation flattens operator-family directories.
+#include "../../chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/contract.h"
+#endif
 
 #ifndef TORCH_MODE
 #include "ascendc/host_api/tiling/template_argument.h"
@@ -44,7 +50,7 @@ ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdDhu,
     ASCENDC_TPL_UINT_DECL(V, 1, ASCENDC_TPL_UI_LIST, 128, 256),
     ASCENDC_TPL_UINT_DECL(USE_GK, 1, ASCENDC_TPL_UI_LIST, 0, 1),
     ASCENDC_TPL_BOOL_DECL(DO_TOKEN_MAJOR, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(GENERAL_PATH, 0, 1),
+    ASCENDC_TPL_UINT_DECL(GENERAL_PATH, 2, ASCENDC_TPL_UI_LIST, 0, 1, 2),
 );
 
 #define TPL_SEL_ONE(Q_TYPE, G_TYPE, V_VALUE, USE_GK_VALUE, D) \
@@ -54,7 +60,7 @@ ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdDhu,
         ASCENDC_TPL_UINT_SEL(V, ASCENDC_TPL_UI_LIST, V_VALUE), \
         ASCENDC_TPL_UINT_SEL(USE_GK, ASCENDC_TPL_UI_LIST, USE_GK_VALUE), \
         ASCENDC_TPL_BOOL_SEL(DO_TOKEN_MAJOR, D), \
-        ASCENDC_TPL_BOOL_SEL(GENERAL_PATH,0), \
+        ASCENDC_TPL_UINT_SEL(GENERAL_PATH,ASCENDC_TPL_UI_LIST,0), \
     )
 
 #define TPL_SEL_FOR_PAIR(Q_TYPE, G_TYPE, USE_GK_VALUE, D) \
@@ -73,7 +79,11 @@ ASCENDC_TPL_SEL(
     ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIV_ONLY),
         ASCENDC_TPL_DTYPE_SEL(D_T_Q,TPL_BF16),ASCENDC_TPL_DTYPE_SEL(D_T_G,TPL_FP32),
         ASCENDC_TPL_UINT_SEL(V,ASCENDC_TPL_UI_LIST,128),ASCENDC_TPL_UINT_SEL(USE_GK,ASCENDC_TPL_UI_LIST,1),
-        ASCENDC_TPL_BOOL_SEL(DO_TOKEN_MAJOR,0),ASCENDC_TPL_BOOL_SEL(GENERAL_PATH,1)),
+        ASCENDC_TPL_BOOL_SEL(DO_TOKEN_MAJOR,0),ASCENDC_TPL_UINT_SEL(GENERAL_PATH,ASCENDC_TPL_UI_LIST,1)),
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_2),
+        ASCENDC_TPL_DTYPE_SEL(D_T_Q,TPL_BF16),ASCENDC_TPL_DTYPE_SEL(D_T_G,TPL_FP32),
+        ASCENDC_TPL_UINT_SEL(V,ASCENDC_TPL_UI_LIST,128),ASCENDC_TPL_UINT_SEL(USE_GK,ASCENDC_TPL_UI_LIST,1),
+        ASCENDC_TPL_BOOL_SEL(DO_TOKEN_MAJOR,0),ASCENDC_TPL_UINT_SEL(GENERAL_PATH,ASCENDC_TPL_UI_LIST,2)),
 );
 #undef TPL_SEL_FOR_GATE
 #undef TPL_SEL_FOR_PAIR
@@ -129,6 +139,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t vecRow;
     int64_t stateResident;
     float scale;
+    KDA::Arch22::Pipeline64::Layout pipeline{};
 };
 
 } // namespace GDN

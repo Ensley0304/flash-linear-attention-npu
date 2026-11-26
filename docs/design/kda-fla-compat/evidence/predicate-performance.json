@@ -1,0 +1,610 @@
+{
+  "perf-bf128-predicate-r1-summary/save": {
+    "total_us": {
+      "median": 98.098,
+      "min": 95.378,
+      "max": 98.878
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 6.13,
+        "min_us": 5.88,
+        "max_us": 6.72
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 19.9095,
+        "min_us": 19.039,
+        "max_us": 20.839
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 46.969,
+        "min_us": 46.179,
+        "max_us": 48.139
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 5,
+      "1": 5,
+      "2": 5,
+      "3": 5,
+      "4": 5,
+      "5": 5,
+      "6": 5,
+      "7": 5,
+      "8": 5,
+      "9": 5
+    }
+  },
+  "perf-bf128-predicate-r1-summary/recompute": {
+    "total_us": {
+      "median": 118.0975,
+      "min": 115.679,
+      "max": 118.638
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 5.15,
+        "min_us": 5.039,
+        "max_us": 5.4
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 19.3795,
+        "min_us": 18.319,
+        "max_us": 19.74
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 46.679,
+        "min_us": 46.359,
+        "max_us": 46.839
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 7,
+      "1": 7,
+      "2": 7,
+      "3": 7,
+      "4": 7,
+      "5": 7,
+      "6": 7,
+      "7": 7,
+      "8": 7,
+      "9": 7
+    }
+  },
+  "perf-bf128-predicate-r2-summary/save": {
+    "total_us": {
+      "median": 96.3385,
+      "min": 93.779,
+      "max": 98.118
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 5.9495000000000005,
+        "min_us": 5.259,
+        "max_us": 7.159
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 20.039499999999997,
+        "min_us": 19.5,
+        "max_us": 20.78
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 46.209,
+        "min_us": 45.719,
+        "max_us": 46.819
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 5,
+      "1": 5,
+      "2": 5,
+      "3": 5,
+      "4": 5,
+      "5": 5,
+      "6": 5,
+      "7": 5,
+      "8": 5,
+      "9": 5
+    }
+  },
+  "perf-bf128-predicate-r2-summary/recompute": {
+    "total_us": {
+      "median": 117.39750000000001,
+      "min": 115.49799999999999,
+      "max": 117.89800000000001
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 5.140000000000001,
+        "min_us": 4.9,
+        "max_us": 5.3
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 19.6495,
+        "min_us": 19.24,
+        "max_us": 19.88
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 45.858999999999995,
+        "min_us": 45.119,
+        "max_us": 46.019
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 7,
+      "1": 7,
+      "2": 7,
+      "3": 7,
+      "4": 7,
+      "5": 7,
+      "6": 7,
+      "7": 7,
+      "8": 7,
+      "9": 7
+    }
+  },
+  "perf-bf128-predicate-r3-summary/save": {
+    "total_us": {
+      "median": 97.7485,
+      "min": 95.93799999999999,
+      "max": 99.077
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 6.21,
+        "min_us": 5.7,
+        "max_us": 7.499
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 20.0395,
+        "min_us": 19.66,
+        "max_us": 20.78
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 46.729,
+        "min_us": 45.499,
+        "max_us": 48.179
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 5,
+      "1": 5,
+      "2": 5,
+      "3": 5,
+      "4": 5,
+      "5": 5,
+      "6": 5,
+      "7": 5,
+      "8": 5,
+      "9": 5
+    }
+  },
+  "perf-bf128-predicate-r3-summary/recompute": {
+    "total_us": {
+      "median": 117.7375,
+      "min": 116.398,
+      "max": 118.33699999999999
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 5.1899999999999995,
+        "min_us": 5.14,
+        "max_us": 5.28
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 19.68,
+        "min_us": 18.8,
+        "max_us": 19.899
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 46.059,
+        "min_us": 45.339,
+        "max_us": 46.619
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 7,
+      "1": 7,
+      "2": 7,
+      "3": 7,
+      "4": 7,
+      "5": 7,
+      "6": 7,
+      "7": 7,
+      "8": 7,
+      "9": 7
+    }
+  },
+  "perf-bf256-predicate-r1-summary/save": {
+    "total_us": {
+      "median": 493.93100000000004,
+      "min": 489.04999999999995,
+      "max": 499.77000000000004
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 35.789,
+        "min_us": 34.359,
+        "max_us": 36.919
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 76.07849999999999,
+        "min_us": 74.098,
+        "max_us": 77.298
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 256.375,
+        "min_us": 250.755,
+        "max_us": 258.695
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.5195,
+        "min_us": 2.4,
+        "max_us": 2.7
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 19,
+      "1": 19,
+      "2": 19,
+      "3": 19,
+      "4": 19,
+      "5": 19,
+      "6": 19,
+      "7": 19,
+      "8": 19,
+      "9": 19
+    }
+  },
+  "perf-bf256-predicate-r1-summary/recompute": {
+    "total_us": {
+      "median": 3410.6624999999995,
+      "min": 3365.5930000000003,
+      "max": 3448.332
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 34.54,
+        "min_us": 33.1,
+        "max_us": 35.919
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 76.109,
+        "min_us": 74.558,
+        "max_us": 78.238
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 256.165,
+        "min_us": 251.355,
+        "max_us": 261.815
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.4299999999999997,
+        "min_us": 2.3,
+        "max_us": 2.6
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 22,
+      "1": 22,
+      "2": 22,
+      "3": 22,
+      "4": 22,
+      "5": 22,
+      "6": 22,
+      "7": 22,
+      "8": 22,
+      "9": 22
+    }
+  },
+  "perf-bf256-predicate-r2-summary/save": {
+    "total_us": {
+      "median": 496.58050000000003,
+      "min": 489.65,
+      "max": 505.5100000000001
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 35.499,
+        "min_us": 34.079,
+        "max_us": 38.5
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 74.9385,
+        "min_us": 73.079,
+        "max_us": 76.939
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 257.3245,
+        "min_us": 249.015,
+        "max_us": 266.855
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.42,
+        "min_us": 2.36,
+        "max_us": 2.86
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 19,
+      "1": 19,
+      "2": 19,
+      "3": 19,
+      "4": 19,
+      "5": 19,
+      "6": 19,
+      "7": 19,
+      "8": 19,
+      "9": 19
+    }
+  },
+  "perf-bf256-predicate-r2-summary/recompute": {
+    "total_us": {
+      "median": 3412.9515,
+      "min": 3392.1320000000005,
+      "max": 3439.6709999999994
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 34.259,
+        "min_us": 33.899,
+        "max_us": 37.059
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 74.9785,
+        "min_us": 72.259,
+        "max_us": 75.639
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 256.68399999999997,
+        "min_us": 252.155,
+        "max_us": 259.355
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.41,
+        "min_us": 2.28,
+        "max_us": 2.58
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 22,
+      "1": 22,
+      "2": 22,
+      "3": 22,
+      "4": 22,
+      "5": 22,
+      "6": 22,
+      "7": 22,
+      "8": 22,
+      "9": 22
+    }
+  },
+  "perf-bf256-predicate-r3-summary/save": {
+    "total_us": {
+      "median": 495.28,
+      "min": 488.75100000000003,
+      "max": 497.15000000000003
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 35.199,
+        "min_us": 33.86,
+        "max_us": 36.079
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 75.8485,
+        "min_us": 74.278,
+        "max_us": 77.918
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 257.645,
+        "min_us": 254.315,
+        "max_us": 261.175
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.58,
+        "min_us": 2.34,
+        "max_us": 2.82
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 19,
+      "1": 19,
+      "2": 19,
+      "3": 19,
+      "4": 19,
+      "5": 19,
+      "6": 19,
+      "7": 19,
+      "8": 19,
+      "9": 19
+    }
+  },
+  "perf-bf256-predicate-r3-summary/recompute": {
+    "total_us": {
+      "median": 3408.7425000000003,
+      "min": 3392.3720000000003,
+      "max": 3445.371
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 34.46,
+        "min_us": 33.219,
+        "max_us": 36.619
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 75.7385,
+        "min_us": 73.598,
+        "max_us": 76.738
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 258.08500000000004,
+        "min_us": 252.315,
+        "max_us": 262.255
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.3899999999999997,
+        "min_us": 2.3,
+        "max_us": 2.64
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 22,
+      "1": 22,
+      "2": 22,
+      "3": 22,
+      "4": 22,
+      "5": 22,
+      "6": 22,
+      "7": 22,
+      "8": 22,
+      "9": 22
+    }
+  },
+  "perf-bf256-predicate-summary/save": {
+    "total_us": {
+      "median": 495.12,
+      "min": 487.01000000000005,
+      "max": 501.851
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 35.8695,
+        "min_us": 34.739,
+        "max_us": 37.439
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 76.639,
+        "min_us": 74.498,
+        "max_us": 78.638
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 256.485,
+        "min_us": 252.235,
+        "max_us": 261.135
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.55,
+        "min_us": 2.38,
+        "max_us": 2.82
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 19,
+      "1": 19,
+      "2": 19,
+      "3": 19,
+      "4": 19,
+      "5": 19,
+      "6": 19,
+      "7": 19,
+      "8": 19,
+      "9": 19
+    }
+  },
+  "perf-bf256-predicate-summary/recompute": {
+    "total_us": {
+      "median": 3399.4620000000004,
+      "min": 3366.413,
+      "max": 3447.5509999999995
+    },
+    "stages": {
+      "aclnnChunkKdaBwd_ChunkKdaBwdPrepare_ChunkKdaBwdPrepare#0": {
+        "n": 10,
+        "median_us": 34.989000000000004,
+        "min_us": 33.82,
+        "max_us": 35.399
+      },
+      "aclnnChunkKdaBwd_ChunkGatedDeltaRuleBwdDhu_ChunkGatedDeltaRuleBwdDhu#0": {
+        "n": 10,
+        "median_us": 76.2585,
+        "min_us": 75.039,
+        "max_us": 77.098
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#0": {
+        "n": 10,
+        "median_us": 255.885,
+        "min_us": 254.055,
+        "max_us": 259.914
+      },
+      "aclnnChunkKdaBwd_ChunkKdaBwdFinalize_ChunkKdaBwdFinalize#1": {
+        "n": 10,
+        "median_us": 2.4699999999999998,
+        "min_us": 2.32,
+        "max_us": 2.78
+      }
+    },
+    "calls": 10,
+    "tasks_per_call": {
+      "0": 22,
+      "1": 22,
+      "2": 22,
+      "3": 22,
+      "4": 22,
+      "5": 22,
+      "6": 22,
+      "7": 22,
+      "8": 22,
+      "9": 22
+    }
+  }
+}

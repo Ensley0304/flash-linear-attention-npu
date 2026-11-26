@@ -1,5 +1,8 @@
 unset(chunk_kda_bwd_finalize_depends CACHE)
 if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    set(chunk_kda_bwd_finalize_depends
+        "fla/ops/ascendc/kda/chunk_kda_fwd_prepare;fla/ops/ascendc/kda/chunk_kda_fwd_finalize"
+        CACHE STRING "General Finalize shared math and metadata" FORCE)
     add_compile_definitions(KDA_BWD_STAGES_ARCH22)
 endif()
 add_op_to_compiled_list()

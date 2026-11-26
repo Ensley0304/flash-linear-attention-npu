@@ -490,6 +490,18 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         if(elements>UINT64_MAX/(4*(4*K+1)))return ge::GRAPH_FAILED;
         context->SetTilingKey(reducing?202:201);context->SetBlockDim(t->usedCoreNum);
         context->GetWorkspaceSizes(1)[0]=platform.GetLibApiWorkSpaceSize()+(reducing?0:elements*(4*K+1)*4);
+        if(!reducing && !t->isVariable) {
+            const uint32_t aic=std::max<uint32_t>(1,platform.GetCoreNumAic());
+            // Do not halve active groups on short/low-head inputs. Pair heads
+            // only when the paired work set still fills the available AICs.
+            const uint32_t cg=uint64_t(t->chunks)*((t->heads+1)/2)>=aic?2:1;
+            if(!KDA::Arch22::Pipeline64::MakeLayout(K,V,t->chunks,t->heads,cg,
+                std::max<uint32_t>(1,platform.GetCoreNumAic()),platform.GetLibApiWorkSpaceSize(),t->pipeline))
+                return ge::GRAPH_FAILED;
+            t->usedCoreNum=t->pipeline.blocks;
+            context->SetTilingKey(301);context->SetBlockDim(t->usedCoreNum);
+            context->GetWorkspaceSizes(1)[0]=platform.GetLibApiWorkSpaceSize()+t->pipeline.bytes;
+        }
         context->GetRawTilingData()->SetDataSize(sizeof(*t));return ge::GRAPH_SUCCESS;
     }
     uint32_t aicCoreNum = static_cast<uint32_t>(platform.GetCoreNumAic());

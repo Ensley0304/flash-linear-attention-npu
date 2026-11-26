@@ -123,7 +123,8 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
     const auto &qShape = q->GetViewShape();
     const auto &vShape = v->GetViewShape();
     const bool generalPath = q->GetDataType() == DataType::DT_FLOAT16 ||
-        qShape.GetDim(qShape.GetDimNum()-1) != 128 || vShape.GetDim(vShape.GetDimNum()-1) != 128;
+        qShape.GetDim(qShape.GetDimNum()-1) != 128 || vShape.GetDim(vShape.GetDimNum()-1) != 128 ||
+        (wOut && wOut->GetDataType()==DataType::DT_FLOAT);
     const auto keyShape = gkOut->GetViewShape();
     auto scalarShape = keyShape;
     scalarShape.SetDimNum(keyShape.GetDimNum()-1);

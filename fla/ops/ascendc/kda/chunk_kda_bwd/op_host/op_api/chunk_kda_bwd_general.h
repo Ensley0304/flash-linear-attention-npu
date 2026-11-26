@@ -28,10 +28,26 @@ static aclnnStatus GeneralChunkKdaBwdGetWorkspaceSize(
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME,name,why);return ACLNN_ERR_PARAM_INVALID;
     };
     if(GetCurrentPlatformInfo().GetCurNpuArch()!=NpuArch::DAV_2201)return invalid("soc","FP32 cache backward requires A2/A3");
-    if(chunkSize!=64 || stateVFirst || initialStateOptional || dhtOptional || dh0OutOptional)
-        return invalid("chunk/state","requires C64, K-first; combined h0/dht/dh0 remain outside this scope");
-    if((useGateInKernel && !safeGate) || (allowNegEigval && !useBetaSigmoidInKernel))
-        return invalid("flags","raw training gate requires safe_gate; negative eigval requires sigmoid");
+    if(chunkSize==32){
+        if(allowNegEigval && !useBetaSigmoidInKernel)return invalid("allow_neg_eigval","requires beta sigmoid");
+        if(useGateInKernel && !rawGOptional)return invalid("raw_g","raw gate backward requires original logits");
+        auto uniqueExecutor=CREATE_EXECUTOR();if(!uniqueExecutor.get())return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+        l0op::KdaFused32Request r;
+        const bool norm=qRstdOptional!=nullptr;
+        r.inputs={norm?nullptr:q,norm?nullptr:k,v,rawGOptional?rawGOptional:gk,beta,aLogOptional,dtBiasOptional,
+            initialStateOptional,dhtOptional,dO,gk,aqk,akk,wOptional,qgOptional,kgOptional,vNewOptional,hOptional,
+            norm?q:nullptr,norm?k:nullptr,qRstdOptional,kRstdOptional,betaEffOptional,nullptr};
+        r.outputs={nullptr,nullptr,dqOut,dkOut,dvOut,dgOut,dbOut,dh0OutOptional,dAOutOptional,dBiasOutOptional};
+        r.backward=true;r.cu=cuSeqlensOptional;r.chunkIndices=chunkIndicesOptional;r.layout=layout;
+        auto &c=r.config;c.normalize=norm;c.betaMode=useBetaSigmoidInKernel?(allowNegEigval?2:1):0;
+        c.gateMode=useGateInKernel?(safeGate?2:1):0;c.useExp2=useExp2;c.recompute=!disableRecompute;
+        c.stateVFirst=stateVFirst;c.scale=static_cast<float>(scale);c.epsilon=1e-6F;c.lowerBound=static_cast<float>(lowerBound);
+        auto status=l0op::KdaFused32(r,uniqueExecutor.get());if(status!=ACLNN_SUCCESS)return status;
+        *workspaceSize=uniqueExecutor->GetWorkspaceSize();uniqueExecutor.ReleaseTo(executor);return ACLNN_SUCCESS;
+    }
+    if(chunkSize!=64)return invalid("chunk_size","general backward requires C32 or C64");
+    if(allowNegEigval && !useBetaSigmoidInKernel)
+        return invalid("flags","negative eigval requires sigmoid");
     if(!std::isfinite(static_cast<float>(scale)) || !std::isfinite(static_cast<float>(lowerBound)))return invalid("scale/lower_bound","must be finite");
     if(!layout)return invalid("layout","missing");
     const bool packed=std::strcmp(layout,"NTD")==0 || std::strcmp(layout,"TND")==0;
@@ -65,7 +81,8 @@ static aclnnStatus GeneralChunkKdaBwdGetWorkspaceSize(
     if(betaEffOptional && !MatchesTensor(betaEffOptional,scalar,DataType::DT_FLOAT))return invalid("beta_eff","must match head-major FP32 scalar shape");
     const auto gateType=rawGOptional?rawGOptional->GetDataType():DataType::DT_FLOAT;
     if(rawGOptional && (!(gateType==data || gateType==DataType::DT_FLOAT) || !MatchesTensor(rawGOptional,keyTM,gateType)))return invalid("raw_g","token-major gate shape/dtype mismatch");
-    if(useGateInKernel && (!rawGOptional || !MatchesTensor(aLogOptional,MakeShape({H}),DataType::DT_FLOAT)))return invalid("raw_g/a_log","raw safe gate requires both inputs");
+    if(useGateInKernel && !rawGOptional)return invalid("raw_g","raw gate requires original logits");
+    if(aLogOptional && !MatchesTensor(aLogOptional,MakeShape({H}),DataType::DT_FLOAT))return invalid("a_log","requires contiguous FP32 [H]");
     if(dtBiasOptional && (dtBiasOptional->GetDataType()!=DataType::DT_FLOAT || !IsContiguous(dtBiasOptional) || dtBiasOptional->GetViewShape().GetShapeSize()!=H*K))return invalid("dt_bias","requires contiguous FP32 H*K");
     if(!MatchesTensor(dqOut,tm?keyTM:key,data) || !MatchesTensor(dkOut,tm?keyTM:key,data) || !MatchesTensor(dvOut,tm?valTM:val,data) ||
        !MatchesTensor(dbOut,scalarTM,beta->GetDataType()) || !MatchesTensor(dgOut,keyTM,gateType))return invalid("outputs","output shape/dtype mismatch");
@@ -85,14 +102,21 @@ static aclnnStatus GeneralChunkKdaBwdGetWorkspaceSize(
             for(size_t i=0;i<generated.size();++i)if((*chunkIndicesOptional)[i]!=generated[i])return invalid("chunk_indices","must be canonical sequence-major pairs");
         }
     }else if(chunkIndicesOptional)return invalid("chunk_indices","requires cu_seqlens");
-    const auto state=packed?MakeShape({nc,H,K,V}):MakeShape({B,nc,H,K,V});
+    const int64_t stateRows=stateVFirst?V:K,stateCols=stateVFirst?K:V;
+    const auto state=packed?MakeShape({nc,H,stateRows,stateCols}):MakeShape({B,nc,H,stateRows,stateCols});
+    const auto boundary=MakeShape({cuSeqlensOptional?int64_t(cuSeqlensOptional->Size()-1):B,H,stateRows,stateCols});
+    for(auto *x:{initialStateOptional,dhtOptional,dh0OutOptional})
+        if(x && !MatchesTensor(x,boundary,DataType::DT_FLOAT))return invalid("state","requires contiguous FP32 [S,H,K,V] or [S,H,V,K]");
+    if(dh0OutOptional && !initialStateOptional)return invalid("dh0","requires initial_state");
+    for(auto *x:{initialStateOptional,dhtOptional})
+        if(x && dh0OutOptional && x->GetStorageAddr()==dh0OutOptional->GetStorageAddr())return invalid("dh0","must not alias input states");
     if(disableRecompute){
         for(auto *t:{wOptional,qgOptional,kgOptional})if(!MatchesTensor(t,key,DataType::DT_FLOAT))return invalid("saved cache","w/qg/kg must be FP32 head-major");
         if(!MatchesTensor(vNewOptional,val,DataType::DT_FLOAT) || !MatchesTensor(hOptional,state,DataType::DT_FLOAT) || !MatchesTensor(gk,key,DataType::DT_FLOAT))return invalid("saved state","v_new/h/gk FP32 shapes mismatch");
     }else if(!useGateInKernel && !MatchesTensor(gk,key,DataType::DT_FLOAT))return invalid("gk","preactivated recompute requires saved cumulative G");
     auto uniqueExecutor=CREATE_EXECUTOR();if(!uniqueExecutor.get())return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     auto *ex=uniqueExecutor.get();
-    NormalizeOriginalShapes({q,k,v,beta,gk,aqk,akk,wOptional,qgOptional,kgOptional,vNewOptional,hOptional,dO,rawGOptional,aLogOptional,dtBiasOptional,qRstdOptional,kRstdOptional,betaEffOptional,dqOut,dkOut,dvOut,dbOut,dgOut,dAOutOptional,dBiasOutOptional});
+    NormalizeOriginalShapes({initialStateOptional,dhtOptional,dh0OutOptional,q,k,v,beta,gk,aqk,akk,wOptional,qgOptional,kgOptional,vNewOptional,hOptional,dO,rawGOptional,aLogOptional,dtBiasOptional,qRstdOptional,kRstdOptional,betaEffOptional,dqOut,dkOut,dvOut,dbOut,dgOut,dAOutOptional,dBiasOutOptional});
     auto alloc=[&](const op::Shape &s,DataType type){return ex->AllocTensor(s,type,Format::FORMAT_ND);};
     auto fp32=[&](const aclTensor *x){return x && x->GetDataType()!=DataType::DT_FLOAT?l0op::Cast(x,DataType::DT_FLOAT,ex):x;};
     if(cuSeqlensOptional && !chunkIndicesOptional)chunkIndicesOptional=ex->AllocIntArray(generated.data(),generated.size());
@@ -113,13 +137,19 @@ static aclnnStatus GeneralChunkKdaBwdGetWorkspaceSize(
         vn=alloc(val,DataType::DT_FLOAT);h=alloc(state,DataType::DT_FLOAT);G=alloc(key,DataType::DT_FLOAT);
         const auto *u=alloc(val,DataType::DT_FLOAT);
         if(!w || !qg || !kg || !vn || !h || !G || !u)return ACLNN_ERR_INNER_NULLPTR;
+        const aclTensor *gateInput=gk;
+        if(useGateInKernel){
+            gateInput=alloc(key,DataType::DT_FLOAT);
+            if(!gateInput || !l0op::KdaBwdGateNormalize(raw,aLogOptional,dtBiasOptional,cuSeqlensOptional,
+                useExp2,safeGate,lowerBound,gateInput,ex))return ACLNN_ERR_INNER_NULLPTR;
+        }
         const auto recompute=l0op::ChunkKdaBwdRecompute(BatchView(qh,packed,ex),BatchView(kh,packed,ex),BatchView(vh,packed,ex),
-            BatchView(useGateInKernel?raw:gk,packed,ex),BatchView(bh,packed,ex),BatchView(akk,packed,ex),log,bias,
-            cuSeqlensOptional,chunkIndicesOptional,64,useGateInKernel,useExp2,lowerBound,"BNSD",
+            BatchView(gateInput,packed,ex),BatchView(bh,packed,ex),BatchView(akk,packed,ex),log,bias,
+            cuSeqlensOptional,chunkIndicesOptional,64,false,useExp2,lowerBound,"BNSD",
             BatchView(w,packed,ex),BatchView(u,packed,ex),BatchView(qg,packed,ex),BatchView(kg,packed,ex),BatchView(G,packed,ex),ex,"",true);
         for(auto *x:recompute)if(!x)return ACLNN_ERR_INNER_NULLPTR;
         const auto fwd=l0op::ChunkFwdH(BatchView(kg,packed,ex),BatchView(w,packed,ex),BatchView(u,packed,ex),nullptr,
-            BatchView(G,packed,ex),nullptr,cuSeqlensOptional,chunkIndicesOptional,false,64,true,useExp2,false,
+            BatchView(G,packed,ex),initialStateOptional,cuSeqlensOptional,chunkIndicesOptional,false,64,true,useExp2,stateVFirst,
             BatchView(h,packed,ex),BatchView(vn,packed,ex),nullptr,ex);
         if(!fwd[0] || !fwd[1])return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -127,17 +157,17 @@ static aclnnStatus GeneralChunkKdaBwdGetWorkspaceSize(
     const auto *da=alloc(matrix,DataType::DT_FLOAT),*dv0=alloc(val,DataType::DT_FLOAT),*dqraw=alloc(key,DataType::DT_FLOAT);
     const auto *dh=alloc(state,DataType::DT_FLOAT),*dvscan=alloc(val,DataType::DT_FLOAT);
     if(!da || !dv0 || !dqraw || !dh || !dvscan)return ACLNN_ERR_INNER_NULLPTR;
-    auto prepare=l0op::ChunkKdaBwdPrepare(aqk,vn,doh,h,cuSeqlensOptional,chunkIndicesOptional,packed?"NTD":"BNSD",scale,64,false,da,dv0,dqraw,ex);
+    auto prepare=l0op::ChunkKdaBwdPrepare(aqk,vn,doh,h,cuSeqlensOptional,chunkIndicesOptional,packed?"NTD":"BNSD",scale,64,stateVFirst,da,dv0,dqraw,ex);
     for(auto *x:prepare)if(!x)return ACLNN_ERR_INNER_NULLPTR;
     auto scan=l0op::ChunkGatedDeltaRuleBwdDhu(BatchView(qg,packed,ex),BatchView(kg,packed,ex),BatchView(w,packed,ex),
-        BatchView(doh,packed,ex),BatchView(dv0,packed,ex),nullptr,BatchView(G,packed,ex),nullptr,nullptr,
-        cuSeqlensOptional,chunkIndicesOptional,scale,64,useExp2,false,BatchView(dh,packed,ex),nullptr,BatchView(dvscan,packed,ex),ex);
+        BatchView(doh,packed,ex),BatchView(dv0,packed,ex),nullptr,BatchView(G,packed,ex),initialStateOptional,dhtOptional,
+        cuSeqlensOptional,chunkIndicesOptional,scale,64,useExp2,stateVFirst,BatchView(dh,packed,ex),dh0OutOptional,BatchView(dvscan,packed,ex),ex);
     if(!scan[0] || !scan[2])return ACLNN_ERR_INNER_NULLPTR;
     const auto *dq=alloc(key,data),*dk=alloc(key,data),*dv=alloc(val,data),*db=alloc(scalar,DataType::DT_FLOAT),*dg=alloc(key,gateType);
     const auto *dA=alloc(MakeShape({H}),DataType::DT_FLOAT),*dbias=alloc(MakeShape({H,K}),DataType::DT_FLOAT);
     if(!dq || !dk || !dv || !db || !dg || !dA || !dbias)return ACLNN_ERR_INNER_NULLPTR;
-    const auto result=l0op::ChunkKdaBwdFinalize(qh,kh,vh,G,raw,bh,log,bias,akk,vn,h,dh,dvscan,da,dqraw,qRstdOptional,kRstdOptional,
-        cuSeqlensOptional,chunkIndicesOptional,scale,lowerBound,64,safeGate,useGateInKernel,useExp2,false,
+    const auto result=l0op::ChunkKdaBwdFinalize(qh,kh,vh,G,raw,bh,aLogOptional,dtBiasOptional?bias:nullptr,akk,vn,h,dh,dvscan,da,dqraw,qRstdOptional,kRstdOptional,
+        cuSeqlensOptional,chunkIndicesOptional,scale,lowerBound,64,safeGate,useGateInKernel,useExp2,stateVFirst,
         useBetaSigmoidInKernel,allowNegEigval,packed?"NTD":"BNSD",dq,dk,dv,db,dg,dA,dbias,ex,"");
     for(auto *x:result)if(!x)return ACLNN_ERR_INNER_NULLPTR;
     if(!CopyGradient(tm?SwapHeadToken(dq,packed,ex):dq,dqOut,ex) ||

@@ -31,6 +31,10 @@
 #include "opdev/tensor_view_utils.h"
 #include "graph/utils/type_utils.h"
 
+#ifdef KDA_FUSED32_ARCH22
+#include "../../../chunk_kda_bwd/internal_ops/kda_fused32/op_host/op_api/kda_fused32.h"
+#endif
+
 using namespace op;
 
 static constexpr const char *OP_NAME = "aclnnChunkKdaFwd";
@@ -485,7 +489,8 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
 {
     const DataType inputType = params.q->GetDataType();
     const bool general = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201 &&
-        (inputType == DataType::DT_FLOAT16 || info.kDim != 128 || info.vDim != 128);
+        (inputType == DataType::DT_FLOAT16 || info.kDim != 128 || info.vDim != 128 ||
+         (params.aqkOut && params.aqkOut->GetDataType()==DataType::DT_FLOAT));
     const DataType dataType = general ? DataType::DT_FLOAT : inputType;
     const bool attnShapeValid = info.isRank3
                                     ? HasShape(params.attnOut, {info.seqlen, info.hvNum, info.vDim})
@@ -675,7 +680,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         ? (equalPair || (info.kDim == 64 && info.vDim == 32))
         : ((info.kDim == 64 && info.vDim == 64) || (info.kDim == 128 && info.vDim == 128));
     if (!kvDimSupported || (arch22 && (params.q->GetDataType() == DataType::DT_FLOAT16 ||
-        info.kDim != 128 || info.vDim != 128) && info.hNum != info.hvNum)) {
+        info.kDim != 128 || info.vDim != 128 || (params.aqkOut && params.aqkOut->GetDataType()==DataType::DT_FLOAT)) && info.hNum != info.hvNum)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K/V/HK/HV", std::to_string(info.kDim) + "/" + std::to_string(info.vDim),
             "unsupported dimension pair or grouped heads on the general path");
         return ACLNN_ERR_PARAM_INVALID;
@@ -725,11 +730,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.useGateInKernel) {
-        if (!(params.aLogOptional != nullptr)) {
+        if (!arch22 && params.aLogOptional == nullptr) {
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "aLogOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-        if (!(HasShape(params.aLogOptional, {info.hvNum}))) {
+        if (params.aLogOptional && !HasShape(params.aLogOptional, {info.hvNum})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "aLogOptional",
             std::to_string(Dim(params.aLogOptional, 0)),
             "a_log must have shape [HV]");
@@ -834,7 +839,7 @@ bool CanUseKdaFwdV2Path(const ChunkKdaFwdParams &params, const KdaShapeInfo &inf
         return false;
     }
     // The general FP32-cache stages preserve empty sequence boundaries.
-    const bool general = arch22 && (params.q->GetDataType() == DataType::DT_FLOAT16 || info.kDim != 128 || info.vDim != 128);
+    const bool general = arch22 && (params.q->GetDataType() == DataType::DT_FLOAT16 || info.kDim != 128 || info.vDim != 128 || (params.aqkOut && params.aqkOut->GetDataType()==DataType::DT_FLOAT));
     if (!general && params.cuSeqlensOptional != nullptr) {
         const aclIntArray *cuSeqlens = params.cuSeqlensOptional;
         for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
@@ -1329,6 +1334,24 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     auto executorPtr = uniqueExecutor.get();
     if (params.chunkSize == 32) {
+#ifdef KDA_FUSED32_ARCH22
+        if(GetCurrentPlatformInfo().GetCurNpuArch()==NpuArch::DAV_2201){
+            if(allowNegEigval && !useBetaSigmoidInKernel){
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME,"allow_neg_eigval","requires beta sigmoid");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+            l0op::KdaFused32Request r;
+            r.inputs={q,k,v,g,beta,aLogOptional,dtBiasOptional,initialStateOptional};
+            r.outputs={attnOut,finalStateOut,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
+                gkOut,aqkOut,akkOut,wOut,qgOut,kgOut,vNewOut,hOut,qHatOut,kHatOut,qRstdOut,kRstdOut,betaEffOut,uOut};
+            r.cu=cuSeqlensOptional;r.chunkIndices=chunkIndicesOptional;r.layout=layout;
+            auto &c=r.config;c.normalize=useQkL2normInKernel;c.betaMode=useBetaSigmoidInKernel?(allowNegEigval?2:1):0;
+            c.gateMode=useGateInKernel?(safeGate?2:1):0;c.useExp2=useExp2;c.stateVFirst=stateVFirst;
+            c.scale=static_cast<float>(scale);c.epsilon=static_cast<float>(epsilon);c.lowerBound=static_cast<float>(lowerBound);
+            auto status=l0op::KdaFused32(r,executorPtr);if(status!=ACLNN_SUCCESS)return status;
+            *workspaceSize=uniqueExecutor->GetWorkspaceSize();uniqueExecutor.ReleaseTo(executor);return ACLNN_SUCCESS;
+        }
+#endif
         // chunk32 不导出反向保存值；与固定 kernel 语义（核内 L2norm/sigmoid、exp2）
         // 矛盾的开关直接拒绝，不静默误算。
         const aclTensor *savedOutputs[] = {params.qHatOut, params.kHatOut, params.qRstdOut,

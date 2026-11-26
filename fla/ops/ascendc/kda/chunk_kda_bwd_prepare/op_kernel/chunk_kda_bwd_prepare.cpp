@@ -15,6 +15,7 @@
 #include "arch35/chunk_kda_bwd_prepare_vector.h"
 #else
 #include "arch22/chunk_kda_bwd_prepare_general_launch.h"
+#include "arch22/chunk_kda_bwd_prepare_pipeline.h"
 #include "arch22/chunk_kda_bwd_prepare_cube.h"
 #include "arch22/chunk_kda_bwd_prepare_vector.h"
 #endif
@@ -30,7 +31,8 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     if constexpr(GENERAL_PATH){
         KDA::Arch22::GeneralBwdPrepareBuffers b{aqk,vNew,dO,h,dAqk,dv,dqRaw};
-        KDA::Arch22::RunGeneralBwdPrepare<DTYPE_D_O>(b,cuSeqlens,chunkIndices,tilingData);
+        if constexpr(IS_VARIABLE)KDA::Arch22::RunGeneralBwdPrepare<DTYPE_D_O>(b,cuSeqlens,chunkIndices,tilingData);
+        else KDA::Arch22::PreparePipeline::RunFixed<DTYPE_D_O>(b,AscendC::GetUserWorkspace(workspace),tilingData);
         return;
     }
 #endif

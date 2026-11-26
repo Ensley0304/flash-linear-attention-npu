@@ -27,6 +27,7 @@
 #else
 #include "chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include "arch22/chunk_gated_delta_rule_bwd_dhu_general_launch.h"
+#include "arch22/chunk_gated_delta_rule_bwd_dhu_pipeline.h"
 #include "chunk_gated_delta_rule_bwd_dhu_cube.h"
 #include "chunk_gated_delta_rule_bwd_dhu_vector.h"
 #endif
@@ -86,7 +87,7 @@ struct ChunkGatedDeltaRuleBwdDhuDTypeTraits<TPL_FP32> {
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <int D_T_Q, int D_T_G, int V, int USE_GK, bool DO_TOKEN_MAJOR, bool GENERAL_PATH>
+template <int D_T_Q, int D_T_G, int V, int USE_GK, bool DO_TOKEN_MAJOR, uint32_t GENERAL_PATH>
 __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g,
     GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -106,7 +107,9 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 2201
     if constexpr(GENERAL_PATH){
         GDN::Arch22::GeneralDhuBuffers b{q,k,w,gk,d_o,dv,dht,dh,dv2,tilingData.hasDh0?dh0:nullptr};
-        GDN::Arch22::RunGeneralDhu<DTYPE_D_O>(b,cu_seqlens,tilingData);return;
+        if constexpr(GENERAL_PATH==2)GDN::Arch22::RunPipelineDhu<DTYPE_D_O>(b,userWS,tilingData);
+        else GDN::Arch22::RunGeneralDhu<DTYPE_D_O>(b,cu_seqlens,tilingData);
+        return;
     }
 #endif
 

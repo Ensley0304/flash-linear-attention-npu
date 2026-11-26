@@ -3,6 +3,11 @@
 # Licensed under the BSD 3-Clause License.
 # -----------------------------------------------------------------------------------------------------------
 unset(chunk_kda_bwd_prepare_depends CACHE)
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend910b" OR "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend910_93")
+    set(chunk_kda_bwd_prepare_depends
+        "fla/ops/ascendc/kda/chunk_kda_bwd_finalize;fla/ops/ascendc/kda/chunk_kda_fwd_finalize"
+        CACHE STRING "A2/A3 Cube pipeline and packed metadata sources" FORCE)
+endif()
 add_op_to_compiled_list()
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE

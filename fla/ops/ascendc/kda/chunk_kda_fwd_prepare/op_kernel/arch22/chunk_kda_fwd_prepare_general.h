@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Tianjin University, Ltd. SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 #include "kernel_operator.h"
+#include "softplus_math.h"
 
 namespace KdaPrepare::Arch22 {
 
@@ -159,10 +160,11 @@ class GeneralPrepare {
                     AscendC::Abs(y_, x_, k); Barrier();
                     AscendC::Muls(y_, y_, -1.0F, k); Barrier();
                     AscendC::Exp(y_, y_, k); Barrier();
-                    AscendC::Adds(y_, y_, 1.0F, k); Barrier();
-                    AscendC::Ln(y_, y_, k); Barrier();
+                    AscendC::Adds(z_, y_, 1.0F, k); Barrier();
+                    AscendC::Ln(z_, z_, k); Barrier();
+                    KDA::Arch22::Math::CorrectSmallLog1p(z_,y_,k);
                     AscendC::Maxs(x_, x_, 0.0F, k); Barrier();
-                    AscendC::Add(x_, x_, y_, k); Barrier();
+                    AscendC::Add(x_, x_, z_, k); Barrier();
                     AscendC::Muls(x_, x_, -a, k); Barrier();
                 }
             }
@@ -265,6 +267,11 @@ class GeneralPrepare {
         }
     }
 public:
+    // Private C64 backward gate stage: exactly the forward gate/cumsum nodes,
+    // without touching normalized inputs, beta or the saved triangular inverse.
+    __aicore__ inline void GateOnly(const GeneralPrepareBuffers &buffers, const GeneralPrepareChunk &chunk) {
+        b_=buffers; c_=chunk; Inputs<true>();
+    }
     __aicore__ inline void Init(AscendC::TPipe &pipe) {
         pipe.InitBuffer(input_, 1, 1024);
         pipe.InitBuffer(output_, 1, 1024);

@@ -21,6 +21,10 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         endif()
     endforeach()
 else()
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../internal_ops/kda_bwd_gate_normalize/op_host"
+        "${CMAKE_CURRENT_BINARY_DIR}/internal_ops/kda_bwd_gate_normalize")
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../internal_ops/kda_fused32/op_host"
+        "${CMAKE_CURRENT_BINARY_DIR}/internal_ops/kda_fused32")
     unset(chunk_kda_bwd_depends CACHE)
     add_compile_definitions(KDA_BWD_STAGES_ARCH22)
     set(KDA_BWD_STAGE_PATHS

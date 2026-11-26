@@ -1,0 +1,48 @@
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:13: FutureWarning: triton.language.extra.cann.extension.atan2 is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.atan2 instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.atan2")
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:35: FutureWarning: triton.language.extra.cann.extension.isfinited is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.isfinited instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.isfinited")
+/root/wys/fla-compat-a2a3/venv/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:49: FutureWarning: triton.language.extra.cann.extension.finitef is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.finitef instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.finitef")
+........................................................................ [ 75%]
+........................                                                 [100%]
+=============================== warnings summary ===============================
+tests/ops/test_kda.py:172
+  /root/wys/fla-compat-a2a3/upstream/tests/ops/test_kda.py:172: PytestUnknownMarkWarning: Unknown pytest.mark.smoke - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.smoke
+
+tests/ops/test_kda.py:1271
+  /root/wys/fla-compat-a2a3/upstream/tests/ops/test_kda.py:1271: PytestUnknownMarkWarning: Unknown pytest.mark.smoke - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.smoke
+
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[False-False-True-dtype0-60]
+  /root/wys/fla-compat-a2a3/upstream/tests/ops/test_kda.py:871: UserWarning: Cannot create tensor with interal format while allow_internel_format=False, tensor will be created with base format. (Triggered internally at ../torch_npu/csrc/aten/common/TensorFactories.cpp:340.)
+    do = torch.randn_like(v)
+
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-True-dtype0-64]
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-False-dtype0-64]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/testing.py:39: UserWarning:               dA diff: 0.001591 ratio: 0.003016
+    warnings.warn(msg)
+
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-True-dtype1-60]
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-False-dtype1-60]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/testing.py:39: UserWarning:               dA diff: 0.008063 ratio: 0.025985
+    warnings.warn(msg)
+
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-True-dtype1-64]
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-False-dtype1-64]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/testing.py:39: UserWarning:               dA diff: 0.000214 ratio: 0.006638
+    warnings.warn(msg)
+
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-True-dtype1-100]
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-False-dtype1-100]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/testing.py:39: UserWarning:               dA diff: 0.032019 ratio: 0.007564
+    warnings.warn(msg)
+
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-True-dtype1-256]
+fla-compat-d22/upstream-tests/test_c64_pipeline_upstream.py::test_c64_pipeline_upstream[True-True-False-dtype1-256]
+  /root/wys/fla-compat-a2a3/upstream/fla/utils/testing.py:39: UserWarning:               dA diff: 0.020857 ratio: 0.012169
+    warnings.warn(msg)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+96 passed, 13 warnings in 26.49s

@@ -9,6 +9,7 @@
 #if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 #include "arch22/chunk_kda_bwd_finalize.h"
 #include "arch22/chunk_kda_bwd_finalize_general_launch.h"
+#include "arch22/pipeline64/public_launch.h"
 
 extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk,
@@ -27,11 +28,15 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
     KERNEL_TASK_TYPE(201,KERNEL_TYPE_AIV_ONLY);
     KERNEL_TASK_TYPE(202,KERNEL_TYPE_AIV_ONLY);
-    if(TILING_KEY_IS(201) || TILING_KEY_IS(202)){
+    if(TILING_KEY_IS(201) || TILING_KEY_IS(202) || TILING_KEY_IS(301)){
         KDA::Arch22::GeneralBwdFinalizeBuffers b{};
         b.qHat=q;b.kHat=k;b.v=v;b.gk=gk;b.betaEff=beta;b.akk=akk;b.vNew=vNew;b.h=h;b.dh=dh;
         b.dvScan=dvScan;b.dAqk=dAqk;b.dqRaw=dqRaw;b.qRstd=qRstd;b.kRstd=kRstd;
         b.rawGate=rawG;b.aLog=aLog;b.bias=dtBias;b.dq=dq;b.dk=dk;b.dv=dv;b.dg=dG;b.dbeta=dBeta;
+        if(TILING_KEY_IS(301)) {
+            KDA::Arch22::Pipeline64::RunPublicFixed<DTYPE_V,DTYPE_RAW_G,DTYPE_BETA>(
+                b,partialAOut,partialBiasOut,userWorkspace,t);return;
+        }
         KDA::Arch22::RunGeneralBwdFinalize<DTYPE_V,DTYPE_RAW_G,DTYPE_BETA>(b,cuSeqlens,chunkIndices,
             partialA,partialBias,partialAOut,partialBiasOut,dALog,dDtBias,userWorkspace,t,TILING_KEY_IS(202));return;
     }

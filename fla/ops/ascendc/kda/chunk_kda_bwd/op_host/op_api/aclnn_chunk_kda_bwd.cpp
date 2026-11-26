@@ -32,6 +32,11 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 
+#ifdef KDA_BWD_STAGES_ARCH22
+#include "../../internal_ops/kda_fused32/op_host/op_api/kda_fused32.h"
+#include "../../internal_ops/kda_bwd_gate_normalize/op_host/op_api/kda_bwd_gate_normalize.h"
+#endif
+
 using namespace op;
 
 static constexpr const char *OP_NAME = "aclnnChunkKdaBwd";

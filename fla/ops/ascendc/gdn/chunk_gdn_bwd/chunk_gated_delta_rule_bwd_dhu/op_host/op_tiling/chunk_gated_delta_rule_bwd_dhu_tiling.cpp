@@ -149,6 +149,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         context->SetTilingKey(GET_TPL_TILING_KEY(10ULL,30ULL,128ULL,1ULL,0ULL,1ULL));
         context->SetBlockDim(std::max<int64_t>(1,std::min<int64_t>(ascendcPlatform.GetCoreNumAiv(),tiling->taskNum)));
         context->GetWorkspaceSizes(1)[0]=ascendcPlatform.GetLibApiWorkSpaceSize();
+        if(!tiling->isVariable && !tiling->stateVFirst) {
+            const uint32_t slices=(V+63)/64;
+            tiling->taskNum=tiling->seqNum*tiling->HV*slices;
+            if(!KDA::Arch22::Pipeline64::MakeLayout(K,V,tiling->seqNum,tiling->HV*slices,1,
+                std::max<uint32_t>(1,ascendcPlatform.GetCoreNumAic()),ascendcPlatform.GetLibApiWorkSpaceSize(),tiling->pipeline))
+                return ge::GRAPH_FAILED;
+            context->SetTilingKey(GET_TPL_TILING_KEY(10ULL,30ULL,128ULL,1ULL,0ULL,2ULL));
+            context->SetBlockDim(tiling->pipeline.blocks);
+            context->GetWorkspaceSizes(1)[0]=ascendcPlatform.GetLibApiWorkSpaceSize()+tiling->pipeline.bytes;
+        }
         context->GetRawTilingData()->SetDataSize(sizeof(*tiling));return ge::GRAPH_SUCCESS;
     }
     uint64_t ubSize = 0;

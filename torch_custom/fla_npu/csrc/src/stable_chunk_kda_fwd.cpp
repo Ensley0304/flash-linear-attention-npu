@@ -118,7 +118,8 @@ run_npu_chunk_kda_fwd(
       fla_npu_stable::Runtime::instance().symbol("aclrtGetSocName"));
   const char* soc = soc_name ? soc_name() : nullptr;
   const bool arch22 = soc && (std::strstr(soc, "Ascend910B") || std::strstr(soc, "Ascend910C") || std::strstr(soc, "Ascend910_93"));
-  const int64_t cache_dtype = arch22 && (q_dtype != kBFloat16 || k_dim != 128 || v_dim != 128)
+  const int64_t cache_dtype = arch22 && (chunk_size == 32 || q_dtype != kBFloat16 || k_dim != 128 || v_dim != 128 ||
+      initial_state.has_value() || state_v_first || (use_gate_in_kernel && (!safe_gate || !A_log.has_value())))
       ? kFloat : q_dtype;
 
 
@@ -145,8 +146,8 @@ run_npu_chunk_kda_fwd(
   }
   std::optional<Tensor> out_aqk;
   std::optional<Tensor> out_akk;
-  if (chunk_size != 32) {
-    // chunk32 大融合不导出中间量；保留空返回槽且不给 ACLNN 分配/传输出指针。
+  if (chunk_size != 32 || arch22) {
+    // A2/A3 C32 exports FP32 training scores; the A5 tuple remains unchanged.
     out_aqk = allocate_sizes(head_sizes(chunk_size, leading), cache_dtype, q_meta);
     out_akk = allocate_sizes(head_sizes(chunk_size, leading), cache_dtype, q_meta);
   }
@@ -199,7 +200,7 @@ run_npu_chunk_kda_fwd(
                       (switches_requested || arch960 ||
                        work_items >= kChunkKdaFwdV2MinWorkItems));
 
-  if (chunk_size == 32 && wants_saved) {
+  if (chunk_size == 32 && wants_saved && !arch22) {
     throw std::runtime_error(
         "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) does not export "
         "backward saved values (q_hat/k_hat/q_rstd/k_rstd/beta_eff).");

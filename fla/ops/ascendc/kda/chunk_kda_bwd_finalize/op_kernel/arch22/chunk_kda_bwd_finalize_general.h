@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Tianjin University, Ltd. SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 #include "kernel_operator.h"
+#include "../../../chunk_kda_fwd_prepare/op_kernel/arch22/softplus_math.h"
 namespace KDA::Arch22 {
 struct GeneralBwdFinalizeChunk {
     uint32_t rows,keyDim,valueDim;
@@ -277,8 +278,9 @@ class GeneralBwdFinalize {
                 }else{
                     // Stable softplus and sigmoid; retained for standalone parity.
                     AscendC::Abs(y_,x_,K);Barrier();AscendC::Muls(y_,y_,-1.0F,K);Barrier();AscendC::Exp(y_,y_,K);Barrier();
-                    AscendC::Adds(z_,y_,1.0F,K);Barrier();AscendC::Ln(y_,z_,K);Barrier();
-                    AscendC::Maxs(ex_,x_,0.0F,K);Barrier();AscendC::Add(y_,y_,ex_,K);Barrier();
+                    AscendC::Adds(z_,y_,1.0F,K);Barrier();AscendC::Ln(ex_,z_,K);Barrier();
+                    KDA::Arch22::Math::CorrectSmallLog1p(ex_,y_,K);
+                    AscendC::Maxs(y_,x_,0.0F,K);Barrier();AscendC::Add(y_,y_,ex_,K);Barrier();
                     AscendC::Muls(y_,y_,-a,K);Barrier();da+=Dot(dg_,y_,K);
                     AscendC::Mins(y_,x_,0.0F,K);Barrier();AscendC::Exp(y_,y_,K);Barrier();AscendC::Div(y_,y_,z_,K);Barrier();
                     AscendC::Muls(y_,y_,-a,K);Barrier();AscendC::Mul(dg_,dg_,y_,K);Barrier();

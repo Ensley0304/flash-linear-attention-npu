@@ -13,9 +13,9 @@ def test_aclnn_rejects(bad):
     kwargs=dict(raw_g=g,layout="BSND",use_gate_in_kernel=False,safe_gate=False,disable_recompute=True)
     scale=.37
     if bad=="scale":scale=float("nan")
-    if bad=="chunk":kwargs["chunk_size"]=32
+    if bad=="chunk":kwargs["chunk_size"]=16
     if bad=="beta":beta=torch.ones(1,1,2,device=device,dtype=torch.float16)
-    if bad=="state":kwargs["initial_state"]=torch.zeros(1,1,64,32,device=device,dtype=torch.float32)
+    if bad=="state":kwargs["initial_state"]=torch.zeros(1,1,64,31,device=device,dtype=torch.float32)
     if bad=="sigmoid":kwargs["allow_neg_eigval"]=True
     if bad=="v_dtype":v=v.float()
     with pytest.raises(RuntimeError,match="aclnnChunkKdaBwdGetWorkspaceSize failed: 161002"):

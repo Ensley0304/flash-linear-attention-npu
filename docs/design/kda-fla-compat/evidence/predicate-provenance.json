@@ -1,0 +1,27 @@
+{
+  "device": 14,
+  "cann": "9.3.0.P009",
+  "tag": "predicate",
+  "files": {
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/matrix_stages.h": "045805d7e3cc3edc482d9c1cbaf9a154461d0dce264c475d30c0586ce096f224",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/direct_score.h": "e840870dc474e3f5b5131e2d927a0db162ebe94fb79b8920f51cb1c195715425",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/score_pipeline.h": "3cd4e38c284c01878bfd05625eddc96bd76f81c9aecfe82d97a53141a18ac3fc",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/score_band.h": "6b0ad3185008a16b8137fa6dda4b3aa052861e91e762f5dd7a9138ea0b7f9702",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/tail.h": "e3719f3cc25ad3d14975f43d6b8e0211cd15f836eb0e80e1ba902105007fe7b4",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/dhu_work.h": "ea5cb82f2ab93fd15e5295289e1ab7d82f12ca732197c7ebe1b9b042acb282e6",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/products.h": "a226a8bb7e416af6fcd1fdc492f6f65f95386266a3e1b35e039a4864ea20dbd9",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/finalize_pair.h": "aa416972d185810e399835d45f2d1dd9e3c39329b6820d7cf8026803b4f596a4",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/finalize_work.h": "6c71f54b175a61c98a6dcd775b46a8ae853129a8953600c8ebf5bb57e467ca3c",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/score_products.h": "75f2b2a7d4a77bc804b7426f0a3f10dbdf3da35c4bcb2aa7071f629bb7d644ca",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/score_merge.h": "a28db39bc883e8e80bb7c84b48545a509cff0c1e61687abf0aa2f9927d159ea8",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/direct_contributions.h": "e71f1b1c0c18f2b02116b04da4cb70d78da3f0d43762bb0aa0ea73794ca9d394",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/cube.h": "60164a23a4f8fe28f2f1e04a0769e741f74b762f648761a5e880adaa59babe45",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/public_launch.h": "91dc0443eebd908ce3f3050d92738378ebea7101acb0cb7ef2e8ef6a4e2031c2",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/contract.h": "2978eaaaa245dfffe440c01d61aa24f4786b7747f4386a241f1ba0590396120e",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/tail_math.h": "8e33b45edeb89b0b90785dc7a1e782d489cdbfd63e0a489dc87fce336ab0f804",
+    "/root/wys/fla-compat-d33/wheel-dist-predicate/flash_linear_attention_npu_a3-26.10.0+unknown-py3-none-manylinux_2_34_aarch64.whl": "ecd2a8d1348f64cd85ef210be4c6cda995611bcf2210d726816edaa279056dfc",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling/chunk_kda_bwd_finalize_tiling.cpp": "aebe5b9f13f6e66d49ba28a4eb536347af504ce6eb0028122024d9f979ca6d40",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd/tests/upstream/test_c64_pipeline_upstream.py": "f443aee4f6842587f893595c0e8d5e2ba41b849955be0d126e59f02d0b32249c",
+    "/root/wys/fla-compat-d22/source/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/tests/pipeline64/test_finalize_work.py": "2e566d4071acae4d8260f12897d18aac212beb3abd1c7abb9f57171df6032bc3"
+  }
+}

@@ -187,6 +187,12 @@ public:
             static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0),static_cast<uint64_t>(general));
         const size_t scratchSize = (general || ctx_.isA5 || ctx_.isA6) ? 0 : static_cast<size_t>(blockDim_) * 65536;
         workspaceSize_ = ctx_.sysWorkspaceSize + scratchSize;
+        if(general && !tiling_.isVariable) {
+            if(!KDA::Arch22::Pipeline64::MakeLayout(tiling_.K,tiling_.V,tiling_.totalChunkNum,
+                tiling_.NV,1,ctx_.aicCoreNum,ctx_.sysWorkspaceSize,tiling_.pipeline))
+                return FailValue("workspace","overflow","pipeline workspace must fit address space");
+            blockDim_=tiling_.pipeline.blocks;workspaceSize_=ctx_.sysWorkspaceSize+tiling_.pipeline.bytes;
+        }
         OP_LOGD(ctx_.nodeName, "layout=%u variable=%u stateVFirst=%u key=%lu blocks=%u userScratch=%lu",
                 tiling_.inputLayout, tiling_.isVariable, tiling_.stateVFirst, tilingKey_,
                 blockDim_, scratchSize);

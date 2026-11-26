@@ -22,6 +22,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
+#include "opdev/platform.h"
 #include "op_common/log/log.h"
 
 static constexpr const char *OP_NAME = "ChunkKdaFwdV2";
@@ -147,7 +148,8 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         NormalizeTensorMeta(tensor);
     }
 
-    const DataType cacheType = (args.q->GetDataType() == DataType::DT_FLOAT16 || args.kDim != 128 || args.vDim != 128)
+    const DataType cacheType = (args.q->GetDataType() == DataType::DT_FLOAT16 || args.kDim != 128 || args.vDim != 128 ||
+        (GetCurrentPlatformInfo().GetCurNpuArch()==NpuArch::DAV_2201 && args.aqkOut && args.aqkOut->GetDataType()==DataType::DT_FLOAT))
         ? DataType::DT_FLOAT : DataType::DT_BF16;
     const int64_t chunkSize = args.chunkSize;
     const int64_t valueHeads = args.valueHeads;

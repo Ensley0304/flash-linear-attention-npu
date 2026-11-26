@@ -6,6 +6,7 @@
 #define CHUNK_KDA_BWD_PREPARE_STRUCT_H
 
 #include <cstdint>
+#include "../../chunk_kda_bwd_finalize/op_kernel/arch22/pipeline64/contract.h"
 
 namespace KDA {
 
@@ -26,6 +27,7 @@ struct ChunkKdaBwdPrepareTilingData {
     uint32_t isVariable;
     float scale;
     uint32_t inputLayout;
+    Arch22::Pipeline64::Layout pipeline{};
 };
 
 } // namespace KDA

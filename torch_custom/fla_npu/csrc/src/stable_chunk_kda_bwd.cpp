@@ -127,6 +127,10 @@ run_npu_chunk_kda_bwd(
   Tensor out_dg = allocate_sizes(gate_shape, raw_g.has_value() ? meta_of(*raw_g).scalar_type : kFloat, q_meta);
   std::optional<Tensor> out_d_a_log;
   std::optional<Tensor> out_d_dt_bias;
+  std::optional<Tensor> out_dh0;
+  if (arch22 && initial_state.has_value()) {
+    out_dh0 = allocate_sizes(meta_of(*initial_state).sizes, kFloat, q_meta);
+  }
   // Parameter gradients are independent of the model token layout.
   if (use_gate_in_kernel) {
     if (A_log.has_value()) out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
@@ -159,7 +163,7 @@ run_npu_chunk_kda_bwd(
         nd_logical_out_tensor(meta_of(out_dv)),
         nd_logical_out_tensor(meta_of(out_db)),
         nd_logical_out_tensor(meta_of(out_dg)),
-        /*dh0=*/nd_logical_out_tensor(TensorMeta()),
+        /*dh0=*/nd_logical_out_tensor(out_dh0.has_value() ? meta_of(*out_dh0) : TensorMeta()),
         nd_logical_out_tensor(out_d_a_log.has_value() ? meta_of(*out_d_a_log)
                                                       : TensorMeta()),
         nd_logical_out_tensor(out_d_dt_bias.has_value() ? meta_of(*out_d_dt_bias)
@@ -193,7 +197,7 @@ run_npu_chunk_kda_bwd(
                                                         : TensorMeta()));
   }
   return std::make_tuple(out_dq, out_dk, out_dv, out_db, out_dg,
-                         std::nullopt, out_d_a_log, out_d_dt_bias);
+                         out_dh0, out_d_a_log, out_d_dt_bias);
 }
 
 }  // namespace

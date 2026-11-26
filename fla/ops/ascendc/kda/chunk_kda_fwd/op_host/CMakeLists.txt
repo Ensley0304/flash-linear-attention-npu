@@ -6,6 +6,11 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # -----------------------------------------------------------------------------------------------------------
 add_op_to_compiled_list()
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    add_compile_definitions(KDA_FUSED32_ARCH22)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../chunk_kda_bwd/internal_ops/kda_fused32/op_host"
+        "${CMAKE_CURRENT_BINARY_DIR}/internal_ops/kda_fused32")
+endif()
 # 融合实现（aclnnChunkKdaFwd）需要 chunk_gated_delta_rule_fwd_h / kda_gate_cumsum
 # 的 kernel 源码；V2 组合入口（aclnnChunkKdaFwdV2 -> KdaFwdV2）在
 # chunk_kda_fwd_v2.cpp 里直接 include 并调用这些独立算子的 op_api，chunk32
@@ -78,4 +83,10 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         COMPUTE_UNIT Ascend950PR_9599
         OPTIONS -DENABLE_CV_COMM_VIA_SSBUF=true
     )
+endif()
+
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_kda_fwd.cpp
+        TARGET_DIRECTORY ${OPHOST_NAME}_opapi_obj PROPERTIES
+        COMPILE_DEFINITIONS KDA_FUSED32_ARCH22)
 endif()
