@@ -1,9 +1,27 @@
 // Copyright (c) 2026 Tianjin University, Ltd. SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 #include "cube.h"
+#ifndef FWDH_D_BLOCK_PIPELINE
+#define FWDH_D_BLOCK_PIPELINE 0
+#endif
 namespace GDN::Arch22::FwdH256 {
 constexpr uint16_t H_READY=0,P_READY=1,P_FREE=2,RIGHT_READY=3,RIGHT_FREE=4,D_READY=5,D_FREE=6,DONE=7,ACK=8;
 constexpr uint32_t SLOT_FLOATS=4096+4096+16384;
+// Distinct one-credit flags: a whole-chunk D_FREE drains all four before reuse.
+__aicore__ inline void PublishD(uint32_t block) {
+    using namespace AscendC;
+    if(block==0)CrossCoreSetFlag<0x2,PIPE_FIX>(D_READY);
+    else if(block==1)CrossCoreSetFlag<0x2,PIPE_FIX>(9);
+    else if(block==2)CrossCoreSetFlag<0x2,PIPE_FIX>(10);
+    else CrossCoreSetFlag<0x2,PIPE_FIX>(11);
+}
+__aicore__ inline void WaitD(uint32_t block) {
+    using namespace AscendC;
+    if(block==0)CrossCoreWaitFlag<0x2,PIPE_MTE2>(D_READY);
+    else if(block==1)CrossCoreWaitFlag<0x2,PIPE_MTE2>(9);
+    else if(block==2)CrossCoreWaitFlag<0x2,PIPE_MTE2>(10);
+    else CrossCoreWaitFlag<0x2,PIPE_MTE2>(11);
+}
 struct Args {
     GM_ADDR w;GM_ADDR u;GM_ADDR kg;GM_ADDR g;GM_ADDR initial;
     GM_ADDR h;GM_ADDR v;GM_ADDR final;GM_ADDR scratch;
@@ -74,11 +92,12 @@ class Vector {
     __aicore__ inline void LoadD(GM_ADDR d,uint32_t row) {
         auto in=in_.AllocTensor<float>();Read(in,Offset(d,row*64),16,64);in_.EnQue(in);
     }
-    __aicore__ inline void S3(const Args &a,const Work &w,uint32_t lane,uint32_t chunk,GM_ADDR d) {
+    __aicore__ inline void S3(const Args &a,const Work &w,uint32_t lane,uint32_t chunk,GM_ADDR d,
+                             uint32_t first=0,uint32_t end=256) {
         using namespace AscendC;
-        LoadD(d,0);
-        for(uint32_t row=0;row<256;row+=16) {
-            if(row+16<256)LoadD(d,row+16);
+        LoadD(d,first);
+        for(uint32_t row=first;row<end;row+=16) {
+            if(row+16<end)LoadD(d,row+16);
             auto in=in_.DeQue<float>();
             BinaryRepeatParams rp{1,1,0,8,8,1};
             Mul(state_[row*64],state_[row*64],broadcast_[row*8],64,16,rp);PipeBarrier<PIPE_V>();
@@ -130,9 +149,17 @@ public:
             if(hasP)CrossCoreSetFlag<0x2,PIPE_MTE2>(P_FREE);
             if(update) {
                 CrossCoreSetFlag<0x2,PIPE_MTE3>(RIGHT_READY);
-                CrossCoreWaitFlag<0x2,PIPE_MTE2>(RIGHT_FREE);
-                CrossCoreWaitFlag<0x2,PIPE_MTE2>(D_READY);
-                if(active)S3(a,w,lane,c,d);
+                if(FWDH_D_BLOCK_PIPELINE && a.group==1) {
+                    for(uint32_t block=0;block<4;++block) {
+                        WaitD(block);
+                        if(active)S3(a,w,lane,c,d,block*64,(block+1)*64);
+                    }
+                    CrossCoreWaitFlag<0x2,PIPE_MTE2>(RIGHT_FREE);
+                } else {
+                    CrossCoreWaitFlag<0x2,PIPE_MTE2>(RIGHT_FREE);
+                    CrossCoreWaitFlag<0x2,PIPE_MTE2>(D_READY);
+                    if(active)S3(a,w,lane,c,d);
+                }
                 CrossCoreSetFlag<0x2,PIPE_MTE2>(D_FREE);
                 if(c+1<w.chunks)CrossCoreSetFlag<0x2,PIPE_MTE3>(H_READY);
             }
@@ -161,12 +188,21 @@ __aicore__ inline void CubeWork(Cube &op,const Args &a,const Work &w,uint32_t co
             if(hadD)CrossCoreWaitFlag<0x2,PIPE_FIX>(D_FREE);
             for(uint32_t lane=0;lane<w.active;++lane) {
                 auto p=Offset(a.scratch,(uint64_t(core)*a.group+lane)*SLOT_FLOATS);
-                for(uint32_t row=0;row<256;row+=64)
+#if FWDH_RIGHT_RESIDENT
+                op.BeginRight(Offset(p,4096),rows);
+#endif
+                for(uint32_t row=0;row<256;row+=64) {
                     op.Multiply(Offset(a.kg,w.Input(a,lane,start)+row),Offset(p,4096),
                                 Offset(p,8192+row*64),256,64,64,64,rows,true);
+                    if(FWDH_D_BLOCK_PIPELINE && a.group==1)PublishD(row/64);
+                }
+#if FWDH_RIGHT_RESIDENT
+                op.EndRight();
+#endif
             }
             CrossCoreSetFlag<0x2,PIPE_MTE1>(RIGHT_FREE);
-            CrossCoreSetFlag<0x2,PIPE_FIX>(D_READY);hadD=true;
+            if(!(FWDH_D_BLOCK_PIPELINE && a.group==1))CrossCoreSetFlag<0x2,PIPE_FIX>(D_READY);
+            hadD=true;
         }
     }
     if(hadP)CrossCoreWaitFlag<0x2,PIPE_FIX>(P_FREE);

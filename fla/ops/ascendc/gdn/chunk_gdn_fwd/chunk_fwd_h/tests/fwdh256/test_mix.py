@@ -5,20 +5,32 @@ import json
 import os
 import statistics
 import threading
+import subprocess
+import re
 from pathlib import Path
 import torch
 import torch_npu
 from numerical_gate import metrics, recurrence
 
 p=argparse.ArgumentParser();p.add_argument('--library',required=True);p.add_argument('--output',type=Path,required=True)
-p.add_argument('--profile',action='store_true');p.add_argument('--quick',action='store_true');args=p.parse_args()
+p.add_argument('--profile',action='store_true');p.add_argument('--quick',action='store_true')
+p.add_argument('--long',action='store_true');args=p.parse_args()
 torch.npu.set_device(0);torch.set_num_threads(4)
 lib=ctypes.CDLL(args.library);run=lib.run_mix
 run.argtypes=[ctypes.POINTER(ctypes.c_void_p)]+[ctypes.c_uint32]*6+[ctypes.c_void_p];run.restype=None
 args.output.mkdir(parents=True,exist_ok=True);records=[]
+def check_device(label):
+    physical=int(os.environ['ASCEND_RT_VISIBLE_DEVICES'])
+    text=subprocess.check_output(['npu-smi','info','-t','proc-mem','-i',str(physical),'-c','0'],text=True)
+    (args.output/(label+'.txt')).write_text(text)
+    ids=[int(x) for x in re.findall(r'Process id:\s*(\d+)',text)]
+    assert 'No process in device' in text or ids
+    assert all(x==os.getpid() for x in ids),f'External device process: {ids}'
 cases=[(1,t,h,g,i,f) for t,h in ((65,1),(65,2),(256,1),(1024,1),(1024,2))
        for g in (1,2) for i,f in ((False,False),(True,True))]
 if args.quick:cases=cases[:4]
+if args.long:cases=[(1,t,h,1,i,f) for t in (1024,4096) for h in (1,2)
+                   for i,f in ((False,False),(True,True))]
 for batch,tokens,heads,group,initial,final in cases:
     torch.manual_seed(1127)
     shape=(batch,heads,tokens,256)
@@ -45,6 +57,7 @@ for batch,tokens,heads,group,initial,final in cases:
     def call():run(ptrs,batch,heads,tokens,group,0,blocks,torch.npu.current_stream().npu_stream)
     key=f'b{batch}-t{tokens}-h{heads}-gh{group}-i{int(initial)}-f{int(final)}'
     print('LAUNCH',key,flush=True)
+    check_device(key+'-before')
     # Runtime calls may block in C; a Python signal handler cannot reliably
     # interrupt them. Terminate this dedicated test process after 60 seconds.
     watchdog=threading.Timer(60,lambda:os._exit(124));watchdog.daemon=True;watchdog.start()
@@ -73,5 +86,6 @@ for batch,tokens,heads,group,initial,final in cases:
             for r in rows:groups.setdefault(r['Step Id'],[]).append(r)
         samples=[sum(float(r['Duration(us)']) for r in rows) for rows in groups.values()]
         rec['performance']=dict(samples=samples,median_us=statistics.median(samples),csv=str(files[0]))
+    check_device(key+'-after')
     records.append(rec);(args.output/'results.json').write_text(json.dumps(records,indent=2))
     print('PASS',key,rec.get('performance',{}).get('median_us'),flush=True)

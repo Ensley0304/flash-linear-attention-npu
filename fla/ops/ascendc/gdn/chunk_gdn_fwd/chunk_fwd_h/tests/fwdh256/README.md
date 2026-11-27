@@ -54,3 +54,33 @@ uses mathematical producer caches and upstream recurrent assertions, while
 Public KDA/gradient correctness, original producer outputs, timeline overlap,
 remaining chain budget, installed package provenance and production dispatch
 remain separate required gates.
+
+## Long-sequence experiment (2026-11-27)
+
+Two independent CMake switches default OFF, preserving the original probe:
+`FWDH_RIGHT_RESIDENT=ON` reserves another 16384-byte L1 B1 region (L1 total
+81920 bytes), copies S2 right once and reuses it across four output blocks.
+Two extra dynamic local events own its MTE2/MTE1 ready/free lifecycle.
+The last MTE1 read, not the end of MMAD, releases this L1 operand.
+
+`FWDH_D_BLOCK_PIPELINE=ON` enables Gh1 block notifications: four D blocks use
+mode2 IDs 5/9/10/11, one outstanding credit each per chunk. Both AIV lanes
+consume each notification (including dummy). Whole-chunk D_FREE drains all
+four before any next-chunk D overwrite. RIGHT_FREE is consumed after S3 blocks,
+avoiding an all-S2 barrier before the first S3 block. H_READY still requires
+all state updates/writes; no next-chunk partial state is consumed. Gh2 retains
+the previous whole-D protocol. FP32 math and state storage are unchanged.
+
+Run `test_mix.py --long --profile` for T1024/4096, H1/H2, Gh1, I0F0/I1F1.
+All eight configurations passed FP64 output checks for baseline, resident-only,
+and resident+block versions on A2 physical6. Each has 10 warmups and 10 tasks.
+The final version reduced device duration 9.18%-10.48% from the original;
+resident-only gave 0.21%-1.62%. One interrupted resident-only batch detected
+an external device process and was discarded; use the `-retry` evidence.
+T65 quick tests include Gh2 fallback and the M1 update tail with final state.
+H1/T65 simulator completed and now shows 0.146668us Cube/Vector instruction
+intersection (formerly zero); this is short-trace evidence, not a measured
+long-sequence overlap fraction or hardware latency.
+
+These remain isolated stage probes. Public dispatch and strict same-cache
+Triton pairing have not been validated by this experiment.

@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Tianjin University, Ltd. SPDX-License-Identifier: BSD-3-Clause
 #pragma once
 #include "kernel_operator.h"
+#ifndef FWDH_RIGHT_RESIDENT
+#define FWDH_RIGHT_RESIDENT 0
+#endif
 
 namespace GDN::Arch22::FwdH256 {
 // P32 prototype: 64x64 packets, full reduction retained in one L0C bank.
@@ -13,6 +16,11 @@ class Cube {
     AscendC::TBuf<AscendC::TPosition::CO1> c_;
     event_t l1Free_[2], l1Ready_[2], abFree_[2], abReady_[2], cFree_[2], cReady_[2];
     uint32_t packet_=0, output_=0;
+#if FWDH_RIGHT_RESIDENT
+    AscendC::TBuf<AscendC::TPosition::B1> right_;
+    event_t rightFree_,rightReady_;
+    bool residentRight_=false;
+#endif
     __aicore__ inline void Load(GM_ADDR ap, GM_ADDR bp, uint32_t as, uint32_t bs,
                                uint32_t m, uint32_t validM, uint32_t validK,
                                uint32_t begin, bool ta, uint32_t slot) {
@@ -31,6 +39,9 @@ class Cube {
         cp.srcDValue=as;cp.dstNzC0Stride=ta?64:m;
         DataCopy(al,ag[ta?uint64_t(begin)*as:begin],cp);
         cp.nValue=validK;cp.dValue=64;cp.srcDValue=bs;cp.dstNzC0Stride=64;
+#if FWDH_RIGHT_RESIDENT
+        if(!residentRight_)
+#endif
         DataCopy(bl,bg[uint64_t(begin)*bs],cp);
         SetFlag<HardEvent::MTE2_MTE1>(l1Ready_[slot]);
     }
@@ -41,6 +52,12 @@ public:
         pipe_.InitBuffer(l1_,65536);pipe_.InitBuffer(a_,32768);
         pipe_.InitBuffer(b_,32768);pipe_.InitBuffer(c_,32768);
         SetHF32Mode(false);
+#if FWDH_RIGHT_RESIDENT
+        pipe_.InitBuffer(right_,16384);
+        rightFree_=static_cast<event_t>(pipe_.AllocEventID<HardEvent::MTE1_MTE2>());
+        rightReady_=static_cast<event_t>(pipe_.AllocEventID<HardEvent::MTE2_MTE1>());
+        SetFlag<HardEvent::MTE1_MTE2>(rightFree_);
+#endif
         for(uint32_t i=0;i<2;++i) {
             l1Free_[i]=static_cast<event_t>(pipe_.AllocEventID<HardEvent::MTE1_MTE2>());
             l1Ready_[i]=static_cast<event_t>(pipe_.AllocEventID<HardEvent::MTE2_MTE1>());
@@ -53,6 +70,29 @@ public:
             SetFlag<HardEvent::FIX_M>(cFree_[i]);
         }
     }
+#if FWDH_RIGHT_RESIDENT
+    // One S2 window: preserve right until all four output blocks consumed it.
+    __aicore__ inline void BeginRight(GM_ADDR src,uint32_t rows) {
+        using namespace AscendC;
+        WaitFlag<HardEvent::MTE1_MTE2>(rightFree_);
+        auto dst=right_.Get<float>();
+        if(rows<64) {
+            InitConstValueParams<float> zero(1,512,0,0.f);
+            InitConstValue(dst,zero);PipeBarrier<PIPE_MTE2>();
+        }
+        GlobalTensor<float> gm;gm.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(src));
+        Nd2NzParams cp{};cp.ndNum=1;cp.nValue=rows;cp.dValue=64;
+        cp.srcDValue=64;cp.dstNzC0Stride=64;cp.dstNzNStride=1;
+        DataCopy(dst,gm,cp);
+        SetFlag<HardEvent::MTE2_MTE1>(rightReady_);
+        WaitFlag<HardEvent::MTE2_MTE1>(rightReady_);
+        residentRight_=true;
+    }
+    __aicore__ inline void EndRight() {
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(rightFree_);
+        residentRight_=false;
+    }
+#endif
     // A: [validM,k] or physical [k,validM]; B: [k,64].
     // dst must provide ceil(validM/16)*16 rows; valid M is copied out by AIV.
     __aicore__ inline void Multiply(GM_ADDR ap,GM_ADDR bp,GM_ADDR dst,
@@ -81,7 +121,11 @@ public:
                     LoadData(a2[r*1024],al[r*128],ld);PipeBarrier<PIPE_MTE1>();
                 }
             }
-            tr.channelSize=64;tr.kExtension=64;LoadData(b2,bl,tr);
+            tr.channelSize=64;tr.kExtension=64;
+#if FWDH_RIGHT_RESIDENT
+            if(residentRight_)LoadData(b2,right_.Get<float>(),tr);else
+#endif
+            LoadData(b2,bl,tr);
             SetFlag<HardEvent::MTE1_MTE2>(l1Free_[slot]);
             SetFlag<HardEvent::MTE1_M>(abReady_[slot]);
             WaitFlag<HardEvent::MTE1_M>(abReady_[slot]);
@@ -98,6 +142,11 @@ public:
     }
     __aicore__ inline void End() {
         using namespace AscendC;
+#if FWDH_RIGHT_RESIDENT
+        WaitFlag<HardEvent::MTE1_MTE2>(rightFree_);
+        pipe_.ReleaseEventID<HardEvent::MTE1_MTE2>(rightFree_);
+        pipe_.ReleaseEventID<HardEvent::MTE2_MTE1>(rightReady_);
+#endif
         for(uint32_t i=0;i<2;++i) {
             WaitFlag<HardEvent::MTE1_MTE2>(l1Free_[i]);
             WaitFlag<HardEvent::M_MTE1>(abFree_[i]);WaitFlag<HardEvent::FIX_M>(cFree_[i]);
