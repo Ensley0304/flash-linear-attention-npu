@@ -24,6 +24,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../op_kernel/chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_tiling_processor.h"
+#include "chunk_fwd_h_p32_256_policy.h"
 
 namespace optiling {
 
@@ -253,6 +254,30 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     }
 
     ::ChunkFwdHPlainTilingData plainTiling{};
+    FwdHP32Qualification qualification{};
+    qualification.arch22=ascendcPlatform.GetCurNpuArch()==NpuArch::DAV_2201;
+    qualification.keyGateOnly=!useG && useGk;
+    qualification.fp32Caches=true;qualification.ndCaches=true;
+    for (size_t index : {INPUT_K_IDX,INPUT_W_IDX,INPUT_U_IDX,INPUT_GK_IDX}) {
+        const auto *desc=context->GetInputDesc(index);
+        qualification.fp32Caches=qualification.fp32Caches && desc!=nullptr && desc->GetDataType()==ge::DT_FLOAT;
+        qualification.ndCaches=qualification.ndCaches && desc!=nullptr && desc->GetStorageFormat()==ge::FORMAT_ND;
+    }
+    for (size_t index : {size_t(0),size_t(1)}) {
+        const auto *desc=context->GetOutputDesc(index);
+        qualification.fp32Caches=qualification.fp32Caches && desc!=nullptr && desc->GetDataType()==ge::DT_FLOAT;
+        qualification.ndCaches=qualification.ndCaches && desc!=nullptr && desc->GetStorageFormat()==ge::FORMAT_ND;
+    }
+    qualification.denseBnsd=std::strcmp(qkvLayout,"BNSD")==0;
+    qualification.noSequenceMetadata=cuSeqlensTensor==nullptr &&
+        context->GetOptionalInputTensor(INPUT_CHUNK_INDICES_IDX)==nullptr;
+    qualification.fp32State=(!useInitialState || initialStateTensor->GetDataType()==ge::DT_FLOAT) &&
+        (!storeFinalState || context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX)->GetDataType()==ge::DT_FLOAT);
+    qualification.stateVFirst=stateVFirst;qualification.saveNewValue=saveNewValue;
+    qualification.batch=logicalBatch;qualification.headsK=logicalKHeads;qualification.headsV=logicalVHeads;
+    qualification.tokens=logicalSeqlen;qualification.chunk=chunkSize;
+    qualification.k=logicalKDim;qualification.v=logicalVDim;
+    const bool p32K256=UseFwdHP32K256(qualification);
     uint32_t blockDim = 0;
     size_t workspaceSize = 0;
     ChunkFwdHTilingProcessor processor(tilingCtx);
@@ -270,6 +295,14 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         plainTiling.useInitialState=useInitialState;plainTiling.storeFinalState=storeFinalState;
         plainTiling.isVariedLen=cuSeqlensTensor!=nullptr;plainTiling.shapeBatch=logicalBatch;
         plainTiling.tokenBatch=logicalBatch;plainTiling.layout=layoutValue;
+        if (p32K256) {
+            blockDim=static_cast<uint32_t>(std::min<uint64_t>(logicalBatch*logicalVHeads*4,
+                ascendcPlatform.GetCoreNumAic()));
+            // The private route reuses existing fields; no tiling-ABI expansion.
+            plainTiling.coreBoundCount=blockDim;
+            plainTiling.vWorkspaceOffset=(workspaceSize+511)/512*512;
+            workspaceSize=plainTiling.vWorkspaceOffset+static_cast<size_t>(blockDim)*98304;
+        }
     } else {
         processor.Process(plainTiling, blockDim, workspaceSize);
     }
@@ -290,9 +323,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
         static_cast<uint64_t>(stateVFirst ? 1 : 0),
         static_cast<uint64_t>(storeFinalState ? 1 : 0),
-        static_cast<uint64_t>(denseT16Eligible ? 1 : 0), static_cast<uint64_t>(general));
+        static_cast<uint64_t>(denseT16Eligible ? 1 : 0), static_cast<uint64_t>(general && !p32K256),
+        static_cast<uint64_t>(p32K256));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
+    OP_LOGD(context->GetNodeName(), "FwdH route p32K256=%d general=%d key=%lu block=%u B=%ld H=%ld T=%ld exp2=%d initial=%d final=%d",
+        p32K256,general && !p32K256,static_cast<unsigned long>(tilingKey),blockDim,
+        logicalBatch,logicalVHeads,logicalSeqlen,useExp2,useInitialState,storeFinalState);
 
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);

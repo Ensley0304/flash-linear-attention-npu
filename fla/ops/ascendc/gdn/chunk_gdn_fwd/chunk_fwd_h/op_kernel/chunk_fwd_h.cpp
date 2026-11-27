@@ -22,6 +22,9 @@
 #include "kernel_operator.h"
 #include "arch22/chunk_fwd_h_general_launch.h"
 #include "lib/matmul_intf.h"
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+#include "arch22/fwdh256/launch.h"
+#endif
 
 namespace GDN {
 
@@ -94,7 +97,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 
 #ifndef TORCH_MODE
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16, bool GENERAL_PATH>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16, bool GENERAL_PATH, bool KDA_P32_256>
 __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
@@ -120,6 +123,19 @@ __global__ __aicore__ void chunk_fwd_h(
     args.workspace = AscendC::GetUserWorkspace(workspace);
     __gm__ const ChunkFwdHTilingData *tilingData =
         reinterpret_cast<__gm__ const ChunkFwdHTilingData *>(tiling);
+    if constexpr (KDA_P32_256) {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+        GDN::Arch22::FwdH256::Args fast{w,u,k,gk,
+            tilingData->useInitialState ? initial_state : nullptr,h,v_new,
+            STORE_FINAL ? final_state : nullptr,
+            args.workspace+tilingData->vWorkspaceOffset,
+            static_cast<uint32_t>(tilingData->batch),static_cast<uint32_t>(tilingData->vNumHead),
+            static_cast<uint32_t>(tilingData->seqlen),1,USE_EXP2 ? 1U : 0U,
+            static_cast<uint32_t>(tilingData->coreBoundCount)};
+        GDN::Arch22::FwdH256::Launch(fast);
+#endif
+        return;
+    }
     if constexpr (GENERAL_PATH) {
         if ASCEND_IS_AIV {
             GDN::Arch22::GeneralFwdHBuffers buffers{w,u,k,gk,
@@ -155,7 +171,7 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.gatedEngine = static_cast<uint32_t>(tilingData->gatedEngine);
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
-    if constexpr (!GENERAL_PATH) GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
+    if constexpr (!GENERAL_PATH && !KDA_P32_256) GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
                       Traits::STATE_V_FIRST_VALUE>(args);
 }
 #endif
