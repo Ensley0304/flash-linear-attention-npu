@@ -128,7 +128,9 @@ __global__ __aicore__ void chunk_fwd_h(
         GDN::Arch22::FwdH256::Args fast{w,u,k,gk,
             tilingData->useInitialState ? initial_state : nullptr,h,v_new,
             STORE_FINAL ? final_state : nullptr,
-            args.workspace+tilingData->vWorkspaceOffset,
+            // This offset includes the CANN reserved prefix and is relative
+            // to the raw allocation, not GetUserWorkspace (already advanced).
+            workspace+tilingData->vWorkspaceOffset,
             static_cast<uint32_t>(tilingData->batch),static_cast<uint32_t>(tilingData->vNumHead),
             static_cast<uint32_t>(tilingData->seqlen),1,USE_EXP2 ? 1U : 0U,
             static_cast<uint32_t>(tilingData->coreBoundCount)};

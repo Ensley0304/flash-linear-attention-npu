@@ -259,7 +259,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     qualification.keyGateOnly=!useG && useGk;
     qualification.fp32Caches=true;qualification.ndCaches=true;
     for (size_t index : {INPUT_K_IDX,INPUT_W_IDX,INPUT_U_IDX,INPUT_GK_IDX}) {
-        const auto *desc=context->GetInputDesc(index);
+        const auto *desc=index==INPUT_GK_IDX ? context->GetOptionalInputDesc(index)
+                                           : context->GetRequiredInputDesc(index);
         qualification.fp32Caches=qualification.fp32Caches && desc!=nullptr && desc->GetDataType()==ge::DT_FLOAT;
         qualification.ndCaches=qualification.ndCaches && desc!=nullptr && desc->GetStorageFormat()==ge::FORMAT_ND;
     }
