@@ -113,3 +113,29 @@ workspace参数推进CANN保留区，用户区偏移应为0，不能重复加16M
 SHA256 `de450788482a4b1d23a84339cfdf3781dc9390c0a24da7319e65d065b1f69d43`。
 外部任务干扰批次及两次E39007设备初始化超时单独保留，未计入有效结果；后者未执行目标kernel。
 K128干净重跑和同进程性能复测均通过。未终止外部进程、复位设备、系统安装或修改其他工作树。
+
+
+## B/H/T 泛化验收（2026-11-27，生产Host b271b260）
+
+在同一A2 910B3/179.162.5.2物理6、同一CANN与独占venv上完成。解除B1/H1或2/T4096白名单，保留正数、task和ceil(T/64)整数溢出边界；其他资格不变。
+
+- Host资格61检查通过。旧新wheel中193个OPP .so/.o/.json逐文件比较，仅liboptiling.so与同内容opmaster别名变化；key metadata及全部kernel对象不变。
+- 20组B/H：B1/2/4，H1/3/4/8/16，T1/63/64/65/129/1024，exp/exp2、初始/最终状态；实际新key及min(4BH,20) blocks通过。每例额外重复2次，输出逐位一致。
+- 6组长序列：B1/H1/T4097、B1/H2/T8193、B2/H3/T4097，各覆盖I0F1/exp2与I1F0/exp。实际新key与精度通过。20+6合计覆盖四个新key。
+- 3组stateVFirst/BF16 state/varlen回归通过，实际旧分支。原K128/GDN kernel及映射未变；本轮没有重复运行其硬件回归，沿用首次接线证据和当前Host否定条件单测。
+- 原fla-org test_chunk：B2/H3/T65和B1/H8/T129，各保存/重算，4组原始输出、最终状态及梯度断言通过。日志确认保存模式一次新FwdH，重算模式两次新FwdH；不是保存/重算互比代替reference。
+
+20 B/H用例最大绝对误差H=2.384185791015625e-7、Vnew=2.9802322387695312e-8、final=2.682209014892578e-7。6长序列用例H=5.066394805908203e-7、Vnew=4.842877388000488e-8、final=1.341104507446289e-7。原始阈值未改，无ATK。
+
+相同20组输入旧fallback/新路线，10预热+10采样，每调用所有设备任务求和取中位数：全部改善，倍数9.42～203.99。B4/H16/T65 I0F0为19681.518→140.0235us，I1F1为20607.547→254.96us；B2/H4/T1024 I0F0为46129.874→255.09us，I1F1为46272.666→274.447us。
+
+同规格合成FP32 stage缓存（不是实际Prepare输出）独立Triton对照：
+
+| B/H/T，I0F0/exp2 | 新FwdH(us) | Triton全部任务(us) | 每调用任务数(新/Triton) |
+|---|---:|---:|---:|
+| 2/8/65 | 51.294 | 410.941 | 1/5 |
+| 2/4/1024 | 259.019 | 594.059 | 1/7 |
+
+同shape/dtype/缓存hash/设备；Triton转换/搬运/gate计入。44份kernel_details.csv均核对Device_id=6。以前B1/H1/T1024仍慢于Triton，本泛化不改kernel，不能外推所有shape超过Triton，也未重做完整前向性能验收。其他dtype/layout/varlen/GDN及架构继续fallback或原契约拒绝；A3未实测。
+
+最终wheel SHA256 f8d4a9ad0b49a738f34552980d919aa8d4d8283d19f12d09be310a01d92b3146；实际tiling/opmaster SHA256 51c964238e7c6de27b491df166cd9512145d5cd52c9f987fb5529fd157a68c22。op_api、kernel及其他库与首次接线最终wheel一致。原始结果、路由日志、全部设备任务CSV、缓存、占用及maps收于generalize-evidence.tar.gz，报告位于实施输出generalize目录。测试结束卡无运行进程；未干扰外部任务。

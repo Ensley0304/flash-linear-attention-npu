@@ -102,3 +102,10 @@ FP32。aclnn 调用者可通过 final_state 输出 dtype 选择 BF16 或 FP32。
 | `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
 | `ACLNN_ERR_INNER_NULLPTR` | Contiguous/ViewCopy 等内部算子未返回有效 tensor |
 | `ACLNN_ERR_INNER` | kernel executor 执行失败 |
+
+
+## C64 K256 P32 专用分派
+
+公开合法输入范围不变。满足DAV_2201、g缺省/gk存在、K=V256、HK=HV、FP32 ND缓存及状态、dense内部BNSD、state_v_first=false、save_new_value=true、无变长元数据的调用可走独立P32 Cube/MIX实现。B/H/T不再限制为B1/H1或2/T4096；仅保留正数和任务索引整数范围保护。初始状态及最终状态均可选。其他合法输入仍走既有实现，非法输入保持原ACLNN报错契约。
+
+这是一项内部路由扩展，不代表所有dtype、layout、varlen或GDN都支持该kernel，也不保证每种shape均快于Triton。实测范围、整数边界及性能见design.md与validation.md。

@@ -25,14 +25,15 @@ a=p.parse_args();a.output.mkdir(parents=True,exist_ok=False)
 torch.set_num_threads(4);torch.npu.set_device(0)
 data=torch.load(a.inputs,map_location='cpu',weights_only=True)
 w,u,kg,g=[data[name].float() for name in ('w','u','kg','G')]
-batch,heads,tokens,dim=w.shape;assert batch==1 and dim==256
-torch.manual_seed(1127);state=torch.randn(1,heads,256,256)*.1 if a.initial else torch.zeros(1,heads,256,256)
-eh=torch.empty(1,(tokens+63)//64,heads,256,256);ev=torch.empty_like(u);ef=torch.empty_like(state)
-for head in range(heads):
-    trace=recurrence(w[0,head],u[0,head],kg[0,head],g[0,head],state[0,head],'FP64')
-    for chunk,row in enumerate(trace):
-        eh[0,chunk,head]=row['H_snapshot'];ev[0,head,chunk*64:chunk*64+len(row['Vnew'])]=row['Vnew']
-    ef[0,head]=trace[-1]['R_run']
+batch,heads,tokens,dim=w.shape;assert dim==256
+torch.manual_seed(1127);state=torch.randn(batch,heads,256,256)*.1 if a.initial else torch.zeros(batch,heads,256,256)
+eh=torch.empty(batch,(tokens+63)//64,heads,256,256);ev=torch.empty_like(u);ef=torch.empty_like(state)
+for b in range(batch):
+    for head in range(heads):
+        trace=recurrence(w[b,head],u[b,head],kg[b,head],g[b,head],state[b,head],'FP64')
+        for chunk,row in enumerate(trace):
+            eh[b,chunk,head]=row['H_snapshot'];ev[b,head,chunk*64:chunk*64+len(row['Vnew'])]=row['Vnew']
+        ef[b,head]=trace[-1]['R_run']
 # All implementations consume the same FP32 log2 gate values.
 wn,un,kn,gn=[x.npu() for x in (w,u,kg,g/torch.log(torch.tensor(2.)))]
 sn=state.npu() if a.initial else None
@@ -49,11 +50,11 @@ else:
     lib=ctypes.CDLL(a.library);run=lib.run_mix
     run.argtypes=[ctypes.POINTER(ctypes.c_void_p)]+[ctypes.c_uint32]*6+[ctypes.c_void_p];run.restype=None
     hn=torch.empty_like(eh,device='npu');vn=torch.empty_like(ev,device='npu');fn=torch.empty_like(ef,device='npu')
-    blocks=min(20,heads*4);scratch=torch.empty(blocks*24576,device='npu')
+    blocks=min(20,batch*heads*4);scratch=torch.empty(blocks*24576,device='npu')
     ptrs=(ctypes.c_void_p*9)(wn.data_ptr(),un.data_ptr(),kn.data_ptr(),gn.data_ptr(),sn.data_ptr() if sn is not None else 0,
         hn.data_ptr(),vn.data_ptr(),fn.data_ptr() if a.final else 0,scratch.data_ptr())
     def call():
-        run(ptrs,1,heads,tokens,1,1,blocks,torch.npu.current_stream().npu_stream)
+        run(ptrs,batch,heads,tokens,1,1,blocks,torch.npu.current_stream().npu_stream)
         return hn,vn,fn if a.final else None
 def check(label):
     info=subprocess.check_output(['npu-smi','info','-t','proc-mem','-i',os.environ['ASCEND_RT_VISIBLE_DEVICES'],'-c','0'],text=True)

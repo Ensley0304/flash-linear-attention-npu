@@ -115,3 +115,21 @@ The script checks precision before 10 warmups/10 samples and retains every devic
 task. Pass an absolute `--library` path for the probe. T65 uses actual NPU Prepare
 cache outputs; `make_stage_cache.py` generates the T1024 mathematical-producer
 cache and must not be described as a device-produced cache.
+
+
+### Batch/head/sequence generalization
+
+`test_public_dispatch.py --suite generalize` runs 20 cases including 256 tasks over
+20 AICs. `--suite long` adds six T4097/T8193 cases. Both repeat each invocation twice
+and check bitwise equality before the original reference assertions. The fallback
+suite now retains the three semantic exclusions; B2/H3/T4097 are positive routes.
+`--profile --expect-legacy` records the same generalize cases on the pre-expansion
+wheel for paired baseline measurement. `check_runtime_routes.py --aic-cores 20`
+checks capped block counts against actual launches.
+
+`test_public_generalized_chain.py --upstream PATH --adapter PATH --output DIR`
+runs four unchanged upstream test_chunk cases through the public adapter and
+captures verbose dispatch (precision only). `make_generalized_stage_cache.py`
+creates explicitly synthetic FP32 stage caches for the now batch-aware
+`profile_stage_pair.py`; include every Triton wrapper device task. See validation.md
+for passed results and the remaining low-head long-sequence performance limitation.

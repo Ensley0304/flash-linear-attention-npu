@@ -22,10 +22,18 @@ int main() {
     for(int64_t t : {1,7,63,64,65,129,1024,4096}) {
         q=base;q.tokens=t;q.headsK=q.headsV=2;assert(UseFwdHP32K256(q));++count;
     }
-    for(int64_t t : {0,4097}) {q=base;q.tokens=t;assert(!UseFwdHP32K256(q));++count;}
-    q=base;q.batch=2;assert(!UseFwdHP32K256(q));++count;
+    for(int64_t t : {0LL,4294967233LL}) {q=base;q.tokens=t;assert(!UseFwdHP32K256(q));++count;}
+    for(int64_t t : {4097,8193}) {q=base;q.tokens=t;assert(UseFwdHP32K256(q));++count;}
+    for(int64_t b : {1,2,4,8}) for(int64_t h : {1,2,3,4,8,16,32}) {
+        q=base;q.batch=b;q.headsK=q.headsV=h;assert(UseFwdHP32K256(q));++count;
+    }
+    for(int64_t b : {0LL,-1LL,1073741824LL}) {
+        q=base;q.batch=b;assert(!UseFwdHP32K256(q));++count;
+    }
+    for(int64_t h : {0LL,-1LL,1073741824LL,9223372036854775807LL}) {
+        q=base;q.headsK=q.headsV=h;assert(!UseFwdHP32K256(q));++count;
+    }
     q=base;q.chunk=32;assert(!UseFwdHP32K256(q));++count;
-    q=base;q.headsK=q.headsV=3;assert(!UseFwdHP32K256(q));++count;
     q=base;q.headsV=2;assert(!UseFwdHP32K256(q));++count;
     std::cout << "Host qualification checks passed: " << count << '\n';
 }

@@ -15,7 +15,8 @@ from fla_npu.ops.ascendc import npu_chunk_fwd_h
 from numerical_gate import recurrence, metrics
 
 p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True)
-p.add_argument('--suite',choices=('smoke','matrix','fallback','invalid'),default='smoke')
+p.add_argument('--suite',choices=('smoke','matrix','fallback','invalid','generalize','long'),default='smoke')
+p.add_argument('--expect-legacy',action='store_true',help='Capture pre-expansion fallback baseline')
 p.add_argument('--profile',action='store_true');a=p.parse_args()
 a.output.mkdir(parents=True,exist_ok=False)
 torch.set_num_threads(4);torch.npu.set_device(0)
@@ -50,12 +51,17 @@ if a.suite=='matrix':
     cases += [(1,t,h,i,i,e,False,False,False) for t in (7,63,64,129,1024,4096)
               for h in (1,2) for i,e in ((False,True),(True,False))]
 if a.suite=='fallback':
-    cases=[(1,65,3,True,True,True,False,False,False),
-           (2,65,1,True,True,True,False,False,False),
-           (1,4097,1,False,False,False,False,False,False),
-           (1,65,1,True,True,True,True,False,False),
+    cases=[(1,65,1,True,True,True,True,False,False),
            (1,65,1,True,True,True,False,True,False),
            (1,65,1,True,True,True,False,False,True)]
+if a.suite=='generalize':
+    cases=[(b,t,h,i,f,e,False,False,False) for b,t,h in
+           ((1,65,3),(2,65,1),(1,1,8),(2,63,3),(2,64,4),(4,65,3),
+            (1,129,16),(2,129,8),(4,65,16),(2,1024,4))
+           for i,f,e in ((False,False,True),(True,True,False))]
+if a.suite=='long':
+    cases=[(b,t,h,i,f,e,False,False,False) for b,t,h in ((1,4097,1),(1,8193,2),(2,4097,3))
+           for i,f,e in ((False,True,True),(True,False,False))]
 records=[]
 for index,(batch,tokens,heads,initial,final,exp2,vfirst,bfstate,packed) in enumerate(cases):
     key=f'{index}-b{batch}-t{tokens}-h{heads}-i{int(initial)}f{int(final)}-e{int(exp2)}-vf{int(vfirst)}-bf{int(bfstate)}-pack{int(packed)}'
@@ -93,7 +99,13 @@ for index,(batch,tokens,heads,initial,final,exp2,vfirst,bfstate,packed) in enume
     check(key+'-before');print('ROUTE_BEGIN',key,flush=True)
     timer=threading.Timer(90,lambda:os._exit(124));timer.daemon=True;timer.start()
     actual=call();torch.npu.synchronize();timer.cancel()
-    rec=dict(case=key,expected_fast=a.suite!='fallback',results={})
+    # Repeated work checks stale state and drained flags across kernel invocations.
+    if a.suite in ('generalize','long'):
+        for _ in range(2):
+            repeated=call();torch.npu.synchronize()
+            for first,again in zip(actual,repeated):
+                if first is not None:torch.testing.assert_close(first,again,atol=0,rtol=0)
+    rec=dict(case=key,expected_fast=a.suite!='fallback' and not a.expect_legacy,results={})
     for name,got,ref in [('H',actual[0],eh),('Vnew',actual[1],ev)]+([('final',actual[2],ef)] if final else []):
         value=got.cpu();rec['results'][name]=metrics(value,ref)
         assert_close(name,ref,value,.005)

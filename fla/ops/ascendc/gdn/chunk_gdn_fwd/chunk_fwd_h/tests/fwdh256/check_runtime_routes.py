@@ -8,6 +8,7 @@ p = argparse.ArgumentParser()
 p.add_argument('log', type=Path)
 p.add_argument('--fast', type=int, choices=(0, 1), required=True)
 p.add_argument('--cases', type=int, required=True)
+p.add_argument('--aic-cores', type=int, default=20, help='Physical AIC count of the measured device')
 p.add_argument('--chain', action='store_true', help='forward/recompute trace markers; Host tiling may be cached')
 p.add_argument('--output', type=Path, required=True)
 a = p.parse_args()
@@ -25,7 +26,7 @@ for line in a.log.read_text(errors='replace').splitlines():
         assert row['fast'] == a.fast, row
         if a.fast:
             assert row['key'] == {(0,0):68126,(1,0):69150,(0,1):76318,(1,1):77342}[(row['exp2'],row['final'])], row
-            assert row['general'] == 0 and row['blocks'] == row['batch']*row['heads']*4, row
+            assert row['general'] == 0 and row['blocks'] == min(row['batch']*row['heads']*4,a.aic_cores), row
         else:
             assert row['key'] < 65536, row
         current['routes'].append(row)

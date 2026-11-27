@@ -29,14 +29,14 @@ exp2/final=true为77342；新位是bit16。144个旧选择与新位0逐项相等
 
 | Host输入条件 | 分派 |
 |---|---|
-| DAV_2201；g缺失/gk存在；C64；K=V256；HK=HV=1或2；B1；1<=T<=4096；内部BNSD；无cu_seqlens/chunk_indices；k(实际kg)/w/u/gk/H/Vnew均FP32 ND；initial若有为FP32，final若请求为FP32；stateVFirst=false；saveNewValue=true | KDA_P32_256=1，Gh1/Vtile64，MIX_AIC_1_2 |
-| 其他合法FP32缓存规格，如H3、B2、T>4096、BF16 state、stateVFirst=true、varlen | 原GENERAL_PATH=1，AIV_ONLY |
+| DAV_2201；g缺失/gk存在；C64；K=V256；HK=HV>0；B>0；T>0（整数边界见泛化节）；内部BNSD；无cu_seqlens/chunk_indices；k(实际kg)/w/u/gk/H/Vnew均FP32 ND；initial若有为FP32，final若请求为FP32；stateVFirst=false；saveNewValue=true | KDA_P32_256=1，Gh1/Vtile64，MIX_AIC_1_2 |
+| 其他合法FP32缓存规格，如BF16 state、stateVFirst=true、varlen | 原GENERAL_PATH=1，AIV_ONLY |
 | 原BF16 K128，包括KDA、GDN、dense/varlen及旧layout | 原模板与kernel映射，KDA_P32_256=0 |
 | 非DAV_2201 | 新资格恒false；旧合法K128仍走原分支，旧契约不支持的FP32 K256仍报错 |
 | 现有非法输入 | 继续由ACLNN/Host按原契约报错，不由Python补校验 |
 
 初始/最终状态四组合及exp/exp2已在A2公开入口矩阵验证；4个冒烟与40个矩阵用例均核对
-实际Host key和runtime launch。B/H/T白名单边界在Host做路由资格判断，不扩大公开接口合法范围。
+实际Host key和runtime launch。B/H/T整数边界在Host做路由资格判断，不扩大公开接口合法范围。
 
 KDA/GDN实际区分依据：ChunkKdaFwdV2与ChunkKdaBwdGeneral的recompute均调用
 l0op::ChunkFwdH(kg,w,u,nullptr,G,...)；GDN公开链调用
@@ -48,7 +48,7 @@ l0op::ChunkFwdH(k,w,u,gCumsumBht,nullptr,...)。因此gk语义、g缺失与FP32�
 
 直接复用557667b9的Cube/Vector工作体，独立生产launch包装在arch22目录。
 启用right驻留与Gh1 D分块流水。1AIC:2AIV；AIV0计算，AIV1为同步dummy。
-tasks=B*H*4，blocks=min(tasks,AIC核数)，当前B1/H1或2分别4/8 blocks。
+tasks=B*H*4，blocks=min(tasks,AIC核数)，B1/H1或2分别4/8 blocks，更多B/H最多占满AIC核数。
 每block scratch=98304字节（P16384+right16384+D65536）；总用户scratch为
 393216/786432字节，另加CANN libApi workspace（本次A2为16777216字节）；
 实际总分配分别17170432/17563648字节，用户区偏移为0。
@@ -69,9 +69,9 @@ L1显式81920字节；L0A/B/C各32768；UB显式99328字节加TPipe元数据；
 | L1 | 81920 B/AIC | 含16384 B的S2 right驻留区 |
 | L0A / L0B / L0C | 各32768 B/AIC | MMAD完整归约，不落GM部分和再串加 |
 | scratch | 98304 B/block | P 16384 + right 16384 + D 65536 |
-| blocks | H1为4，H2为8 | 每head四个V64 tile，Gh1，1AIC:2AIV |
+| blocks | min(4BH,AIC核数) | 每head四个V64 tile，Gh1，1AIC:2AIV |
 
-生产可执行逻辑提交为`3aef396858ed46fdc52d77c23db30bd85664661d`；kernel工作体仍为
+首次接线可执行逻辑提交为`3aef396858ed46fdc52d77c23db30bd85664661d`；kernel工作体仍为
 557667b9。完整构建后仅增量重建修正偏移的Host并重新打包，所有kernel对象hash不变。
 wheel SHA256：`9e5a09caf5be5e91eea20223ea9a1db2d19a8fbda1f3f1e28384315ed208ec1a`。
 这冻结的是已验证分派/精度配置；长序列超过Triton的性能目标仍未达成。
@@ -86,7 +86,7 @@ wheel SHA256：`9e5a09caf5be5e91eea20223ea9a1db2d19a8fbda1f3f1e28384315ed208ec1a
    FP32 reference与原阈值；读取日志中的key/block/workspace及profiler任务证据。
 4. KDA正式前向与重算：原fla-org test_chunk，T65/H2、T1024/H1及尾块，保存/重算，
    原始输出/梯度断言。确认两个调用链实际都出现新key。
-5. 反向路由：K128 KDA、K128 GDN、K256 H3/B2、BF16 state、stateVFirst、varlen；
+5. 反向路由：K128 KDA、K128 GDN、BF16 state、stateVFirst、varlen；
    合法走旧分支，非法维持原错误。代表用例用原fla-org断言，不用ATK或放宽容差。
 6. 同卡同输入10预热/10采样：正式FwdH阶段与原型、同规格Triton FwdH比较；
    同时保留公开调用全部设备任务CSV，不剔除转换/搬运。记录加载库/OPP hash和key。
@@ -341,3 +341,16 @@ state dtype 的模板选择保持运行语义优先级：存在 `initial_state` 
 代码不维护手写数值 key，也不在 kernel 内使用 `TILING_KEY_IS` 做二次分派。TilingKey 数值由
 目标 CANN 根据模板声明编码，只用于 host、binary metadata 和 runtime 之间的选择闭环，不作为
 公开接口或跨版本稳定语义。
+
+
+## B/H/T 泛化增量设计与验收
+
+用户授权扩展后，解除B1/H1或2/T4096的人为白名单，保持K256/C64/P32/dense/KDA语义条件。既有Work将task映射到batch/head/V64，使用64位GM偏移；Gh1下task总数4BH。block=min(4BH,AIC核数)，workspace仍按block分配，与BH无关。每个work尾部Cube排空P_FREE/D_FREE并等待DONE后发送ACK；Vector等ACK后才进入下一任务，避免复用scratch和跨核flag时串扰。
+
+整数约束必须保留：B/H正数，4BH适配uint32并为task+=blocks留下最多UINT16_MAX步进余量；T<=UINT32_MAX-63保证ceil(T/64)不溢出。Host继续原合法性校验。不能把未测试的大tensor声明为实际硬件验收；以下矩阵证明索引、尾块和多轮任务机制。
+
+验证矩阵：B1/2/4、H1/2/3/4/8/16，BH任务低于/等于/超过核数，T1/63/64/65/129/1024以及4097/8193，initial/final和exp/exp2。同进程重复调用检查状态隔离；公开前向和重算覆盖多batch/head。比较既有fallback和新路线同规格全部设备任务，保留Triton同边界对照。其他dtype/layout/varlen/GDN需要独立实现或适配，保持fallback；本增量不改变这些条件或旧key编码。
+
+泛化验收通过：生产Host提交b271b26056cec924d4a6aa6c10a4c3f8876c09fb，kernel和4个key不变；61 Host检查，20 B/H用例与6长序列用例实际路由及精度通过，3 fallback仍走旧分支。B2/H3/T65、B1/H8/T129公开训练保存与重算4组原始断言通过，实际新FwdH launch数量为保存1次/重算2次。多work同步和scratch复用在B4/H16的256 tasks/20 blocks下验证通过。
+
+A2共20 AIC时用户scratch最多1966080字节，总workspace18743296字节。实际计时20组较旧fallback提高9.42～203.99倍；同边界Triton对比B2/H8/T65为51.294/410.941us，B2/H4/T1024为259.019/594.059us。保留旧B1/H1长序列落后Triton的事实，不保证任意shape均快。新wheel SHA256 f8d4a9ad0b49a738f34552980d919aa8d4d8283d19f12d09be310a01d92b3146；同构建目录Host增量重建后完整打包，193个OPP对象/库/metadata仅两个tiling库别名变化，全部kernel与key metadata不变。
