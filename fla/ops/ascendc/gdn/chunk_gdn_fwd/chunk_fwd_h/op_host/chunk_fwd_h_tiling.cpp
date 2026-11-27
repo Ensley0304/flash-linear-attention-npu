@@ -301,8 +301,10 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
                 ascendcPlatform.GetCoreNumAic()));
             // The private route reuses existing fields; no tiling-ABI expansion.
             plainTiling.coreBoundCount=blockDim;
-            plainTiling.vWorkspaceOffset=(workspaceSize+511)/512*512;
-            workspaceSize=plainTiling.vWorkspaceOffset+static_cast<size_t>(blockDim)*98304;
+            // asc_opc passes usrWorkspace to the user kernel: its parameter
+            // already skips CANN's reserved prefix. Keep this offset user-relative.
+            plainTiling.vWorkspaceOffset=0;
+            workspaceSize+=static_cast<size_t>(blockDim)*98304;
         }
     } else {
         processor.Process(plainTiling, blockDim, workspaceSize);
