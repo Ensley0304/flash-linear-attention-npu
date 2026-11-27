@@ -1,6 +1,102 @@
 # ChunkFwdH 设计
 
-## 1. 目标与边界
+## 2026-11-27：P32 K256独立分派增量与验收配置
+
+规则版本V2。本增量按用户指令接入已验收原型commit
+`557667b90fd21fe7dc62f9450d0d5918d7ddab22`；对应A2原型库SHA256
+`1aecef5dfe79fa9749c555825e1242217dec32a445ac770505d874773d5bb74a`。
+不是旧窗口的KDA_C64_FAST。此前整链预算失败仍有效；本次验收范围为新分派、
+正式调用链的功能兼容性与FwdH阶段性能，不宣称仅此即可使完整前向超过Triton。
+
+### 分派表与兼容性
+
+新增模板BOOL `KDA_P32_256`，放在GENERAL_PATH之后，默认/全部旧选择均为0。
+保持原字段顺序、位宽和取值列表；通过真实CANN GET_TPL_TILING_KEY编码器枚举
+旧组合并比较新字段=0时结果，而不是仅比较源码。新字段=1只选择FP32 gate、
+USE_GK=1、STATE_FP32=1、STATE_V_FIRST=0、DENSE_T16=0、GENERAL_PATH=0，
+USE_EXP2/STORE_FINAL各两种，kernel type显式MIX_AIC_1_2。CANN编码器实测key：
+exp/final=false为68126，exp2/final=false为69150，exp/final=true为76318，
+exp2/final=true为77342；新位是bit16。144个旧选择与新位0逐项相等。
+生产代码不得硬编码。原V_DIM=128继续作为历史模板token（现通用路径也使用它）；
+真实K/V由tiling数据传递，新路径资格严格要求256，不修改此列表以免影响旧key。
+
+| USE_EXP2 | STORE_FINAL | 生成key | kernel类型 |
+|---:|---:|---:|---|
+| 0 | 0 | 68126 | MIX_AIC_1_2 |
+| 1 | 0 | 69150 | MIX_AIC_1_2 |
+| 0 | 1 | 76318 | MIX_AIC_1_2 |
+| 1 | 1 | 77342 | MIX_AIC_1_2 |
+
+| Host输入条件 | 分派 |
+|---|---|
+| DAV_2201；g缺失/gk存在；C64；K=V256；HK=HV=1或2；B1；1<=T<=4096；内部BNSD；无cu_seqlens/chunk_indices；k(实际kg)/w/u/gk/H/Vnew均FP32 ND；initial若有为FP32，final若请求为FP32；stateVFirst=false；saveNewValue=true | KDA_P32_256=1，Gh1/Vtile64，MIX_AIC_1_2 |
+| 其他合法FP32缓存规格，如H3、B2、T>4096、BF16 state、stateVFirst=true、varlen | 原GENERAL_PATH=1，AIV_ONLY |
+| 原BF16 K128，包括KDA、GDN、dense/varlen及旧layout | 原模板与kernel映射，KDA_P32_256=0 |
+| 非DAV_2201 | 新资格恒false；旧合法K128仍走原分支，旧契约不支持的FP32 K256仍报错 |
+| 现有非法输入 | 继续由ACLNN/Host按原契约报错，不由Python补校验 |
+
+初始/最终状态四组合及exp/exp2已在A2公开入口矩阵验证；4个冒烟与40个矩阵用例均核对
+实际Host key和runtime launch。B/H/T白名单边界在Host做路由资格判断，不扩大公开接口合法范围。
+
+KDA/GDN实际区分依据：ChunkKdaFwdV2与ChunkKdaBwdGeneral的recompute均调用
+l0op::ChunkFwdH(kg,w,u,nullptr,G,...)；GDN公开链调用
+l0op::ChunkFwdH(k,w,u,gCumsumBht,nullptr,...)。因此gk语义、g缺失与FP32缓存共同
+限定KDA类递推；不能只看K/V。独立入口传相同参数时执行同一逐K门控数学语义，
+不额外引入调用者名称属性或改变ABI。无需修改KDA/GDN调用点及Python。
+
+### 资源与接口绑定
+
+直接复用557667b9的Cube/Vector工作体，独立生产launch包装在arch22目录。
+启用right驻留与Gh1 D分块流水。1AIC:2AIV；AIV0计算，AIV1为同步dummy。
+tasks=B*H*4，blocks=min(tasks,AIC核数)，当前B1/H1或2分别4/8 blocks。
+每block scratch=98304字节（P16384+right16384+D65536）；总用户scratch为
+393216/786432字节，另加CANN libApi workspace（本次A2为16777216字节）；
+实际总分配分别17170432/17563648字节，用户区偏移为0。
+复用既有tiling的vWorkspaceOffset表达scratch起点，不改变tiling struct布局。
+该偏移相对用户区为0：asc_opc生成入口已将workspace参数推进CANN保留区大小，
+Host总分配仍包含保留区，但kernel不得再次加上该前缀。可选gk描述使用GetOptionalInputDesc按IR索引读取，
+required输入使用GetRequiredInputDesc，避免缺省输入导致实例索引错位。
+L1显式81920字节；L0A/B/C各32768；UB显式99328字节加TPipe元数据；
+物理分区和事件账本沿用tests/fwdh256/README.md。H快照、Vnew及final直接写FP32输出，
+不新增转换launch，不复用低精度运行状态。正式调用的既有转换/搬运仍纳入总计时。
+
+| 物理资源 | 冻结配置 | 生命周期/用途 |
+|---|---|---|
+| R_run | 每活跃AIV 65536 B，FP32 UB | 完整chunk链驻留，禁止逐chunk BF16量化 |
+| H_snapshot / H_cube | FP32 GM，同一快照存储 | snapshot按[B,NT,H,256,256]输出，Cube直接读取 |
+| H_final | FP32 GM，可选 | [B,H,256,256]，只在请求时写回 |
+| UB显式分配 | 99328 B/AIV，另加TPipe元数据 | state/gate/broadcast及双缓冲队列；AIV1为同步dummy |
+| L1 | 81920 B/AIC | 含16384 B的S2 right驻留区 |
+| L0A / L0B / L0C | 各32768 B/AIC | MMAD完整归约，不落GM部分和再串加 |
+| scratch | 98304 B/block | P 16384 + right 16384 + D 65536 |
+| blocks | H1为4，H2为8 | 每head四个V64 tile，Gh1，1AIC:2AIV |
+
+生产可执行逻辑提交为`3aef396858ed46fdc52d77c23db30bd85664661d`；kernel工作体仍为
+557667b9。完整构建后仅增量重建修正偏移的Host并重新打包，所有kernel对象hash不变。
+wheel SHA256：`9e5a09caf5be5e91eea20223ea9a1db2d19a8fbda1f3f1e28384315ed208ec1a`。
+这冻结的是已验证分派/精度配置；长序列超过Triton的性能目标仍未达成。
+
+### 实际路由与回归矩阵
+
+1. key兼容：旧128个BF16/FP32 gate布尔组合与16个GENERAL组合，新增位0逐项相等；
+   新4个key唯一、与旧集合无交集；核类型核对生成JSON和实际任务。
+2. 资格单测：逐项翻转arch、gate语义、chunk、K/V、dtype、layout、B/H/T、state、varlen，
+   对生产资格函数断言；非目标架构仅Host模拟时须明确标记，不能冒充该设备运行。
+3. 独立公开FwdH：T1/7/63/64/65/129/1024/4096，H1/2，exp/exp2，I/F四组合，
+   FP32 reference与原阈值；读取日志中的key/block/workspace及profiler任务证据。
+4. KDA正式前向与重算：原fla-org test_chunk，T65/H2、T1024/H1及尾块，保存/重算，
+   原始输出/梯度断言。确认两个调用链实际都出现新key。
+5. 反向路由：K128 KDA、K128 GDN、K256 H3/B2、BF16 state、stateVFirst、varlen；
+   合法走旧分支，非法维持原错误。代表用例用原fla-org断言，不用ATK或放宽容差。
+6. 同卡同输入10预热/10采样：正式FwdH阶段与原型、同规格Triton FwdH比较；
+   同时保留公开调用全部设备任务CSV，不剔除转换/搬运。记录加载库/OPP hash和key。
+
+共享Host/key/kernel入口文件单独提交；其他工作树未提交内容不复制、不覆盖。
+检查通过按用户最新指令推送本分支，不创建PR。尚未验证的项目如实列出。
+
+以下章节保留原K128路径的设计说明；P32 K256使用上方独立分派、资源和测试范围。
+
+## 1. 原K128路径的目标与边界
 
 `ChunkFwdH` 是独立的 Ascend C 算子，符号为 `ChunkFwdH`、`aclnnChunkFwdH` 和
 `fla_npu.ops.ascendc.chunk_fwd_h`。它不复用、不修改 `ChunkGatedDeltaRuleFwdH`，也不提供

@@ -11,7 +11,10 @@ import sys
 destination=Path(sys.argv[1]);script=sys.argv[2];arguments=sys.argv[3:]
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def capture():
-    result=dict(python=sys.executable,pid=os.getpid(),loaded_libraries={},package_files={})
+    result=dict(python=sys.executable,pid=os.getpid(),loaded_libraries={},package_files={},
+                environment={name:os.environ.get(name) for name in (
+                    'ASCEND_CUSTOM_OPP_PATH','ASCEND_OPP_PATH','ASCEND_RT_VISIBLE_DEVICES',
+                    'LD_LIBRARY_PATH','FWDH_SOURCE_COMMIT')})
     for name in ('torch','torch-npu','triton-ascend','flash-linear-attention-npu-a2'):
         try:result[name]=importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:pass

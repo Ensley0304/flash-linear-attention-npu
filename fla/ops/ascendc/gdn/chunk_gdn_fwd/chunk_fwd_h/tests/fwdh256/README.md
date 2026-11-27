@@ -84,3 +84,34 @@ long-sequence overlap fraction or hardware latency.
 
 These remain isolated stage probes. Public dispatch and strict same-cache
 Triton pairing have not been validated by this experiment.
+
+## Independent production dispatch validation
+
+The appended `KDA_P32_256` selector uses the two optimized work-body switches.
+See `../../docs/design.md` for the qualification table and exact resource budget.
+The public tests import an installed coherent wheel and the fixed fla-org tree;
+put that upstream checkout on `PYTHONPATH`, select an idle physical device through
+`ASCEND_RT_VISIBLE_DEVICES`, and source its matching CANN environment first.
+
+`dump_keys.cpp` exercises the real CANN key encoder; build it once with the
+pre-change `legacy_tiling_key.h` (`-DLEGACY_KEYS`) and once with the current header, and compare
+all legacy rows. `test_policy.cpp` tests the production qualification predicate.
+`check_artifact_keys.py` compares generated old/new wheel kernel metadata, including
+kernel names, task types and AIC/AIV ratios, not just the numeric key sets.
+
+Run `test_public_dispatch.py --suite smoke|matrix|fallback|invalid --output DIR`
+in separate processes. Enable `ASCEND_GLOBAL_LOG_LEVEL=0` and
+`ASCEND_SLOG_PRINT_TO_STDOUT=1` only for route capture, not performance runs.
+`check_runtime_routes.py LOG --fast 1 --cases 4 --output routes.json` checks a smoke
+log against all four expected new keys and actual block counts. Use `--fast 0`
+for fallback/GDN logs. `test_public_gdn.py` uses the upstream recurrent reference
+and original tolerance. Non-target architecture qualification is a Host unit
+test; it must not be reported as non-target hardware validation.
+
+`profile_stage_pair.py` compares public FwdH, the direct optimized probe, and the
+actual upstream NPU Triton FwdH on identical FP32 caches. Each starts from canonical
+BNSD caches; Triton's internal contiguous copies/gate preparation are included.
+The script checks precision before 10 warmups/10 samples and retains every device
+task. Pass an absolute `--library` path for the probe. T65 uses actual NPU Prepare
+cache outputs; `make_stage_cache.py` generates the T1024 mathematical-producer
+cache and must not be described as a device-produced cache.
